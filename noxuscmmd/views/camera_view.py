@@ -1,13 +1,6 @@
 import reflex as rx
 from ..state import State
-
-def status_dot(name, online):
-    return rx.hstack(
-        rx.text(name, size="2", weight="bold", color="#94a3b8"),
-        rx.text(rx.cond(online, "🟢", "🔴"), size="1"),
-        spacing="2",
-        align="center",
-    )
+import os
 
 def video_embed_safe(url: str):
     return rx.box(
@@ -25,126 +18,211 @@ def video_embed_safe(url: str):
         },
     )
 
-def ptz_button(label: str, direction: str):
-    return rx.button(
-        label,
-        on_click=State.move_ptz(direction),
-        variant="soft",
+def ptz_control_buttons():
+    """Botones de control PTZ (arriba, abajo, izquierda, derecha, stop)"""
+    return rx.grid(
+        rx.box(),
+        rx.button("⬆", on_click=State.move_ptz("0"), variant="soft", size="1"),
+        rx.box(),
+        rx.button("⬅", on_click=State.move_ptz("6"), variant="soft", size="1"),
+        rx.button("⏹", on_click=State.move_ptz("stop"), variant="soft", size="1", color_scheme="red"),
+        rx.button("➡", on_click=State.move_ptz("2"), variant="soft", size="1"),
+        rx.box(),
+        rx.button("⬇", on_click=State.move_ptz("4"), variant="soft", size="1"),
+        rx.box(),
+        columns="3",
+        spacing="1",
+        width="100%",
+        justify="center",
     )
 
-def camera_view():
-    return rx.vstack(
-        rx.hstack(
-            rx.icon("video", size=20, color="#818cf8"),
-            rx.heading("SISTEMA CCTV", size="3", letter_spacing="0.05em"),
-            width="100%",
-            align="center",
-            px="2",
-            pt="2",
-        ),
-        rx.card(
+def camera_dialog_fija():
+    """Diálogo de la cámara fija"""
+    return rx.dialog.root(
+        rx.dialog.trigger(rx.box()),
+        rx.dialog.content(
             rx.vstack(
                 rx.hstack(
-                    status_dot("CÁMARA FIJA", State.cam_fija_online),
+                    rx.text("Cámara Fija", size="3", weight="bold"),
                     rx.spacer(),
-                    status_dot("DOMO PTZ", State.cam_ptz_online),
-                    width="100%",
+                    rx.badge(
+                        rx.cond(State.cam_mode == "pc", "MODO PC", "MODO MÓVIL"),
+                        color_scheme=rx.cond(State.cam_mode == "pc", "blue", "green"),
+                    ),
+                    rx.button(
+                        rx.icon("refresh-cw", size=16),
+                        on_click=State.toggle_cam_mode,
+                        variant="ghost",
+                        size="1",
+                        title="Cambiar entre modo PC y modo Móvil",
+                    ),
                 ),
-                rx.divider(opacity="0.1"),
-                rx.grid(
-                    # ── Cámara fija: stream go2rtc ──────────────────────
-                    rx.dialog.root(
-                        rx.dialog.trigger(
-                            rx.button(
-                                "VER FIJA",
-                                on_click=State.toggle_fija_stream,
-                                variant="surface",
-                                width="100%",
-                            )
+                rx.text(
+                    f"URL: {State.url_fija_stream}",
+                    size="1",
+                    color="gray",
+                    truncate=True,
+                ),
+                rx.cond(
+                    State.cam_mode == "mobile",
+                    rx.vstack(
+                        rx.text(
+                            "Modo móvil: usa el reproductor nativo si no se ve.",
+                            size="1",
+                            color="gray",
                         ),
-                        rx.dialog.content(
-                            rx.vstack(
-                                video_embed_safe(State.url_fija_stream),
-                                rx.button("CERRAR", on_click=State.toggle_fija_stream),
-                            ),
-                            style={
-                                "max_width": "800px",
-                                "background": "#0f172a",
-                                "padding": "20px",
-                            },
-                        ),
-                        open=State.show_fija_stream,
-                    ),
-                    # ── PTZ: stream go2rtc + controles ──────────────────
-                    rx.dialog.root(
-                        rx.dialog.trigger(
+                        video_embed_safe(State.url_fija_stream),
+                        rx.hstack(
                             rx.button(
-                                "CONECTAR PTZ",
-                                variant="surface",
-                                color_scheme="indigo",
-                                width="100%",
+                                "📱 Forzar modo PC",
+                                on_click=State.toggle_cam_mode,
                                 size="2",
-                            )
-                        ),
-                        rx.dialog.content(
-                            rx.vstack(
-                                video_embed_safe(State.url_ptz_embed),
-                                rx.center(
-                                    rx.vstack(
-                                        rx.grid(
-                                            rx.box(),
-                                            ptz_button("▲", "0"),
-                                            rx.box(),
-                                            ptz_button("◀", "6"),
-                                            rx.center(rx.icon("move", size=20, color="#818cf8")),
-                                            ptz_button("▶", "2"),
-                                            rx.box(),
-                                            ptz_button("▼", "4"),
-                                            rx.box(),
-                                            columns="3",
-                                            spacing="2",
-                                            pt="4",
-                                        ),
-                                        rx.text(
-                                            State.cam_msg,
-                                            size="2",
-                                            color="#ff4d4d",
-                                            weight="bold",
-                                            pt="2",
-                                        ),
-                                    ),
-                                    width="100%",
-                                ),
-                                rx.dialog.close(
-                                    rx.button(
-                                        "CERRAR",
-                                        width="100%",
-                                        color_scheme="gray",
-                                        variant="soft",
-                                        mt="4",
-                                    )
-                                ),
+                                variant="soft",
+                                color_scheme="blue",
                             ),
-                            style={
-                                "max_width": "800px",
-                                "background": "#0f172a",
-                                "padding": "20px",
-                            },
+                            rx.button(
+                                "📺 Abrir en navegador",
+                                on_click=rx.call_script(
+                                    f"window.open('{State.url_fija_stream}', '_blank')"
+                                ),
+                                size="2",
+                                variant="solid",
+                                color_scheme="green",
+                            ),
+                            spacing="2",
+                            width="100%",
                         ),
-                        open=State.show_ptz_stream,
+                        spacing="3",
+                        width="100%",
                     ),
-                    columns="2",
+                    video_embed_safe(State.url_fija_stream),
+                ),
+                rx.divider(),
+                rx.hstack(
+                    rx.text("🔒 Modo privacidad:", size="2"),
+                    rx.switch(
+                        on_change=lambda val: State.toggle_privacy(os.getenv("ID_FIJA_TUYA"), val),
+                    ),
                     spacing="3",
                     width="100%",
                 ),
+                rx.button(
+                    "CERRAR",
+                    on_click=State.toggle_fija_stream,
+                    size="2",
+                    variant="ghost",
+                    width="100%",
+                ),
                 spacing="3",
+                width="100%",
             ),
-            width="100%",
-            background="rgba(255, 255, 255, 0.03)",
-            backdrop_filter="blur(10px)",
-            border="1px solid rgba(255, 255, 255, 0.1)",
-            padding="4",
+            style={
+                "max_width": "800px",
+                "background": "#0f172a",
+                "padding": "20px",
+            },
         ),
+        open=State.show_fija_stream,
+    )
+
+def camera_dialog_ptz():
+    """Diálogo de la cámara PTZ con controles de movimiento"""
+    return rx.dialog.root(
+        rx.dialog.trigger(rx.box()),
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.text("Cámara PTZ", size="3", weight="bold"),
+                    rx.spacer(),
+                    rx.badge(
+                        rx.cond(State.cam_mode == "pc", "MODO PC", "MODO MÓVIL"),
+                        color_scheme=rx.cond(State.cam_mode == "pc", "blue", "green"),
+                    ),
+                    rx.button(
+                        rx.icon("refresh-cw", size=16),
+                        on_click=State.toggle_cam_mode,
+                        variant="ghost",
+                        size="1",
+                        title="Cambiar entre modo PC y modo Móvil",
+                    ),
+                ),
+                rx.text(
+                    f"URL: {State.url_ptz_stream}",
+                    size="1",
+                    color="gray",
+                    truncate=True,
+                ),
+                rx.cond(
+                    State.cam_mode == "mobile",
+                    rx.vstack(
+                        rx.text(
+                            "Modo móvil: usa el reproductor nativo si no se ve.",
+                            size="1",
+                            color="gray",
+                        ),
+                        video_embed_safe(State.url_ptz_stream),
+                        rx.hstack(
+                            rx.button(
+                                "📱 Forzar modo PC",
+                                on_click=State.toggle_cam_mode,
+                                size="2",
+                                variant="soft",
+                                color_scheme="blue",
+                            ),
+                            rx.button(
+                                "📺 Abrir en navegador",
+                                on_click=rx.call_script(
+                                    f"window.open('{State.url_ptz_stream}', '_blank')"
+                                ),
+                                size="2",
+                                variant="solid",
+                                color_scheme="green",
+                            ),
+                            spacing="2",
+                            width="100%",
+                        ),
+                        spacing="3",
+                        width="100%",
+                    ),
+                    video_embed_safe(State.url_ptz_stream),
+                ),
+                rx.divider(),
+                rx.text("🎮 Control PTZ:", size="2", weight="bold"),
+                ptz_control_buttons(),
+                rx.text(State.cam_msg, size="1", color="gray"),
+                rx.divider(),
+                rx.hstack(
+                    rx.text("🔒 Modo privacidad:", size="2"),
+                    rx.switch(
+                        on_change=lambda val: State.toggle_privacy(os.getenv("ID_PTZ_TUYA"), val),
+                    ),
+                    spacing="3",
+                    width="100%",
+                ),
+                rx.button(
+                    "CERRAR",
+                    on_click=State.toggle_ptz_stream,
+                    size="2",
+                    variant="ghost",
+                    width="100%",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            style={
+                "max_width": "800px",
+                "background": "#0f172a",
+                "padding": "20px",
+            },
+        ),
+        open=State.show_ptz_stream,
+    )
+
+def camera_dialogs():
+    """Agrupa ambos diálogos para usarlos en index.py"""
+    return rx.vstack(
+        camera_dialog_fija(),
+        camera_dialog_ptz(),
         width="100%",
-        spacing="3",
+        spacing="0",
     )
