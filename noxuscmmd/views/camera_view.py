@@ -45,10 +45,7 @@ def camera_dialog_fija():
                 rx.hstack(
                     rx.text("Cámara Fija", size="3", weight="bold"),
                     rx.spacer(),
-                    rx.badge(
-                        rx.cond(State.cam_mode == "pc", "MODO PC", "MODO MÓVIL"),
-                        color_scheme=rx.cond(State.cam_mode == "pc", "blue", "green"),
-                    ),
+                    # 1. ELIMINADO: rx.badge de MODO PC / MODO MÓVIL
                     rx.button(
                         rx.icon("refresh-cw", size=16),
                         on_click=State.toggle_cam_mode,
@@ -57,55 +54,48 @@ def camera_dialog_fija():
                         title="Cambiar entre modo PC y modo Móvil",
                     ),
                 ),
-                rx.text(
-                    f"URL: {State.url_fija_stream}",
-                    size="1",
-                    color="gray",
-                    truncate=True,
-                ),
+                # 2. ELIMINADO: rx.text con la URL del stream
                 rx.cond(
                     State.cam_mode == "mobile",
                     rx.vstack(
-                        rx.text(
-                            "Modo móvil: usa el reproductor nativo si no se ve.",
-                            size="1",
-                            color="gray",
-                        ),
+                        # 3. ELIMINADO: rx.text "Modo móvil: usa el reproductor nativo..."
                         video_embed_safe(State.url_fija_stream),
-                        rx.hstack(
-                            rx.button(
-                                "📱 Forzar modo PC",
-                                on_click=State.toggle_cam_mode,
-                                size="2",
-                                variant="soft",
-                                color_scheme="blue",
-                            ),
-                            rx.button(
-                                "📺 Abrir en navegador",
-                                on_click=rx.call_script(
-                                    f"window.open('{State.url_fija_stream}', '_blank')"
-                                ),
-                                size="2",
-                                variant="solid",
-                                color_scheme="green",
-                            ),
-                            spacing="2",
-                            width="100%",
-                        ),
+                        # 4. COMENTADO: Botones "Forzar modo PC" y "Abrir en navegador"
+                        # rx.hstack(
+                        #     rx.button(
+                        #         "📱 Forzar modo PC",
+                        #         on_click=State.toggle_cam_mode,
+                        #         size="2",
+                        #         variant="soft",
+                        #         color_scheme="blue",
+                        #     ),
+                        #     rx.button(
+                        #         "📺 Abrir en navegador",
+                        #         on_click=rx.call_script(
+                        #             f"window.open('{State.url_fija_stream}', '_blank')"
+                        #         ),
+                        #         size="2",
+                        #         variant="solid",
+                        #         color_scheme="green",
+                        #     ),
+                        #     spacing="2",
+                        #     width="100%",
+                        # ),
                         spacing="3",
                         width="100%",
                     ),
                     video_embed_safe(State.url_fija_stream),
                 ),
                 rx.divider(),
-                rx.hstack(
-                    rx.text("🔒 Modo privacidad:", size="2"),
-                    rx.switch(
-                        on_change=lambda val: State.toggle_privacy(os.getenv("ID_FIJA_TUYA"), val),
-                    ),
-                    spacing="3",
-                    width="100%",
-                ),
+                # 5. COMENTADO: Switch de Modo Privacidad
+                # rx.hstack(
+                #     rx.text("🔒 Modo privacidad:", size="2"),
+                #     rx.switch(
+                #         on_change=lambda val: State.toggle_privacy(os.getenv("ID_FIJA_TUYA"), val),
+                #     ),
+                #     spacing="3",
+                #     width="100%",
+                # ),
                 rx.button(
                     "CERRAR",
                     on_click=State.toggle_fija_stream,
@@ -134,10 +124,7 @@ def camera_dialog_ptz():
                 rx.hstack(
                     rx.text("Cámara PTZ", size="3", weight="bold"),
                     rx.spacer(),
-                    rx.badge(
-                        rx.cond(State.cam_mode == "pc", "MODO PC", "MODO MÓVIL"),
-                        color_scheme=rx.cond(State.cam_mode == "pc", "blue", "green"),
-                    ),
+                    # 1. ELIMINADO: rx.badge de MODO PC / MODO MÓVIL
                     rx.button(
                         rx.icon("refresh-cw", size=16),
                         on_click=State.toggle_cam_mode,
@@ -146,41 +133,33 @@ def camera_dialog_ptz():
                         title="Cambiar entre modo PC y modo Móvil",
                     ),
                 ),
-                rx.text(
-                    f"URL: {State.url_ptz_stream}",
-                    size="1",
-                    color="gray",
-                    truncate=True,
-                ),
+                # 2. ELIMINADO: rx.text con la URL del stream
                 rx.cond(
                     State.cam_mode == "mobile",
                     rx.vstack(
-                        rx.text(
-                            "Modo móvil: usa el reproductor nativo si no se ve.",
-                            size="1",
-                            color="gray",
-                        ),
+                        # 3. ELIMINADO: rx.text "Modo móvil: usa el reproductor nativo..."
                         video_embed_safe(State.url_ptz_stream),
-                        rx.hstack(
-                            rx.button(
-                                "📱 Forzar modo PC",
-                                on_click=State.toggle_cam_mode,
-                                size="2",
-                                variant="soft",
-                                color_scheme="blue",
-                            ),
-                            rx.button(
-                                "📺 Abrir en navegador",
-                                on_click=rx.call_script(
-                                    f"window.open('{State.url_ptz_stream}', '_blank')"
-                                ),
-                                size="2",
-                                variant="solid",
-                                color_scheme="green",
-                            ),
-                            spacing="2",
-                            width="100%",
-                        ),
+                        # 4. COMENTADO: Botones "Forzar modo PC" y "Abrir en navegador"
+                        # rx.hstack(
+                        #     rx.button(
+                        #         "📱 Forzar modo PC",
+                        #         on_click=State.toggle_cam_mode,
+                        #         size="2",
+                        #         variant="soft",
+                        #         color_scheme="blue",
+                        #     ),
+                        #     rx.button(
+                        #         "📺 Abrir en navegador",
+                        #         on_click=rx.call_script(
+                        #             f"window.open('{State.url_ptz_stream}', '_blank')"
+                        #         ),
+                        #         size="2",
+                        #         variant="solid",
+                        #         color_scheme="green",
+                        #     ),
+                        #     spacing="2",
+                        #     width="100%",
+                        # ),
                         spacing="3",
                         width="100%",
                     ),
@@ -191,14 +170,15 @@ def camera_dialog_ptz():
                 ptz_control_buttons(),
                 rx.text(State.cam_msg, size="1", color="gray"),
                 rx.divider(),
-                rx.hstack(
-                    rx.text("🔒 Modo privacidad:", size="2"),
-                    rx.switch(
-                        on_change=lambda val: State.toggle_privacy(os.getenv("ID_PTZ_TUYA"), val),
-                    ),
-                    spacing="3",
-                    width="100%",
-                ),
+                # 5. COMENTADO: Switch de Modo Privacidad
+                # rx.hstack(
+                #     rx.text("🔒 Modo privacidad:", size="2"),
+                #     rx.switch(
+                #         on_change=lambda val: State.toggle_privacy(os.getenv("ID_PTZ_TUYA"), val),
+                #     ),
+                #     spacing="3",
+                #     width="100%",
+                # ),
                 rx.button(
                     "CERRAR",
                     on_click=State.toggle_ptz_stream,

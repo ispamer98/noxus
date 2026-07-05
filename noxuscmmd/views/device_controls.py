@@ -59,48 +59,6 @@ def device_controls_view():
                         action_button("Temperatura", "thermometer", "blue",
                                       State.accion_temperatura(dk)),
                         *acciones_extra_ui(dk),
-                        # ── Controles PTZ (solo para Raspberry) ──
-                        rx.cond(
-                            dk == "raspberry",
-                            rx.vstack(
-                                rx.divider(),
-                                rx.text("🎥 CONTROL PTZ", size="1", weight="bold"),
-                                ptz_control_buttons_small(),
-                                rx.text(State.cam_msg, size="1", color="gray"),
-                                rx.hstack(
-                                    rx.text("🔒 Privacidad:", size="1"),
-                                    rx.switch(
-                                        on_change=lambda val: State.toggle_privacy(
-                                            os.getenv("ID_PTZ_TUYA"), val
-                                        ),
-                                        size="1",
-                                    ),
-                                    spacing="2",
-                                ),
-                                spacing="2",
-                                width="100%",
-                            ),
-                        ),
-                        # ── Privacidad para cámara fija (solo Pi Zero) ──
-                        rx.cond(
-                            dk == "pi_zero",
-                            rx.vstack(
-                                rx.divider(),
-                                rx.text("📷 CÁMARA FIJA", size="1", weight="bold"),
-                                rx.hstack(
-                                    rx.text("🔒 Privacidad:", size="1"),
-                                    rx.switch(
-                                        on_change=lambda val: State.toggle_privacy(
-                                            os.getenv("ID_FIJA_TUYA"), val
-                                        ),
-                                        size="1",
-                                    ),
-                                    spacing="2",
-                                ),
-                                spacing="2",
-                                width="100%",
-                            ),
-                        ),
                         rx.divider(),
                         rx.text("Comando SSH:", size="1", weight="bold"),
                         rx.hstack(

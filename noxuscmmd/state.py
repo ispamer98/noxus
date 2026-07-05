@@ -392,14 +392,14 @@ class State(rx.State):
         if self.cam_mode == "pc":
             return "https://cam.noxuscmmd.uk/stream.html?src=fija&mode=webrtc"
         else:
-            return "https://cam.noxuscmmd.uk/stream.html?src=fija"
+            return "https://cam.noxuscmmd.uk/api/stream.m3u8?src=fija"
 
     @rx.var
     def url_ptz_stream(self) -> str:
         if self.cam_mode == "pc":
             return "https://cam.noxuscmmd.uk/stream.html?src=ptz&mode=webrtc"
         else:
-            return "https://cam.noxuscmmd.uk/stream.html?src=ptz"
+            return "https://cam.noxuscmmd.uk/api/stream.m3u8?src=ptz"
 
     # ── Legacy (se mantiene por compatibilidad) ──────────────────────────
     @rx.var

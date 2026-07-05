@@ -3,8 +3,18 @@ from .pages.index import index_page
 from .pages.upload import upload_page
 from .state import State
  
+
+STYLE = {
+    "@keyframes pulse": {
+        "0%": {"opacity": "0.6", "transform": "scale(1)"},
+        "100%": {"opacity": "1", "transform": "scale(1.05)"},
+    }
+}
+
+
 app = rx.App(
     theme=rx.theme(appearance="dark", accent_color="blue"),
+    style=STYLE,   # <--- Aquí inyectamos la animación
     head_components=[
         rx.el.link(rel="manifest", href="/manifest.json"),
     ],
