@@ -7,6 +7,7 @@ import reflex as rx
 import time
 from pathlib import Path
 from dotenv import load_dotenv
+import fcntl  # Para bloqueo de archivos en Unix
 
 from .core.connectivity import NetUtils
 from .core.ssh_manager import SSHManager
@@ -26,6 +27,7 @@ VAPID_PUBLIC  = os.getenv("VAPID_PUBLIC_KEY")
 VAPID_EMAIL   = os.getenv("VAPID_EMAIL", "mailto:admin@noxuscmmd.uk")
 
 _SSH_STARTED = False
+_SYNC_LOOP_STARTED = False   # <--- NUEVA BANDERA GLOBAL
 
 # ---------- GESTOR MQTT GLOBAL ----------
 _mqtt_client_instance = None
@@ -108,7 +110,6 @@ class State(rx.State):
     @rx.var
     def logs_recientes(self) -> list[dict]:
         """Devuelve la lista de logs (ordenados del más reciente al más antiguo)."""
-        # Forzar actualización leyendo el contador
         _ = self._logs_update_counter
         archivo = "logs.json"
         if not os.path.exists(archivo):
@@ -124,38 +125,48 @@ class State(rx.State):
             return []
 
     def registrar_log(self, accion: str, detalle: str = "", usar_usuario: bool = True):
-        """Escribe una entrada en logs.json con timestamp y usuario actual (opcional)."""
-        import json
-        from datetime import datetime
-        
-        usuario = self.current_user if (self.current_user.strip() and usar_usuario) else "sistema"
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        entrada = {
-            "timestamp": timestamp,
-            "accion": accion,
-            "usuario": usuario,
-            "detalle": detalle
-        }
-        
+        """
+        Escribe una entrada en logs.json con timestamp y usuario actual.
+        - Si el último evento coincide exactamente con la acción y el detalle, no escribe (evita duplicados).
+        - Usa bloqueo de archivo para escritura atómica entre procesos.
+        """
         archivo = "logs.json"
+        # 1. Leer el último evento con bloqueo
         try:
-            if os.path.exists(archivo):
-                with open(archivo, "r") as f:
-                    content = f.read().strip()
-                    if content:
-                        logs = json.loads(content)
-                    else:
-                        logs = []
-            else:
+            with open(archivo, "a+" if os.path.exists(archivo) else "w+") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # Bloqueo exclusivo
+                f.seek(0)
+                content = f.read().strip()
                 logs = []
-            
-            logs.append(entrada)
-            # Limitar a 500 registros para no saturar el archivo
-            if len(logs) > 500:
-                logs = logs[-500:]
-            with open(archivo, "w") as f:
+                if content:
+                    try:
+                        logs = json.loads(content)
+                    except:
+                        logs = []
+                # Comprobar último evento
+                if logs:
+                    ultimo = logs[-1]
+                    # Si la acción y detalle son idénticos, no escribir
+                    if ultimo.get("accion") == accion and ultimo.get("detalle") == detalle:
+                        return  # Salir sin escribir
+                # Construir nueva entrada
+                usuario = self.current_user if (self.current_user.strip() and usar_usuario) else "sistema"
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                entrada = {
+                    "timestamp": timestamp,
+                    "accion": accion,
+                    "usuario": usuario,
+                    "detalle": detalle
+                }
+                logs.append(entrada)
+                if len(logs) > 500:
+                    logs = logs[-500:]
+                # Escribir de nuevo
+                f.seek(0)
+                f.truncate()
                 json.dump(logs, f, indent=4, ensure_ascii=False)
+                f.flush()
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         except Exception as e:
             print(f"❌ Error escribiendo log: {e}")
 
@@ -165,7 +176,6 @@ class State(rx.State):
 
     @rx.event
     def cargar_usuario_desde_subscripcion(self, endpoint: str):
-        """Busca el nombre de usuario asociado a un endpoint en suscriptores.json."""
         archivo = "suscriptores.json"
         try:
             if os.path.exists(archivo):
@@ -189,8 +199,8 @@ class State(rx.State):
 
     @rx.event
     async def on_load(self):
-        global _SSH_STARTED
-        # Cargar el último evento de puerta desde los logs (para evitar duplicados al iniciar)
+        global _SSH_STARTED, _SYNC_LOOP_STARTED   # <--- AÑADIDA
+        # Cargar el último evento de puerta desde los logs
         self._ultimo_evento_puerta = self._ultimo_log_puerta()
         self.sistema_armado = await asyncio.to_thread(get_sistema_armado)
         self.puerta_abierta = await asyncio.to_thread(get_puerta_abierta)
@@ -202,6 +212,11 @@ class State(rx.State):
             yield State.keepalive_ssh_task
             yield State.monitor_temperatura_fan
 
+        # --- Solo lanzar el bucle de sincronización UNA VEZ ---
+        if not _SYNC_LOOP_STARTED:
+            _SYNC_LOOP_STARTED = True
+            yield State.sync_ui_loop   # o asyncio.create_task(self.sync_ui_loop())
+
         mqtt_broker = os.getenv("MQTT_BROKER", "127.0.0.1")
         mqtt_port = int(os.getenv("MQTT_PORT", 1883))
         topic_puerta = "casa/raspberry/puerta"
@@ -211,7 +226,6 @@ class State(rx.State):
         except Exception as e:
             print(f"⚠️ Error controlado al iniciar MQTT: {e}")
 
-        # Obtener la suscripción activa del navegador
         yield rx.call_script(
             """
             (async function() {
@@ -231,7 +245,7 @@ class State(rx.State):
         )
 
         yield State.actualizar_estados
-        yield State.sync_ui_loop
+        # No se lanza sync_ui_loop aquí porque ya está arriba
 
     # ════════════════════════════════════════════════════════════════════
     # ARMAR / DESARMAR
@@ -243,15 +257,12 @@ class State(rx.State):
         self.sistema_armado = nuevo
         self.status = "🔒 Sistema de Seguridad: ARMADO" if nuevo else "🔓 Sistema de Seguridad: DESARMADO"
         
-        # Registrar evento con usuario
         accion = "ARMADO" if nuevo else "DESARMADO"
         puerta_estado = "abierta" if self.puerta_abierta else "cerrada"
         detalle = f"H.Ppal: {puerta_estado}"
         self.registrar_log(accion, detalle, usar_usuario=True)
 
-        # Si se arma con la puerta abierta, NO se debe enviar alerta hasta que cierre y vuelva a abrir
         if nuevo and self.puerta_abierta:
-            # Ponemos el flag de notificación como ya enviado para evitar falsas alarmas
             await asyncio.to_thread(set_notificacion_enviada, True)
             self.registrar_log(
                 "SISTEMA_ARMADO_PUERTA_ABIERTA",
@@ -266,14 +277,13 @@ class State(rx.State):
     @rx.event(background=True)
     async def sync_ui_loop(self):
         ultima_puerta = None
-        cambio_registrado = False  # Flag para evitar duplicados del mismo cambio
+        cambio_registrado = False
         while True:
             try:
                 real_armado = await asyncio.to_thread(get_sistema_armado)
                 real_puerta = await asyncio.to_thread(get_puerta_abierta)
 
                 async with self:
-                    # Actualizar estado visual
                     if self.sistema_armado != real_armado or self.puerta_abierta != real_puerta:
                         self.sistema_armado = real_armado
                         self.puerta_abierta = real_puerta
@@ -284,9 +294,7 @@ class State(rx.State):
                         ultima_puerta = real_puerta
                         cambio_registrado = False
                     elif ultima_puerta != real_puerta:
-                        # Si ha cambiado y no se ha registrado aún este cambio
                         if not cambio_registrado:
-                            # Determinar la acción
                             if real_puerta and real_armado:
                                 estado_actual = "PUERTA_ABIERTA_ARMADA"
                                 estado_texto = "ABIERTA"
@@ -297,10 +305,10 @@ class State(rx.State):
                                 estado_actual = "PUERTA_CERRADA"
                                 estado_texto = "CERRADA"
 
-                            # Solo registrar si es diferente al último registrado y ha pasado al menos 1 segundo
                             ahora = time.time()
                             if estado_actual != self._ultimo_evento_puerta and (ahora - self.last_puerta_log_time >= 1.0):
                                 detalle = f"H.Ppal → {estado_texto}"
+                                # --- LLAMADA A registrar_log (ya incluye filtro de duplicados) ---
                                 self.registrar_log(
                                     estado_actual,
                                     detalle,
@@ -309,10 +317,8 @@ class State(rx.State):
                                 self._ultimo_evento_puerta = estado_actual
                                 self.last_puerta_log_time = ahora
                                 cambio_registrado = True
-                        # Actualizamos ultima_puerta siempre
                         ultima_puerta = real_puerta
                     else:
-                        # Si no hay cambio, reseteamos el flag para el próximo cambio
                         cambio_registrado = False
 
                     # Manejar alarma (intrusión)
@@ -342,11 +348,6 @@ class State(rx.State):
             await asyncio.sleep(0.5)
 
     # ════════════════════════════════════════════════════════════════════
-    # EL RESTO DE MÉTODOS (mantener igual)
-    # ════════════════════════════════════════════════════════════════════
-
-    # ... (aquí van todos los demás métodos como verificar_alarma, keepalive_ssh_task, actualizar_estados, monitor_temperatura_fan, etc.)
-    # ══════════════════════════════════════════════════════════════════════
     # SSH keepalive
     # ══════════════════════════════════════════════════════════════════════
     @rx.event(background=True)

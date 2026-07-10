@@ -790,5 +790,77 @@
         "accion": "PUERTA_CERRADA",
         "usuario": "sistema",
         "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:03:02",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:03:02",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:03:06",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:03:06",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:04:44",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:04:44",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:05:19",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:05:19",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:15:38",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:15:41",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
+    },
+    {
+        "timestamp": "2026-07-10 17:16:02",
+        "accion": "PUERTA_ABIERTA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → ABIERTA"
+    },
+    {
+        "timestamp": "2026-07-10 17:16:15",
+        "accion": "PUERTA_CERRADA",
+        "usuario": "sistema",
+        "detalle": "H.Ppal → CERRADA"
     }
 ]
