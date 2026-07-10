@@ -64,7 +64,8 @@ class State(rx.State):
     # ── Control comandos personalizados ───────────────────────────────────
     custom_command: dict[str, str] = {}
     custom_output:  dict[str, str] = {}
-
+    current_user: str = ""      # Nombre del usuario de la sesión actual
+    current_session: str = ""   # Endpoint o identificador de la suscripción
     _sync_running: bool = False
 
     # ── Cámaras ──────────────────────────────────────────────────────────
@@ -72,31 +73,125 @@ class State(rx.State):
     show_fija_stream: bool = False
     show_ptz_stream: bool = False
 
-    async def verificar_alarma(self):
-        ahora = time.time()
-        print(f"🚨 [{ahora:.3f}] verificar_alarma: armado={self.sistema_armado}, puerta_abierta={self.puerta_abierta}")
-        if self.sistema_armado and self.puerta_abierta:
-            if not get_notificacion_enviada():
-                set_notificacion_enviada(True)
-                await asyncio.to_thread(
-                    self.enviar_notificacion,
-                    "🚨 ALERTA: INTRUSIÓN",
-                    "La puerta ha sido abierta con el sistema ARMADO.",
-                    "todos"
-                )
-                print(f"🔔 [{ahora:.3f}] ALARMA DISPARADA")
-        elif not self.puerta_abierta:
-            if get_notificacion_enviada():
-                set_notificacion_enviada(False)
-                print(f"🔕 [{ahora:.3f}] Alarma desactivada (puerta cerrada)")
+    # ── Logs ─────────────────────────────────────────────────────────────
+    _logs_update_counter: int = 0
+    _ultimo_evento_puerta: str = ""   # "PUERTA_ABIERTA", "PUERTA_ABIERTA_ARMADA" o "PUERTA_CERRADA"
+    last_puerta_log_time: float = 0.0
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
+    # MÉTODOS DE LOGS
+    # ════════════════════════════════════════════════════════════════════
+
+    def _ultimo_log_puerta(self) -> str:
+        """Devuelve la acción del último log que sea PUERTA_ABIERTA, PUERTA_ABIERTA_ARMADA o PUERTA_CERRADA, o cadena vacía."""
+        archivo = "logs.json"
+        if not os.path.exists(archivo):
+            return ""
+        try:
+            with open(archivo, "r") as f:
+                content = f.read().strip()
+                if not content:
+                    return ""
+                logs = json.loads(content)
+            for log in reversed(logs):
+                accion = log.get("accion", "")
+                if accion in ("PUERTA_ABIERTA", "PUERTA_ABIERTA_ARMADA", "PUERTA_CERRADA"):
+                    return accion
+        except:
+            pass
+        return ""
+
+    def refresh_logs(self):
+        """Forzar la actualización de la vista de logs."""
+        self._logs_update_counter += 1
+
+    @rx.var
+    def logs_recientes(self) -> list[dict]:
+        """Devuelve la lista de logs (ordenados del más reciente al más antiguo)."""
+        # Forzar actualización leyendo el contador
+        _ = self._logs_update_counter
+        archivo = "logs.json"
+        if not os.path.exists(archivo):
+            return []
+        try:
+            with open(archivo, "r") as f:
+                content = f.read().strip()
+                if not content:
+                    return []
+                logs = json.loads(content)
+            return logs[::-1]
+        except:
+            return []
+
+    def registrar_log(self, accion: str, detalle: str = "", usar_usuario: bool = True):
+        """Escribe una entrada en logs.json con timestamp y usuario actual (opcional)."""
+        import json
+        from datetime import datetime
+        
+        usuario = self.current_user if (self.current_user.strip() and usar_usuario) else "sistema"
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        entrada = {
+            "timestamp": timestamp,
+            "accion": accion,
+            "usuario": usuario,
+            "detalle": detalle
+        }
+        
+        archivo = "logs.json"
+        try:
+            if os.path.exists(archivo):
+                with open(archivo, "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        logs = json.loads(content)
+                    else:
+                        logs = []
+            else:
+                logs = []
+            
+            logs.append(entrada)
+            # Limitar a 500 registros para no saturar el archivo
+            if len(logs) > 500:
+                logs = logs[-500:]
+            with open(archivo, "w") as f:
+                json.dump(logs, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ Error escribiendo log: {e}")
+
+    # ════════════════════════════════════════════════════════════════════
+    # CARGA DE USUARIO DESDE SUSCRIPCIÓN
+    # ════════════════════════════════════════════════════════════════════
+
+    @rx.event
+    def cargar_usuario_desde_subscripcion(self, endpoint: str):
+        """Busca el nombre de usuario asociado a un endpoint en suscriptores.json."""
+        archivo = "suscriptores.json"
+        try:
+            if os.path.exists(archivo):
+                with open(archivo, "r") as f:
+                    subs = json.load(f)
+                for s in subs:
+                    if s.get("endpoint") == endpoint:
+                        self.current_user = s.get("nombre_usuario", "")
+                        self.current_session = endpoint
+                        print(f"👤 Usuario cargado: {self.current_user}")
+                        return
+            self.current_user = ""
+            self.current_session = ""
+            print("👤 No se encontró usuario para este endpoint")
+        except Exception as e:
+            print(f"❌ Error cargando usuario: {e}")
+
+    # ════════════════════════════════════════════════════════════════════
     # ON_LOAD
-    # ══════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
+
     @rx.event
     async def on_load(self):
         global _SSH_STARTED
-
+        # Cargar el último evento de puerta desde los logs (para evitar duplicados al iniciar)
+        self._ultimo_evento_puerta = self._ultimo_log_puerta()
         self.sistema_armado = await asyncio.to_thread(get_sistema_armado)
         self.puerta_abierta = await asyncio.to_thread(get_puerta_abierta)
         self.status = "🔒 Sistema de Seguridad: ARMADO" if self.sistema_armado else "🔓 Sistema de Seguridad: DESARMADO"
@@ -116,43 +211,125 @@ class State(rx.State):
         except Exception as e:
             print(f"⚠️ Error controlado al iniciar MQTT: {e}")
 
+        # Obtener la suscripción activa del navegador
+        yield rx.call_script(
+            """
+            (async function() {
+                try {
+                    const reg = await navigator.serviceWorker.ready;
+                    const pushSub = await reg.pushManager.getSubscription();
+                    if (pushSub) {
+                        return pushSub.endpoint;
+                    }
+                    return null;
+                } catch(e) {
+                    return null;
+                }
+            })();
+            """,
+            callback=State.cargar_usuario_desde_subscripcion
+        )
+
         yield State.actualizar_estados
         yield State.sync_ui_loop
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
     # ARMAR / DESARMAR
-    # ══════════════════════════════════════════════════════════════════════
+    # ════════════════════════════════════════════════════════════════════
+
     @rx.event
     async def conmutar_alarma(self):
         nuevo = await asyncio.to_thread(toggle_sistema_armado)
         self.sistema_armado = nuevo
         self.status = "🔒 Sistema de Seguridad: ARMADO" if nuevo else "🔓 Sistema de Seguridad: DESARMADO"
+        
+        # Registrar evento con usuario
+        accion = "ARMADO" if nuevo else "DESARMADO"
+        puerta_estado = "abierta" if self.puerta_abierta else "cerrada"
+        detalle = f"H.Ppal: {puerta_estado}"
+        self.registrar_log(accion, detalle, usar_usuario=True)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # LOOP DE SINCRONIZACIÓN GENERAL
-    # ══════════════════════════════════════════════════════════════════════
+        # Si se arma con la puerta abierta, NO se debe enviar alerta hasta que cierre y vuelva a abrir
+        if nuevo and self.puerta_abierta:
+            # Ponemos el flag de notificación como ya enviado para evitar falsas alarmas
+            await asyncio.to_thread(set_notificacion_enviada, True)
+            self.registrar_log(
+                "SISTEMA_ARMADO_PUERTA_ABIERTA",
+                "Sistema armado con puerta abierta - Alarma en espera",
+                usar_usuario=True
+            )
+
+    # ════════════════════════════════════════════════════════════════════
+    # LOOP DE SINCRONIZACIÓN GENERAL (con control de duplicados)
+    # ════════════════════════════════════════════════════════════════════
+
     @rx.event(background=True)
     async def sync_ui_loop(self):
+        ultima_puerta = None
+        cambio_registrado = False  # Flag para evitar duplicados del mismo cambio
         while True:
             try:
                 real_armado = await asyncio.to_thread(get_sistema_armado)
                 real_puerta = await asyncio.to_thread(get_puerta_abierta)
 
                 async with self:
+                    # Actualizar estado visual
                     if self.sistema_armado != real_armado or self.puerta_abierta != real_puerta:
                         self.sistema_armado = real_armado
                         self.puerta_abierta = real_puerta
                         self.status = "🔒 Sistema de Seguridad: ARMADO" if real_armado else "🔓 Sistema de Seguridad: DESARMADO"
 
+                    # Detectar cambio de estado de la puerta
+                    if ultima_puerta is None:
+                        ultima_puerta = real_puerta
+                        cambio_registrado = False
+                    elif ultima_puerta != real_puerta:
+                        # Si ha cambiado y no se ha registrado aún este cambio
+                        if not cambio_registrado:
+                            # Determinar la acción
+                            if real_puerta and real_armado:
+                                estado_actual = "PUERTA_ABIERTA_ARMADA"
+                                estado_texto = "ABIERTA"
+                            elif real_puerta:
+                                estado_actual = "PUERTA_ABIERTA"
+                                estado_texto = "ABIERTA"
+                            else:
+                                estado_actual = "PUERTA_CERRADA"
+                                estado_texto = "CERRADA"
+
+                            # Solo registrar si es diferente al último registrado y ha pasado al menos 1 segundo
+                            ahora = time.time()
+                            if estado_actual != self._ultimo_evento_puerta and (ahora - self.last_puerta_log_time >= 1.0):
+                                detalle = f"H.Ppal → {estado_texto}"
+                                self.registrar_log(
+                                    estado_actual,
+                                    detalle,
+                                    usar_usuario=False
+                                )
+                                self._ultimo_evento_puerta = estado_actual
+                                self.last_puerta_log_time = ahora
+                                cambio_registrado = True
+                        # Actualizamos ultima_puerta siempre
+                        ultima_puerta = real_puerta
+                    else:
+                        # Si no hay cambio, reseteamos el flag para el próximo cambio
+                        cambio_registrado = False
+
+                    # Manejar alarma (intrusión)
                     if real_armado and real_puerta:
                         ya_notificado = await asyncio.to_thread(get_notificacion_enviada)
                         if not ya_notificado:
                             await asyncio.to_thread(set_notificacion_enviada, True)
                             print("🚨 INTRUSIÓN DETECTADA - Lanzando secuencia de alerta")
-                            await self.enviar_notificacion(
+                            self.enviar_notificacion(
                                 "🚨 ALERTA: INTRUSIÓN",
                                 "La puerta ha sido abierta con el sistema ARMADO.",
                                 "todos"
+                            )
+                            self.registrar_log(
+                                "ALARMA_DISPARADA",
+                                "Notificación enviada",
+                                usar_usuario=False
                             )
                     elif not real_puerta:
                         ya_notificado = await asyncio.to_thread(get_notificacion_enviada)
@@ -164,6 +341,11 @@ class State(rx.State):
 
             await asyncio.sleep(0.5)
 
+    # ════════════════════════════════════════════════════════════════════
+    # EL RESTO DE MÉTODOS (mantener igual)
+    # ════════════════════════════════════════════════════════════════════
+
+    # ... (aquí van todos los demás métodos como verificar_alarma, keepalive_ssh_task, actualizar_estados, monitor_temperatura_fan, etc.)
     # ══════════════════════════════════════════════════════════════════════
     # SSH keepalive
     # ══════════════════════════════════════════════════════════════════════
@@ -364,6 +546,8 @@ class State(rx.State):
                 if endpoint_dup.get("nombre_usuario") != nombre_usuario:
                     endpoint_dup["nombre_usuario"] = nombre_usuario
                     with open(archivo, "w") as f: json.dump(subs, f, indent=4)
+                    self.current_user = nombre_usuario
+                    self.current_session = sub_dict.get("endpoint", "")
                     self.status = f"🔄 Nombre actualizado: '{nombre_usuario}'"
                     return rx.window_alert(f"✅ Nombre actualizado a '{nombre_usuario}'")
                 else:
@@ -375,6 +559,8 @@ class State(rx.State):
             sub_dict["nombre_usuario"] = nombre_usuario
             subs.append(sub_dict)
             with open(archivo, "w") as f: json.dump(subs, f, indent=4)
+            self.current_user = nombre_usuario
+            self.current_session = sub_dict.get("endpoint", "")
             self.status = f"🔔 Vinculado: '{nombre_usuario}'"
             return rx.window_alert(f"✅ Dispositivo '{nombre_usuario}' vinculado!")
         except Exception as e:
@@ -564,6 +750,7 @@ class State(rx.State):
         except Exception as e:
             async with self:
                 self.status = f"❌ Error: {str(e)[:60]}"
+
     # ══════════════════════════════════════════════════════════════════════
     # ACCIONES GENÉRICAS (usan DEVICE_CONFIG y device_actions)
     # ══════════════════════════════════════════════════════════════════════

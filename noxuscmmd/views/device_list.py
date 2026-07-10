@@ -14,6 +14,108 @@ CAM_1_POS = {
     "top": "83%",    # Cambia según tu imagen
     "left": "5%",   # Cambia según tu imagen
 }
+
+
+def logs_popover():
+    """Popover que muestra el historial de logs desde logs.json con formato de texto plano."""
+    return rx.popover.root(
+        rx.popover.trigger(
+            rx.button(
+                rx.icon("clipboard-list", size=18, color="#94a3b8"),
+                variant="ghost",
+                size="1",
+                cursor="pointer",
+                aria_label="Ver registros",
+                title="Historial de eventos",
+            )
+        ),
+        rx.popover.content(
+            rx.vstack(
+                # Cabecera con título y botones de refresco + cerrar
+                rx.hstack(
+                    rx.icon("clipboard-list", size=16, color="#94a3b8"),
+                    rx.heading("REGISTROS", size="3", letter_spacing="0.05em"),
+                    rx.spacer(),
+                    rx.hstack(
+                        rx.button(
+                            rx.icon("refresh-cw", size=14),
+                            variant="ghost",
+                            size="1",
+                            on_click=State.refresh_logs,
+                            title="Refrescar logs",
+                        ),
+                        rx.button(
+                            rx.icon("x", size=14),
+                            variant="ghost",
+                            size="1",
+                            on_click=rx.call_script("document.querySelector('[data-state=open]')?.click()"),
+                            title="Cerrar",
+                        ),
+                        spacing="1",
+                    ),
+                    width="100%",
+                ),
+                rx.divider(opacity="0.1"),
+                # Contenido de los logs
+                rx.box(
+                    rx.foreach(
+                        State.logs_recientes,
+                        lambda log: rx.hstack(
+                            # Icono según acción (anidado correctamente)
+                            rx.cond(
+                                log["accion"] == "ALARMA_DISPARADA",
+                                rx.icon("triangle-alert", size=16, color="#ef4444"),  # ⚠️ solo para "Notificación enviada"
+                                rx.cond(
+                                    log["accion"] == "ARMADO",
+                                    rx.icon("shield-check", size=16, color="#22c55e"),
+                                    rx.cond(
+                                        log["accion"] == "DESARMADO",
+                                        rx.icon("shield-off", size=16, color="#64748b"),
+                                        rx.cond(
+                                            log["accion"] == "PUERTA_ABIERTA",
+                                            rx.icon("door-open", size=16, color="#f97316"),      # 🚪
+                                            rx.cond(
+                                                log["accion"] == "PUERTA_ABIERTA_ARMADA",
+                                                rx.icon("door-open", size=16, color="#f97316"),  # 🚪 ¡mismo icono!
+                                                rx.cond(
+                                                    log["accion"] == "PUERTA_CERRADA",
+                                                    rx.icon("door-closed", size=16, color="#22c55e"),
+                                                    rx.icon("file-text", size=16, color="#94a3b8")
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            ),
+                            rx.text(log["timestamp"], size="1", color="#94a3b8", width="150px", font_family="monospace"),
+                            rx.cond(
+                                log["usuario"] != "sistema",
+                                rx.text(log["usuario"], size="1", color="#38bdf8", width="100px"),
+                                rx.text("", width="100px"),
+                            ),
+                            rx.text(log["detalle"], size="1", color="#e2e8f0", flex="1"),
+                            spacing="2",
+                            width="100%",
+                            align="center",
+                            padding_y="0.3em",
+                            border_bottom="1px solid rgba(255,255,255,0.05)",
+                        ),
+                    ),
+                    max_height="350px",
+                    overflow_y="auto",
+                    width="100%",
+                    font_family="monospace",
+                ),
+                spacing="2",
+                width="min(700px, 92vw)",
+                padding="8px",
+            ),
+            background="#111827",
+            border="1px solid rgba(255,255,255,0.1)",
+            box_shadow="0 10px 25px -5px rgba(0,0,0,0.5)",
+            padding="12px",
+        ),
+    )
 # ========== ALARMA CONTROL VIEW (con popover y plano) ==========
 def alarma_control_view():
     return rx.card(
@@ -117,7 +219,7 @@ def alarma_control_view():
                         padding="10px",
                     ),
                 ),
-
+                logs_popover(),
                 rx.heading("SEGURIDAD", size="3", letter_spacing="0.05em"),
                 rx.spacer(),
                 rx.badge(
