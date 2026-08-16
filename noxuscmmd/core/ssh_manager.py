@@ -124,18 +124,3 @@ class SSHManager:
                     await cls.connect_async()
             else:
                 await cls.connect_async()
-
-    # Método síncrono de una sola conexión (para llamadas externas puntuales)
-    @staticmethod
-    def execute(command: str, host: str, user: str) -> str:
-        try:
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            client.connect(hostname=host, username=user, timeout=3)
-            _, stdout, stderr = client.exec_command(command, timeout=3)
-            out = stdout.read().decode().strip()
-            err = stderr.read().decode().strip()
-            client.close()
-            return out if not err else f"Error: {err}"
-        except Exception as e:
-            return f"Excepción SSH: {str(e)}"

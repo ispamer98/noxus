@@ -8,3 +8,22 @@ __pycache__/
 *.log
 .env
 *.db
+webos_key.json
+
+# Estado en vivo de la casa y credenciales — datos de esta instalación
+# concreta, nunca código: no tienen sitio en un repositorio público.
+# (repo público confirmado el 2026-08-16; tinytuya.json lleva un apiSecret
+# real y control_accesos.json nombres+tarjetas RFID reales)
+ajustes_app.json
+automatizaciones.json
+automatizaciones_estado.json
+control_accesos.json
+estado_seguridad.json
+grupos_armado.json
+logs.json
+nodos_dinamicos.json
+registry_overrides.json
+suscriptores.json
+tinytuya.json
+*.bak.*
+copias_antes_refactor_*/
