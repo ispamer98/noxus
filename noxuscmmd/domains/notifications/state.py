@@ -324,12 +324,19 @@ class PushState(rx.State):
         return f"Se enviará a {len(self.destinos)} dispositivos"
 
     @rx.event
-    def refrescar_dispositivos(self, is_open: bool = True):
+    async def refrescar_dispositivos(self, is_open: bool = True):
         """Relee los dispositivos suscritos al ABRIR el diálogo — se dan de alta
         y de baja desde otros dispositivos, así que la lista de esta sesión se
-        queda vieja enseguida."""
+        queda vieja enseguida.
+
+        Pide permiso porque la lista son los NOMBRES de los aparatos de la
+        familia («iPhone de…»): quien no puede mandar avisos tampoco tiene por
+        qué saber quién vive aquí."""
         if not is_open:
             return
+        if (no := await permisos.denegar(self, permisos.AVISAR)):
+            self.dispositivos = []
+            return no
         try:
             if os.path.exists(SUSCRIPTORES_FILE):
                 with open(SUSCRIPTORES_FILE) as f:
@@ -343,6 +350,10 @@ class PushState(rx.State):
 
     @rx.event
     async def enviar_alerta(self, form_data: dict):
+        # Un aviso sale con la cara del panel a TODOS los móviles de la casa:
+        # sin esto, un invitado podía escribir lo que quisiera y mandarlo.
+        if (no := await permisos.denegar(self, permisos.AVISAR)):
+            return no
         titulo = (form_data.get("titulo") or "").strip() or "Aviso de Noxus"
         mensaje = (form_data.get("mensaje") or "").strip()
         if not mensaje:
@@ -363,6 +374,8 @@ class PushState(rx.State):
 
     @rx.event
     async def lanzar_alerta_global(self):
+        if (no := await permisos.denegar(self, permisos.AVISAR)):
+            return no
         asyncio.create_task(asyncio.to_thread(
             enviar_notificacion, "Notificación del Panel",
             "Alguien quiere que sepas que hay un mensaje importante.",

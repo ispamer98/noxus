@@ -25,17 +25,11 @@ from ..nodes import sensor_events
 from ..nodes import store as nodes_store
 from ..notifications.state import PushState
 from . import shared_state
-from . import logs_store
 from . import abiertos
 from . import arming
 from ...core import sesiones
 
 _MQTT_STARTED = False
-
-# Cuántos eventos lleva el desplegable de historial de la vista clásica. Ver
-# logs_recientes: el listado de verdad, con filtros y búsqueda, es la pestaña
-# Registros.
-RECIENTES = 200
 
 
 class SecurityState(rx.State):
@@ -82,19 +76,13 @@ class SecurityState(rx.State):
 
     # ── Logs ─────────────────────────────────────────────────────────────
     def refresh_logs(self):
+        """Marca que el registro ha cambiado.
+
+        Ya no repinta nada por sí sola: el desplegable de historial que leía este
+        contador se fue con la vista clásica (fase 8.3). Se mantiene el contador
+        porque es la señal de "ha pasado algo que se ha apuntado", y la pestaña
+        Registros la usa para recargar sin sondear el disco."""
         self._logs_update_counter += 1
-
-    @rx.var
-    def logs_recientes(self) -> list[dict]:
-        """Los últimos eventos para el desplegable de la vista clásica.
-
-        Acotado a RECIENTES: esta Var es pública, así que su contenido viaja al
-        navegador de cada sesión. Antes devolvía el histórico completo, que
-        cabía porque el fichero tenía tope de 1.500 entradas; ahora no lo tiene
-        (ver logs_store) y esto sería mandar el histórico entero por pestaña
-        abierta para pintar una caja con scroll de 350 píxeles."""
-        _ = self._logs_update_counter
-        return logs_store.ultimos(RECIENTES)
 
     # ── Carga inicial ────────────────────────────────────────────────────
     @rx.event

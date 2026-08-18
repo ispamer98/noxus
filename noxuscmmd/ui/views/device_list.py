@@ -1,6 +1,15 @@
+"""
+El PLANO de la casa: los marcadores que se pintan encima de la imagen y el
+arrastre para colocarlos.
+
+Se llamaba así porque este fichero era la vista clásica entera (la lista de
+dispositivos de /clasica, retirada en la fase 8.3). De aquella pantalla solo
+queda lo que el panel sigue usando: el plano —que la pestaña Plano monta tal
+cual, ver ui/dashboard/views/floor_plan.py— y el enganche de la suscripción de
+avisos, que se monta una vez a nivel de página.
+"""
 import reflex as rx
 from ...domains.security.state import SecurityState
-from ...domains.infra.state import InfraState
 from ...domains.cameras.state import CameraState
 from ...domains.notifications.state import PushState
 from ...domains.notifications.push import VAPID_PUBLIC as _VAPID_PUBLIC
@@ -453,13 +462,6 @@ def _dynamic_light_marker(l: dict) -> rx.Component:
     )
 
 
-def subscribe_push_event():
-    """Alta de este dispositivo en las notificaciones. El JavaScript vive en
-    domains/notifications/scripts.py: lo necesita también PushState, que es
-    quien lo encadena solo al entrar cuando el aparato no está vinculado."""
-    return PushState.suscribir
-
-
 def check_existing_subscription_event():
     """Al montar la página: recupera el nombre de este dispositivo a partir de
     la suscripción que ya tenga el navegador y, si no está vinculado, lo da de
@@ -499,120 +501,6 @@ def _log_icon(accion) -> rx.Component:
         accion,
         *[(k, rx.icon(icono, size=16, color=color)) for k, (icono, color) in _LOG_META.items()],
         rx.icon("file-text", size=16, color="#94a3b8"),
-    )
-
-
-def log_row(log: dict):
-    """Una fila del historial de eventos. Extraída a función propia para que
-    la pestaña "Registros" del dashboard nuevo pinte exactamente igual que
-    este popover — misma fuente, mismos iconos, mismo formato."""
-    return rx.hstack(
-        _log_icon(log["accion"]),
-        rx.text(log["timestamp"], size="1", color="#94a3b8", width="150px", font_family="monospace"),
-        rx.text(log["usuario"], size="1", color="#38bdf8", width="100px"),
-        rx.cond(
-            (log["accion"] == "ARMADO") | (log["accion"] == "ARMADO_GRUPO"),
-            rx.cond(
-                log["detalle"].to(str) != "Armado (sin abiertos)",
-                rx.popover.root(
-                    rx.popover.trigger(
-                        rx.icon("info", size=16, color="#f97316", cursor="pointer")
-                    ),
-                    rx.popover.content(
-                        rx.vstack(
-                            rx.text("Elementos abiertos al armar:", weight="bold", color="#e2e8f0"),
-                            rx.text(
-                                log["detalle"].to(str).replace("Armado con abiertos: ", ""),
-                                color="#94a3b8"
-                            ),
-                            spacing="2",
-                        ),
-                        background="#1e293b",
-                        border="1px solid #475569",
-                        padding="12px",
-                        border_radius="8px",
-                    ),
-                ),
-            ),
-            rx.cond(
-                (log["accion"] == "DESARMADO") | (log["accion"] == "DESARMADO_GRUPO"),
-                rx.icon("shield-off", size=16, color="#64748b"),
-                rx.text(log["detalle"], size="1", color="#e2e8f0", flex="1"),
-            ),
-        ),
-        rx.cond(
-            (log["accion"] == "ARMADO") | (log["accion"] == "DESARMADO") | (log["grupo"].to(str) == "TOTAL"),
-            rx.badge("TOTAL", size="1", variant="soft", color_scheme="gray"),
-            rx.cond(
-                (log["accion"] == "ARMADO_GRUPO") | (log["accion"] == "DESARMADO_GRUPO"),
-                rx.badge(f"PARCIAL: {log['grupo']}", size="1", variant="soft", color_scheme="purple"),
-                rx.fragment(),
-            ),
-        ),
-        spacing="2",
-        width="100%",
-        align="center",
-        padding_y="0.3em",
-        border_bottom="1px solid rgba(255,255,255,0.05)",
-    )
-
-
-def logs_popover():
-    """Popover que muestra el historial de logs con el formato solicitado."""
-    return rx.popover.root(
-        rx.popover.trigger(
-            rx.button(
-                rx.icon("clipboard-list", size=18, color="#94a3b8"),
-                variant="ghost",
-                size="1",
-                cursor="pointer",
-                aria_label="Ver registros",
-                title="Historial de eventos",
-            )
-        ),
-        rx.popover.content(
-            rx.vstack(
-                rx.hstack(
-                    rx.icon("clipboard-list", size=16, color="#94a3b8"),
-                    rx.button(
-                        "REGISTROS",
-                        variant="ghost",
-                        size="3",
-                        letter_spacing="0.05em",
-                        font_weight="bold",
-                        padding="0",
-                        on_click=SecurityState.refresh_logs,
-                        _active={"transform": "scale(1.1)"},
-                        _hover={"color": "#e2e8f0"},
-                    ),
-                    rx.spacer(),
-                    rx.button(
-                        rx.icon("x", size=14),
-                        variant="ghost",
-                        size="1",
-                        on_click=rx.call_script("document.querySelector('[data-state=open]')?.click()"),
-                        title="Cerrar",
-                    ),
-                    width="100%",
-                    align="center",
-                ),
-                rx.divider(opacity="0.1"),
-                rx.box(
-                    rx.foreach(SecurityState.logs_recientes, log_row),
-                    max_height="350px",
-                    overflow_y="auto",
-                    width="100%",
-                    font_family="monospace",
-                ),
-                spacing="2",
-                width="min(700px, 92vw)",
-                padding="8px",
-            ),
-            background="#111827",
-            border="1px solid rgba(255,255,255,0.1)",
-            box_shadow="0 10px 25px -5px rgba(0,0,0,0.5)",
-            padding="12px",
-        ),
     )
 
 
@@ -685,151 +573,6 @@ def floor_plan_content():
     )
 
 
-def alarma_control_view():
-    return rx.card(
-        rx.vstack(
-            rx.hstack(
-                rx.popover.root(
-                    rx.popover.trigger(
-                        rx.button(
-                            rx.icon(
-                                rx.cond(SecurityState.sistema_armado, "shield-check", "shield-off"),
-                                color=rx.cond(SecurityState.sistema_armado, "#ef4444", "#64748b"),
-                                size=22,
-                            ),
-                            variant="ghost",
-                            size="1",
-                            cursor="pointer",
-                            aria_label="Ver plano de sensores",
-                            title="Ver mapa de sensores",
-                        )
-                    ),
-                    rx.popover.content(
-                        rx.vstack(
-                            rx.text("Plano de Planta", size="1", weight="bold", color="#94a3b8"),
-                            rx.divider(opacity="0.1"),
-                            floor_plan_content(),
-                            spacing="2",
-                            width="min(340px, 92vw)",
-                        ),
-                        background="#111827",
-                        border="1px solid rgba(255, 255, 255, 0.1)",
-                        box_shadow="0 10px 25px -5px rgba(0, 0, 0, 0.5)",
-                        padding="10px",
-                    ),
-                ),
-                logs_popover(),
-                rx.heading("SEGURIDAD", size="3", letter_spacing="0.05em"),
-                rx.spacer(),
-                rx.badge(
-                    rx.cond(SecurityState.puerta_abierta, "ABIERTA", "CERRADA"),
-                    color_scheme=rx.cond(SecurityState.puerta_abierta, "red", "green"),
-                    variant="surface"
-                ),
-                rx.button(
-                    rx.icon("triangle-alert", size=18, color="#f97316"),
-                    on_click=rx.call_script(
-                        """
-                        (async function() {
-                            let sub = null;
-                            try {
-                                const reg = await navigator.serviceWorker.ready;
-                                const pushSub = await reg.pushManager.getSubscription();
-                                if (pushSub) {
-                                    sub = {
-                                        endpoint: pushSub.endpoint,
-                                        keys: {
-                                            p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(pushSub.getKey('p256dh')))),
-                                            auth: btoa(String.fromCharCode.apply(null, new Uint8Array(pushSub.getKey('auth')))),
-                                        }
-                                    };
-                                }
-                            } catch(e) {
-                                console.warn('No se pudo obtener la suscripción:', e);
-                            }
-                            const subscription = sub ? JSON.stringify(sub) : 'null';
-                            return subscription;
-                        })();
-                        """,
-                        callback=PushState.lanzar_alerta_global_con_subscripcion
-                    ),
-                    variant="ghost",
-                    size="1",
-                    title="Enviar alerta a todos",
-                    aria_label="Enviar alerta push a todos los dispositivos",
-                ),
-                rx.button(
-                    rx.icon("bell", size=18),
-                    on_click=subscribe_push_event(),
-                    variant="ghost",
-                    size="1",
-                    title="Suscribirse a notificaciones push",
-                    aria_label="Suscribirse a notificaciones push",
-                ),
-                width="100%",
-                align="center",
-                spacing="2",
-            ),
-            rx.divider(opacity="0.1"),
-            rx.hstack(
-                rx.text("Monitoreo de Intrusión", size="2", color="#94a3b8"),
-                rx.spacer(),
-                rx.button(
-                    rx.cond(SecurityState.sistema_armado, "DESARMAR", "ARMAR"),
-                    on_click=SecurityState.conmutar_alarma,
-                    color_scheme=rx.cond(SecurityState.sistema_armado, "red", "green"),
-                    variant=rx.cond(SecurityState.sistema_armado, "solid", "surface"),
-                    size="2",
-                ),
-                width="100%",
-                align="center",
-            ),
-            spacing="3",
-        ),
-        width="100%",
-        background="rgba(255, 255, 255, 0.03)",
-        backdrop_filter="blur(10px)",
-        border=rx.cond(SecurityState.sistema_armado, "1px solid rgba(239, 68, 68, 0.3)", "1px solid rgba(255, 255, 255, 0.1)"),
-        padding="4",
-    )
-
-
-def cctv_view():
-    return rx.card(
-        rx.vstack(
-            rx.hstack(
-                rx.icon("video", size=20, color="#818cf8"),
-                rx.heading("CCTV", size="3", letter_spacing="0.05em"),
-                rx.spacer(),
-                rx.vstack(
-                    rx.text("H.Ppal", size="1", color="gray"),
-                    rx.icon("cctv", size=20, color="#38bdf8"),
-                    on_click=CameraState.toggle_fija_stream,
-                    cursor="pointer",
-                    align="center",
-                    spacing="0",
-                ),
-                rx.vstack(
-                    rx.text("PTZ", size="1", color="gray"),
-                    rx.icon("rotate-cw", size=20, color="#a78bfa"),
-                    on_click=CameraState.toggle_ptz_stream,
-                    cursor="pointer",
-                    align="center",
-                    spacing="0",
-                ),
-                width="100%",
-                align="center",
-            ),
-            spacing="3",
-        ),
-        width="100%",
-        background="rgba(255, 255, 255, 0.03)",
-        backdrop_filter="blur(10px)",
-        border="1px solid rgba(255, 255, 255, 0.1)",
-        padding="4",
-    )
-
-
 def _infra_host_row(host) -> rx.Component:
     host_id = host["id"].to(str)
     return status_row(
@@ -842,48 +585,3 @@ def _infra_host_row(host) -> rx.Component:
     )
 
 
-def infra_hosts_card():
-    """Lista de equipos con estado online/offline en vivo (InfraState.
-    actualizar_estados hace ping cada 8s).
-
-    Sale de NodesState.hosts con un rx.foreach, igual que la pestaña Equipos.
-    Antes era una lista de siete equipos escrita a mano aquí, con su nombre y
-    su icono puestos a mano también, y eso significaba tres cosas: un equipo
-    dado de alta desde la web no aparecía nunca, uno renombrado seguía saliendo
-    con el nombre viejo, y cambiarle el icono no servía de nada. Ahora esta
-    tarjeta enseña exactamente los equipos que hay, como se llamen ahora."""
-    return rx.vstack(
-        rx.hstack(
-            rx.icon("activity", size=20, color="#38bdf8"),
-            rx.heading("INFRAESTRUCTURA", size="3", letter_spacing="0.05em"),
-            rx.spacer(),
-            width="100%",
-            align="center",
-            px="2",
-            pt="2",
-        ),
-        rx.card(
-            rx.vstack(
-                rx.foreach(NodesState.hosts, _infra_host_row),
-                spacing="2",
-                width="100%",
-            ),
-            width="100%",
-            background="rgba(255, 255, 255, 0.03)",
-            backdrop_filter="blur(10px)",
-            border="1px solid rgba(255, 255, 255, 0.1)",
-            padding="4",
-        ),
-        width="100%",
-        spacing="3",
-    )
-
-
-def device_list_view():
-    return rx.vstack(
-        alarma_control_view(),
-        cctv_view(),
-        infra_hosts_card(),
-        width="100%",
-        spacing="3",
-    )

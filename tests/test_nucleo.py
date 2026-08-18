@@ -94,4 +94,27 @@ def _retardos() -> Caso:
 
 
 def ejecutar() -> list[Caso]:
-    return [_escritura_atomica(), _permisos(), _retardos()]
+    return [_escritura_atomica(), _permisos(), _retardos(), _avisos()]
+
+
+def _avisos() -> Caso:
+    """Quién puede mandar un aviso a los móviles de la casa.
+
+    Un aviso sale con la cara del panel, así que un invitado no lo manda; y la
+    lista de destinatarios son los NOMBRES de los aparatos de la familia, que
+    tampoco tiene por qué ver.
+    """
+    c = Caso("Permiso para avisar")
+    c.cierto("admin puede avisar", permisos.puede_rol("admin", permisos.AVISAR))
+    c.cierto("familia puede avisar", permisos.puede_rol("familia", permisos.AVISAR))
+    c.revisar("invitado NO puede avisar",
+              permisos.puede_rol("invitado", permisos.AVISAR), False)
+    c.revisar("pendiente tampoco",
+              permisos.puede_rol("pendiente", permisos.AVISAR), False)
+    c.revisar("bloqueado tampoco",
+              permisos.puede_rol("bloqueado", permisos.AVISAR), False)
+
+    # Y que la negativa tenga texto propio: un "no" sin explicación es un fallo
+    # que nadie sabe interpretar.
+    c.cierto("la negativa tiene mensaje", bool(permisos.motivo(permisos.AVISAR)))
+    return c

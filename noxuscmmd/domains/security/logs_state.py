@@ -3,7 +3,7 @@ Estado de la pestaña "Registros": qué familias se están mirando (una o
 varias a la vez, o "Todo"), desde cuándo y el buscador.
 
 Va aparte de SecurityState a propósito. Ahí el histórico era una lista y ya
-está (SecurityState.logs_recientes, que sigue usando la vista clásica); aquí
+estaba (SecurityState.logs_recientes, del desplegable de la vista clásica); aquí
 hay pestañas, rango de fechas y búsqueda, y todo eso es estado de ESTA
 pantalla, no del sistema de seguridad.
 

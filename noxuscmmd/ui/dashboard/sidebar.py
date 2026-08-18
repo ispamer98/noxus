@@ -112,20 +112,6 @@ def sidebar() -> rx.Component:
             rx.spacer(),
             rx.divider(border_color=theme.BORDER),
             rx.vstack(
-                rx.link(
-                    rx.hstack(
-                        rx.icon("arrow-left", size=16, color=theme.MUTED, flex_shrink="0"),
-                        rx.cond(
-                            ~DashboardState.sidebar_collapsed,
-                            rx.text("Vista clásica", size="1", color=theme.MUTED),
-                        ),
-                        spacing="3",
-                        align="center",
-                    ),
-                    href="/clasica",
-                    _hover={"opacity": "0.7"},
-                    padding="8px",
-                ),
                 rx.hstack(
                     rx.icon(
                         rx.cond(DashboardState.sidebar_collapsed, "chevrons-right", "chevrons-left"),

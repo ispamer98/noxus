@@ -15,6 +15,7 @@ PUERTAS = "puertas"    # abrir accesos
 ARMAR = "armar"        # armar y desarmar, y tocar los grupos
 EQUIPOS = "equipos"    # encender/apagar ordenadores, mandos
 CAMARAS = "camaras"    # VER imagen: mural, CCTV, marcadores de cámara del plano
+AVISAR = "avisar"      # mandar un aviso a los móviles de la casa
 AJUSTES = "ajustes"    # configuración, dispositivos, invitaciones
 
 ## Qué puede cada rol. Cuatro niveles y una frase para cada uno:
@@ -24,7 +25,9 @@ AJUSTES = "ajustes"    # configuración, dispositivos, invitaciones
 #             nada: ni dar de alta, ni cambiar fichas, ni tocar ajustes. Es la
 #             diferencia entre usar la casa y reconfigurarla.
 #   invitado  las cosas «lógicas»: luces, mandos, encender y apagar equipos. NO
-#             abre puertas, NO arma ni desarma y NO VE LAS CÁMARAS. Lo de las
+#             abre puertas, NO arma ni desarma, NO VE LAS CÁMARAS y NO puede
+#             mandar avisos: un aviso sale con la cara del panel a los móviles
+#             de la familia, así que quien no vive en la casa no lo manda. Lo de las
 #             cámaras es lo que menos se ve venir y lo más importante: sin ello,
 #             un invitado que entra en el Mural tiene imagen del interior de la
 #             casa aunque no pueda tocar ningún botón. Mirar ya es acceso.
@@ -34,8 +37,8 @@ AJUSTES = "ajustes"    # configuración, dispositivos, invitaciones
 #             administrador, no un aparato que espera respuesta, así que deja de
 #             salir en la lista de los que piden acceso.
 _POR_ROL = {
-    store.ADMIN: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS, AJUSTES},
-    store.FAMILIA: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS},
+    store.ADMIN: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS, AVISAR, AJUSTES},
+    store.FAMILIA: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS, AVISAR},
     store.INVITADO: {VER, LUCES, EQUIPOS},
     store.PENDIENTE: set(),
     store.BLOQUEADO: set(),
@@ -50,6 +53,7 @@ _NEGATIVA = {
     AJUSTES: "Solo un administrador puede cambiar la configuración.",
     LUCES: "Este dispositivo no puede tocar las luces.",
     CAMARAS: "Este dispositivo no tiene acceso a las cámaras.",
+    AVISAR: "Este dispositivo no puede mandar avisos a los móviles de la casa.",
     VER: "Este dispositivo todavía no tiene acceso al panel.",
 }
 

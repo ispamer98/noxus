@@ -13,7 +13,6 @@ from .domains.security import logs_store
 from .domains.security import presencia_motor
 from .domains.cameras import movimiento_motor
 from .domains.security import watcher
-from .ui.pages.index import index_page
 from .ui.pages.upload import upload_page
 from .ui.pages.dashboard import dashboard_page
 
@@ -176,12 +175,11 @@ app.register_lifespan_task(presencia_motor.run_forever)
 # apagada y solo mira las cámaras que se marquen (ver cameras/movimiento_motor).
 app.register_lifespan_task(movimiento_motor.run_forever)
 
-# IMPORTANTE: on_load se gestiona vía on_mount en index_page (uno por domain
+# IMPORTANTE: on_load se gestiona vía on_mount en la página (uno por domain
 # state: SecurityState, InfraState) para evitar que Reflex arranque los
 # background tasks múltiples veces (una por conexión WebSocket nueva). Cada
 # domain state protege sus propios background tasks globales con su propio
 # flag _STARTED, igual que hacía _SSH_STARTED antes.
 app.add_page(dashboard_page, route="/", title="Noxus Control Center")
-app.add_page(index_page, route="/clasica", title="Noxus Pro")
 app.add_page(upload_page, route="/upload")
 app.add_page(dashboard_page, route="/panel", title="Noxus Control Center")
