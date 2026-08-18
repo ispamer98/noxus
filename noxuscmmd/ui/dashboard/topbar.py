@@ -2,7 +2,11 @@ import reflex as rx
 
 from ...domains.security.state import SecurityState
 from ...domains.notifications.state import PushState
+from ...domains.auth.state import AuthState
+from ...domains.security.arming_state import ArmingState
 from .components.form_dialog import styled_input
+from .components.paleta import boton_paleta
+from .components.enviar_alerta import dialogo_enviar_alerta
 from . import theme
 from .state import DashboardState
 
@@ -24,7 +28,14 @@ VIEW_TITLES = {
     "automations": ("Automatizaciones", "workflow"),
     "equipment": ("Equipos", "server"),
     "settings_hub": ("Ajustes", "settings"),
+    "system": ("Copias de seguridad", "hard-drive-download"),
     "logs": ("Registros", "clipboard-list"),
+    "metricas": ("Métricas", "chart-line"),
+    "voz": ("Comandos de voz", "mic"),
+    "instalador": ("Modo instalador", "ear"),
+    "presencia": ("Simulación de presencia", "user-round-check"),
+    "accesorios": ("Accesorios", "toggle-right"),
+    "movimiento": ("Detección de movimiento", "scan-eye"),
 }
 
 
@@ -46,14 +57,22 @@ def _view_title() -> rx.Component:
 
 def _arm_toggle_icon() -> rx.Component:
     """Escudo clicable: arma/desarma el sistema. Sustituye al badge de texto
-    ARMADO/DESARMADO — más compacto (cabe en móvil) y además es un atajo."""
+    ARMADO/DESARMADO — más compacto (cabe en móvil) y además es un atajo.
+
+    A quien no puede armar no se le enseña. Es solo la cara visible: quien
+    decide de verdad es el manejador (domains/security/state.py), porque el
+    evento se puede invocar sin que el botón esté pintado."""
+    return rx.cond(AuthState.puede_armar, _arm_toggle_boton())
+
+
+def _arm_toggle_boton() -> rx.Component:
     return rx.box(
         rx.icon(
             rx.cond(SecurityState.sistema_armado, "shield-check", "shield-off"),
             size=20,
             color=rx.cond(SecurityState.sistema_armado, theme.DANGER, theme.SUCCESS),
         ),
-        on_click=SecurityState.conmutar_alarma,
+        on_click=ArmingState.pedir_armar(""),
         cursor="pointer",
         padding="8px",
         border_radius="8px",
@@ -69,6 +88,69 @@ def _arm_toggle_icon() -> rx.Component:
 # "Ajustes" (ver dashboard/views/settings_hub.py:_ajustes_avisos_dialog). Es
 # exactamente el tipo de cosa que se toca una vez y no debía estar tentando a
 # quien no debería tocarla en una barra que se ve todo el rato.
+_MUESTRAS_ACENTO = {
+    "blue": "#3b82f6", "cyan": "#06b6d4", "jade": "#10b981",
+    "violet": "#8b5cf6", "amber": "#f59e0b", "orange": "#f97316",
+}
+
+
+def _apariencia() -> rx.Component:
+    """Cómo se ve ESTE accesorio: densidad y color de acento.
+
+    Va en la ventanita del dispositivo y no en Ajustes a propósito. Son
+    preferencias del accesorio, no de la casa: el televisor del salón quiere
+    botones grandes y el portátil de administrar quiere que quepa el doble. Por
+    eso tampoco pide permiso de ajustes — un invitado con una tablet tiene el
+    mismo derecho a ver los botones grandes."""
+    return rx.vstack(
+        rx.text("CÓMO SE VE ESTE APARATO", size="1", color=theme.MUTED,
+                letter_spacing="0.05em", weight="bold"),
+        rx.hstack(
+            rx.foreach(
+                AuthState.densidades_ui,
+                lambda d: rx.vstack(
+                    rx.text(d["nombre"], size="2", weight="bold",
+                            color=rx.cond(d["activa"], theme.TEXT, theme.MUTED)),
+                    rx.text(d["detalle"], size="1", color=theme.MUTED,
+                            style={"font-size": "0.65rem"}),
+                    on_click=AuthState.poner_densidad(d["id"]),
+                    cursor="pointer", spacing="0", align="start", flex="1",
+                    padding="7px 9px", border_radius="9px",
+                    background=rx.cond(d["activa"],
+                                       theme.alpha(theme.ACCENT, 0.12),
+                                       theme.BG_CARD),
+                    border=rx.cond(
+                        d["activa"],
+                        f"1px solid {theme.alpha(theme.ACCENT, 0.55)}",
+                        f"1px solid {theme.BORDER}"),
+                ),
+            ),
+            spacing="2", width="100%",
+        ),
+        rx.hstack(
+            rx.foreach(
+                AuthState.acentos_ui,
+                lambda a: rx.box(
+                    width="22px", height="22px", border_radius="50%",
+                    background=rx.match(
+                        a["id"].to(str),
+                        *[(k, v) for k, v in _MUESTRAS_ACENTO.items()],
+                        _MUESTRAS_ACENTO["blue"],
+                    ),
+                    cursor="pointer", flex_shrink="0",
+                    on_click=AuthState.poner_acento(a["id"]),
+                    # El elegido se marca con un aro, no solo con el color: dos
+                    # colores parecidos no dicen cuál está puesto.
+                    border=rx.cond(a["activo"], f"2px solid {theme.TEXT}",
+                                   f"1px solid {theme.BORDER_STRONG}"),
+                ),
+            ),
+            spacing="2", wrap="wrap", width="100%",
+        ),
+        spacing="2", width="100%",
+    )
+
+
 def _panel_dispositivo() -> rx.Component:
     """El chip de la barra: dice qué dispositivo es este y deja arreglarlo.
 
@@ -125,7 +207,7 @@ def _panel_dispositivo() -> rx.Component:
                         "Su nombre es el que aparece en los registros junto a todo lo "
                         "que se hace desde aquí.",
                         "Actívalo para recibir avisos y para que lo que hagas desde este "
-                        "aparato quede identificado en los registros.",
+                        "accesorio quede identificado en los registros.",
                     ),
                     size="1", color=theme.MUTED,
                 ),
@@ -152,6 +234,8 @@ def _panel_dispositivo() -> rx.Component:
                                       size="2", variant="surface", flex_shrink="0"),
                             spacing="2", width="100%",
                         ),
+                        rx.divider(border_color=theme.BORDER),
+                        _apariencia(),
                         rx.divider(border_color=theme.BORDER),
                         rx.button(
                             rx.icon("refresh-cw", size=14), "¿No te llegan los avisos?",
@@ -213,6 +297,24 @@ def topbar() -> rx.Component:
                 "white_space": "nowrap",
             },
         ),
+        # La lupa de la paleta de comandos, delante de los iconos de
+        # consulta: es la forma rapida de llegar a CUALQUIER sitio.
+        boton_paleta(),
+        # Mandar un aviso a los moviles de la casa sin pasar por el Resumen.
+        # Mismo tratamiento gris que Registros y Metricas y no el naranja de
+        # aviso: aqui NO esta pasando nada: es una herramienta, y en la barra
+        # tiene que pesar lo mismo que sus vecinas.
+        dialogo_enviar_alerta(
+            rx.box(
+                rx.icon("bell-ring", size=18, color=theme.MUTED),
+                cursor="pointer",
+                padding="8px",
+                border_radius="8px",
+                flex_shrink="0",
+                _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
+                title="Enviar una alerta",
+            ),
+        ),
         rx.box(
             rx.icon("clipboard-list", size=18, color=theme.MUTED),
             on_click=DashboardState.set_view("logs"),
@@ -222,6 +324,23 @@ def topbar() -> rx.Component:
             flex_shrink="0",
             _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
             title="Ver registros",
+        ),
+        # Métricas al lado de Registros: son las dos caras del mismo histórico —
+        # los hechos uno a uno y los hechos contados.
+        #
+        # Se ve TAMBIÉN en el móvil aunque ahí la barra vaya justa. Esconderlo
+        # dejaba la pantalla sin ninguna forma de llegar desde el teléfono, y una
+        # vista a la que solo se llega escribiendo ?vista=metricas en la barra de
+        # direcciones es una vista que no existe.
+        rx.box(
+            rx.icon("chart-line", size=18, color=theme.MUTED),
+            on_click=DashboardState.set_view("metricas"),
+            cursor="pointer",
+            padding="8px",
+            border_radius="8px",
+            flex_shrink="0",
+            _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
+            title="Ver métricas",
         ),
         _panel_dispositivo(),
         width="100%",

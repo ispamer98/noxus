@@ -1,0 +1,97 @@
+"""
+Lo que sostiene todo lo demás: que guardar en disco sea atómico, que los
+permisos digan no a quien toca, y que los retardos de armado salgan bien.
+
+Nada de esto acciona nada: se prueban las funciones que DECIDEN y las que
+escriben en los ficheros de la casa de pruebas, nunca las que mandan por MQTT o
+por SSH (ver comun.py).
+"""
+import json
+import os
+from pathlib import Path
+
+from tests.comun import Caso
+
+from noxuscmmd.domains.auth import permisos
+from noxuscmmd.domains.nodes import store as nodes_store
+from noxuscmmd.domains.security import retardos
+
+
+def _escritura_atomica() -> Caso:
+    c = Caso("Escritura atómica en disco")
+
+    # El invariante: mientras se escribe, el fichero de verdad nunca se ve a
+    # medias. Se comprueba que el destino queda completo y parseable y que no se
+    # deja ningún .tmp tirado, que es la marca de una escritura interrumpida.
+    ruta = Path(os.environ["RETARDOS_FILE"])
+    retardos.poner_grupo("grupo_prueba", entrada=15, salida=30)
+    c.cierto("el fichero existe tras escribir", ruta.exists())
+    datos = json.loads(ruta.read_text())
+    c.cierto("queda JSON válido", isinstance(datos, dict))
+    c.revisar("no deja .tmp suelto", ruta.with_suffix(".tmp").exists(), False)
+
+    # Y que lo escrito se relea igual, que es lo que falla cuando alguien
+    # escribe con open() directamente y se queda a medias.
+    conf = retardos.config_grupo("grupo_prueba")
+    c.revisar("relee la entrada", conf["entrada"], 15)
+    c.revisar("relee la salida", conf["salida"], 30)
+
+    # nodos_dinamicos.json es el más grande y el que más manos tiene: se
+    # comprueba que una lectura-escritura completa no lo rompe.
+    antes = nodes_store.read_all()
+    c.cierto("el almacén de nodos se lee", isinstance(antes, dict))
+    c.cierto("trae las colecciones", "sensors" in antes and "lights" in antes)
+    nodo = nodes_store.add_node("Nodo De Prueba", "10.0.0.99")
+    despues = nodes_store.read_all()
+    c.revisar("el alta se persiste",
+              any(n["id"] == nodo["id"] for n in despues["nodes"]), True)
+    nodes_store.delete_node(nodo["id"])
+    c.revisar("la baja se persiste",
+              any(n["id"] == nodo["id"] for n in nodes_store.read_all()["nodes"]),
+              False)
+    return c
+
+
+def _permisos() -> Caso:
+    c = Caso("Permisos por rol")
+    # La tabla que gobierna la casa. Si alguna de estas cambia sin querer, un
+    # invitado abre la puerta de la calle.
+    esperado = {
+        ("admin", permisos.AJUSTES): True,
+        ("admin", permisos.PUERTAS): True,
+        ("familia", permisos.PUERTAS): True,
+        ("familia", permisos.ARMAR): True,
+        ("familia", permisos.AJUSTES): False,
+        ("invitado", permisos.LUCES): True,
+        ("invitado", permisos.EQUIPOS): True,
+        ("invitado", permisos.PUERTAS): False,
+        ("invitado", permisos.ARMAR): False,
+        ("invitado", permisos.CAMARAS): False,
+        ("invitado", permisos.AJUSTES): False,
+        ("pendiente", permisos.VER): False,
+        ("bloqueado", permisos.VER): False,
+    }
+    for (rol, cap), debe in esperado.items():
+        c.revisar(f"{rol} · {cap}", permisos.puede_rol(rol, cap), debe)
+    return c
+
+
+def _retardos() -> Caso:
+    c = Caso("Retardos de entrada y salida")
+    retardos.poner_grupo("g1", entrada=20, salida=45)
+    retardos.poner_elemento("sensor_lento", entrada=60)
+
+    c.revisar("retardo de salida del grupo", retardos.retardo_salida("g1"), 45)
+    c.revisar("retardo de entrada del grupo",
+              retardos.retardo_entrada("g1", "cualquiera"), 20)
+    # El del elemento manda sobre el del grupo: una puerta concreta puede
+    # necesitar más tiempo que el resto.
+    c.revisar("el del elemento gana al del grupo",
+              retardos.retardo_entrada("g1", "sensor_lento"), 60)
+    c.revisar("un grupo sin configurar no inventa retardo",
+              retardos.retardo_salida("grupo_que_no_existe"), 0)
+    return c
+
+
+def ejecutar() -> list[Caso]:
+    return [_escritura_atomica(), _permisos(), _retardos()]

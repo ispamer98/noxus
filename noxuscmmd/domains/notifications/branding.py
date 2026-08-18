@@ -35,16 +35,46 @@ _MANIFESTS = (
     Path(".web/build/client/manifest.json"),
 )
 
-_BASE = {
-    "start_url": "/",
+# Lo único que este módulo decide es el NOMBRE. Todo lo demás del manifest
+# (colores, iconos, atajos del icono) vive en assets/manifest.json y se
+# respeta tal cual.
+#
+# Antes había aquí una copia literal del resto del manifest, y eso era una
+# trampa: cambiar assets/manifest.json parecía funcionar hasta que alguien
+# renombraba la aplicación desde Ajustes, momento en el que esta copia —que
+# nadie recordaba actualizar— pisaba el fichero bueno y devolvía el fondo
+# blanco y los iconos viejos. Leyendo la base del propio fichero hay una sola
+# fuente de verdad y el problema no puede repetirse.
+_CAMPOS_DE_NOMBRE = ("name", "short_name", "description")
+
+# Solo por si assets/manifest.json falta o está corrupto: sin esto, un fichero
+# ilegible dejaría a la aplicación instalada sin iconos.
+_BASE_RESPALDO = {
+    "start_url": "/panel",
+    "scope": "/",
     "display": "standalone",
-    "background_color": "#ffffff",
-    "theme_color": "#000000",
+    "background_color": "#05070a",
+    "theme_color": "#05070a",
     "icons": [
-        {"src": "/icono.png", "sizes": "192x192", "type": "image/png"},
-        {"src": "/icono.png", "sizes": "512x512", "type": "image/png"},
+        {"src": "/icono-192.png", "sizes": "192x192", "type": "image/png",
+         "purpose": "any"},
+        {"src": "/icono-512.png", "sizes": "512x512", "type": "image/png",
+         "purpose": "any"},
+        {"src": "/icono-maskable-512.png", "sizes": "512x512",
+         "type": "image/png", "purpose": "maskable"},
     ],
 }
+
+
+def _base() -> dict:
+    """El manifest actual sin los campos de nombre — lo que se conserva."""
+    try:
+        datos = json.loads(_MANIFESTS[0].read_text())
+        if isinstance(datos, dict) and datos.get("icons"):
+            return {k: v for k, v in datos.items() if k not in _CAMPOS_DE_NOMBRE}
+    except Exception as e:
+        print(f"⚠️ manifest ilegible ({e}); se usa el de respaldo")
+    return dict(_BASE_RESPALDO)
 
 
 def _leer() -> dict:
@@ -65,7 +95,8 @@ def descripcion_app() -> str:
 def escribir_manifests(nombre: str, descripcion: str) -> list[str]:
     """Reescribe el manifest allá donde esté. Devuelve las rutas tocadas."""
     contenido = json.dumps(
-        {"name": nombre, "short_name": nombre, "description": descripcion, **_BASE},
+        {"name": nombre, "short_name": nombre, "description": descripcion,
+         **_base()},
         indent=2, ensure_ascii=False,
     ) + "\n"
     escritos = []

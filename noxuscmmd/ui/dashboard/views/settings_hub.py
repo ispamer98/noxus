@@ -46,20 +46,50 @@ _SEGURIDAD = [
      "Zonas de armado: qué sensores arma cada grupo y cuál es el principal."),
     ("access", "door-open", "Accesos",
      "Niveles y tarjetas RFID: quién puede abrir cada puerta."),
+    ("retardos", "timer", "Retardos",
+     "Tiempo para salir sin que salte y para entrar y desarmar, por grupo y por elemento."),
+    ("modos", "house", "Modos de la casa",
+     "Fuera, En casa, Noche, Vacaciones: qué automatizaciones lanza cada uno."),
+    ("usuarios", "users", "Dispositivos y accesos",
+     "Qué accesorio es cada uno y qué puede tocar; invitaciones que caducan solas."),
 ]
 
 _VIGILANCIA = [
+    ("movimiento", "scan-eye", "Detección de movimiento",
+     "Compara fotogramas de las cámaras y avisa si algo se mueve; guarda la "
+     "imagen del momento."),
     ("cctv", "video", "Cámaras",
      "Añadir o editar cámaras — para verlas basta un acceso rápido del Resumen."),
 ]
 
+_MANTENIMIENTO = [
+    ("inventario", "clipboard-list", "Inventario",
+     "Todo lo instalado con su IP, MAC, nodo y pin; el modelo y la ubicación, "
+     "a mano."),
+    ("voz", "mic", "Comandos de voz",
+     "Ata una frase a una accion para Siri o Alexa, y saca la clave que "
+     "necesita el atajo del movil."),
+    ("system", "hard-drive-download", "Copias de seguridad",
+     "Se guarda sola una copia al día de todo lo que hay dado de alta; desde "
+     "aquí se restaura."),
+]
+
 _DISPOSITIVOS = [
+    ("accesorios", "toggle-right", "Accesorios",
+     "El ventilador, la tele, un enchufe: se encienden igual que una luz, casi "
+     "siempre con una tecla de un mando."),
     ("lights", "lightbulb", "Luces",
      "Dar de alta luces y estancias — para encenderlas basta un acceso rápido."),
     ("ir_remotes", "gamepad-2", "Mandos",
      "Mandos IR/RF virtuales: aprender señales y colocar botones."),
     ("automations", "workflow", "Automatizaciones",
      "Reglas CUÁNDO / Y SI / ENTONCES sobre cualquier equipo de la casa."),
+    ("presencia", "user-round-check", "Simulación de presencia",
+     "Repite los horarios reales de la casa cuando está armada, en vez de "
+     "encender una luz a la misma hora todos los días."),
+    ("instalador", "ear", "Modo instalador",
+     "Escucha lo que la casa publica por MQTT y lo da de alta como sensor, luz "
+     "o puerta sin escribir un topic a mano."),
 ]
 
 
@@ -212,12 +242,13 @@ def settings_hub_view() -> rx.Component:
         _section("Seguridad y accesos", _SEGURIDAD),
         _section("Vigilancia", _VIGILANCIA),
         _section("Dispositivos y automatización", _DISPOSITIVOS),
+        _section("Mantenimiento", _MANTENIMIENTO),
         rx.vstack(
             rx.text("Este dispositivo", size="1", weight="bold", color=theme.MUTED,
                     letter_spacing="0.08em", text_transform="uppercase"),
             _dialog_card(
                 "bell", "Nombre en los avisos",
-                "El «De ...» que sale debajo de cada notificación de este aparato.",
+                "El «De ...» que sale debajo de cada notificación de este accesorio.",
                 _ajustes_avisos_dialog(),
                 on_open_change=PushState.cargar_nombre_app,
             ),

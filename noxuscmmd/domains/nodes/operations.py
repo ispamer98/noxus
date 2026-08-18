@@ -120,6 +120,41 @@ async def _enviar_a_rele(spec: dict, on: bool, ssh: SSHSpec | None) -> None:
     bus.publish(spec["topic_cmd"], "ON" if on else "OFF")
 
 
+async def _enviar_por_mando(light: dict, on: bool) -> None:
+    """La otra forma de encender una luz: pulsar una tecla de un mando virtual.
+
+    Es lo que hace falta para la luz de un ventilador de techo o de un plafón con
+    mando, que no tienen relé por el que pasar. Se pulsa la tecla de encender o
+    la de apagar según toque, y se reutiliza `send_remote_button` tal cual — así
+    una luz de mando aprovecha el reintento por sesión caducada del Broadlink y
+    todo lo demás que ya está resuelto ahí.
+
+    Ojo con lo que NO da esto: no hay confirmación de que la bombilla se haya
+    encendido. Con un relé por MQTT el firmware puede publicar su estado real;
+    aquí se manda el infrarrojo a ciegas, y el estado que guarda el panel es el
+    que se pidió. Si alguien la apaga con el mando físico, el panel no se enterará
+    hasta que se le vuelva a dar.
+    """
+    una_sola = light.get("mando_modo") == store.UNA_TECLA
+    # Con una sola tecla (la de encendido de la tele) se manda SIEMPRE la misma:
+    # es el propio aparato el que alterna. El panel solo lleva la cuenta de en
+    # qué cree que está, que es lo mismo que hace cualquier mando.
+    tecla = light.get("btn_on", "") if una_sola else light.get("btn_on" if on else "btn_off", "")
+    mando = light.get("remote_id", "")
+    if not mando or not tecla:
+        cual = ("la tecla de encendido" if una_sola
+                else f'la tecla de {"encender" if on else "apagar"}')
+        raise NotConfigured(
+            f'A «{light.get("name", light.get("id"))}» le falta {cual} — '
+            f'edítalo y elige el botón del mando.')
+    # apuntar_estado=False: set_light ya ha dejado escrito el estado ANTES de
+    # mandar la orden (y lo deshace si falla). Si además se apuntara aquí, en un
+    # accesorio de UNA sola tecla la segunda escritura alternaría lo que acababa
+    # de escribir la primera y el botón se quedaría siempre al revés — que es
+    # justo lo que pasaba con la tele.
+    await send_remote_button(mando, tecla, apuntar_estado=False)
+
+
 # ── Luces ───────────────────────────────────────────────────────────────────
 async def set_light(light_id: str, on: bool | None = None, *,
                     on_applied=None, on_failed=None) -> bool:
@@ -143,13 +178,19 @@ async def set_light(light_id: str, on: bool | None = None, *,
         if light is None:
             raise EntityNotFound(f"La luz {light_id} ya no existe")
         nuevo = (not data["sensor_states"].get(light_id, False)) if on is None else bool(on)
-        ssh = node_ssh(light["node_id"], data)
+        # Una luz de mando no cuelga de ningún nodo, así que no se le busca SSH:
+        # con node_id vacío esto no tiene nada que resolver.
+        por_mando = light.get("kind") == store.LUZ_MANDO
+        ssh = None if por_mando else node_ssh(light["node_id"], data)
 
         await asyncio.to_thread(store.set_sensor_state, light_id, nuevo)
         if on_applied:
             await on_applied(nuevo)
         try:
-            await _enviar_a_rele(light, nuevo, ssh)
+            if por_mando:
+                await _enviar_por_mando(light, nuevo)
+            else:
+                await _enviar_a_rele(light, nuevo, ssh)
         except Exception as e:
             # La orden no salió: lo que se pintó era mentira, se deshace.
             await asyncio.to_thread(store.set_sensor_state, light_id, not nuevo)
@@ -230,7 +271,44 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
 
 
 # ── Mandos IR / RF / webOS ──────────────────────────────────────────────────
-async def send_remote_button(remote_id: str, button_id: str) -> str:
+def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> None:
+    """Pone al día el estado de lo que se accione con ESA tecla.
+
+    El porqué: una misma luz o una tele se pueden encender desde sitios muy
+    distintos —su botón del plano, el acceso rápido del Resumen, la paleta, una
+    automatización o pulsando la tecla del mando virtual— y hasta ahora solo los
+    caminos que pasaban por `set_light` dejaban constancia. Pulsando la tecla
+    directamente, el aparato se encendía pero su botón seguía diciendo «apagado»:
+    dos verdades para la misma cosa.
+
+    Ahora cualquier pulsación mira si esa tecla es la de encender o la de apagar
+    de algún accesorio y apunta el estado que corresponda. Con las de UNA sola
+    tecla se alterna, que es exactamente lo que hace el aparato.
+
+    Se hace DESPUÉS de que la orden haya salido bien: si el infrarrojo falla, no
+    se apunta un estado que no ha llegado a pasar.
+
+    Solo cuenta cuando la tecla se pulsa POR SU CUENTA (desde Mandos, la paleta,
+    un widget de tecla o una automatización). Cuando la orden viene del botón del
+    propio accesorio, quien apunta es `set_light` y esto se salta con
+    apuntar_estado=False.
+    """
+    datos = store.read_all()
+    estados = datos.get("sensor_states", {})
+    for luz in datos.get("lights", []):
+        if luz.get("kind") != store.LUZ_MANDO or luz.get("remote_id") != remote_id:
+            continue
+        if luz.get("mando_modo") == store.UNA_TECLA:
+            if luz.get("btn_on") == button_id:
+                store.set_sensor_state(luz["id"], not estados.get(luz["id"], False))
+        elif luz.get("btn_on") == button_id:
+            store.set_sensor_state(luz["id"], True)
+        elif luz.get("btn_off") == button_id:
+            store.set_sensor_state(luz["id"], False)
+
+
+async def send_remote_button(remote_id: str, button_id: str, *,
+                             apuntar_estado: bool = True) -> str:
     """Dispara una tecla de un mando virtual — por infrarrojos/radiofrecuencia
     (Broadlink) o por red (webOS de la TV LG) según su `kind`. Devuelve
     "Mando · Tecla" para el mensaje y el registro."""
@@ -252,6 +330,8 @@ async def send_remote_button(remote_id: str, button_id: str) -> str:
             await webos_bus.send_command(boton["code"])
         else:
             await ir_bus.send_button(boton["code"])
+        if apuntar_estado:
+            await asyncio.to_thread(_apuntar_estado_de_accesorios, remote_id, button_id)
     except Exception as e:
         # La etiqueta va DENTRO del error: quien lo recoge (la barra de estado
         # de la web, el registro de una regla) casi nunca tiene a mano de qué

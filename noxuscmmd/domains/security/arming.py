@@ -16,7 +16,7 @@ significa según audit.py — algo que ha hecho el panel sin que nadie lo pulse.
 """
 import asyncio
 
-from . import abiertos, groups_store, logs, shared_state
+from . import abiertos, groups_store, logs, retardos, shared_state
 from .audit import SISTEMA
 
 
@@ -72,12 +72,32 @@ async def set_group_armed(group_id: str, armado: bool, usuario: str = SISTEMA) -
     if group["is_principal"]:
         await asyncio.to_thread(shared_state.set_sistema_armado, armado)
 
+    # Desarmar borra las exclusiones, los retardos de entrada en curso y
+    # cualquier armado que estuviera esperando. Si el bypass sobreviviera al
+    # desarmado, el siguiente armado saldría con un agujero que ya nadie
+    # recuerda haber abierto — y eso es peor que no tener bypass.
+    excluidos = []
+    if not armado:
+        excluidos = await asyncio.to_thread(retardos.limpiar_bypass, group_id)
+
     etiqueta = "TOTAL" if group["is_principal"] else group["name"]
     # El nombre de cada miembro abierto lo resuelve abiertos.py leyendo del
     # disco: el que guarda el grupo es una copia del que tenía el sensor al
     # meterlo, así que renombrarlo dejaba el registro nombrando algo que ya no
     # se llamaba así.
-    detalle = abiertos.detalle_armado(abiertos.abiertos_de_grupo(group)) if armado else ""
+    if armado:
+        detalle = abiertos.detalle_armado(abiertos.abiertos_de_grupo(group))
+        excluidos_ahora = await asyncio.to_thread(retardos.bypass_de, group_id)
+        if excluidos_ahora:
+            nombres = abiertos.nombres_de(excluidos_ahora)
+            detalle += f" · EXCLUIDOS del armado: {', '.join(nombres)}"
+    else:
+        # Al desarmar se apunta lo que se había dejado fuera: es la única forma
+        # de que quede constancia de con qué agujero estuvo armada la casa.
+        detalle = ""
+        if excluidos:
+            nombres = abiertos.nombres_de(excluidos)
+            detalle = f"Estuvo armado excluyendo: {', '.join(nombres)}"
     logs.registrar(logs.GRUPOS, "ARMADO_GRUPO" if armado else "DESARMADO_GRUPO",
                    usuario, detalle, grupo=etiqueta)
     return group

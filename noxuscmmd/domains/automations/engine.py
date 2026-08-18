@@ -30,6 +30,7 @@ from datetime import datetime
 from ..nodes import operations as ops
 from ..nodes import store as nodes_store
 from ..notifications import push
+from ..modes import store as modes_store
 from ..security import audit, groups_store, logs, shared_state
 from . import actions, store
 
@@ -46,6 +47,10 @@ _ECO_SEGUNDOS = 3.0
 _PERIODO_NUMERICO = 30.0
 
 _STARTED = False
+
+# Cuándo dio la última vuelta el motor — lo lee la pantalla de salud. En memoria
+# por lo mismo que el del vigilante (ver security/watcher.LATIDO).
+LATIDO: float = 0.0
 
 _prev: dict[str, object] = {}          # señal -> último valor visto
 _eco: dict[str, float] = {}            # señal -> monotonic() hasta el que está sorda
@@ -66,9 +71,10 @@ class Snapshot:
     """Todo lo que las reglas necesitan mirar, leído UNA vez por vuelta: así
     dos reglas evaluadas en el mismo tick no pueden ver mundos distintos."""
 
-    __slots__ = ("at", "local", "estados", "hosts", "grupos", "armado", "numeros")
+    __slots__ = ("at", "local", "estados", "hosts", "grupos", "armado", "numeros",
+                 "modo")
 
-    def __init__(self, estados, hosts, grupos, armado, numeros):
+    def __init__(self, estados, hosts, grupos, armado, numeros, modo=""):
         self.at = time.monotonic()
         # Hora LOCAL e ingenua a propósito: el usuario dice "a las 22:30" y se
         # refiere al reloj de su pared. En UTC, una regla de las 22:30 se
@@ -79,14 +85,19 @@ class Snapshot:
         self.grupos = grupos
         self.armado = armado
         self.numeros = numeros
+        # El modo de la casa (domains/modes). Entra en la foto como una
+        # señal más para que las reglas puedan mirarlo igual que miran el
+        # armado, sin que los modos necesiten motor propio.
+        self.modo = modo
 
 
-def _leer_mundo() -> tuple[dict, dict, dict, bool]:
+def _leer_mundo() -> tuple[dict, dict, dict, bool, str]:
     return (
         nodes_store.get_all_sensor_states(),
         nodes_store.get_all_host_online(),
         {g["id"]: g for g in groups_store.read_all()},
         shared_state.get_sistema_armado(),
+        modes_store.activo(),
     )
 
 
@@ -97,6 +108,7 @@ def _señales(snap: Snapshot) -> dict[str, object]:
     salida.update({f"host:{k}": v for k, v in snap.hosts.items()})
     salida.update({f"group:{k}": g["armed"] for k, g in snap.grupos.items()})
     salida["system"] = snap.armado
+    salida["mode"] = snap.modo
     salida.update(snap.numeros)
     return salida
 
@@ -252,6 +264,14 @@ def _disparado(regla: dict, snap: Snapshot, cambios: dict,
             cambio = cambios.get("system")
             if cambio and cambio[1] == (kind == "system.armed"):
                 dispara = True
+        elif kind == "mode.changed":
+            # "La casa pasa a X". Por flanco como todo lo demás: al arrancar el
+            # panel con la casa ya en Noche no se dispara nada, igual que no se
+            # dispara "se abre la puerta" por una puerta que ya estaba abierta.
+            cambio = cambios.get("mode")
+            objetivo = (t.get("params") or {}).get("mode", "")
+            if cambio and cambio[1] == objetivo and objetivo:
+                dispara = True
         elif kind in ("host.temp_above", "host.temp_below"):
             _, host_id = actions.partir(t["target"])
             cambio = cambios.get(f"temp:{host_id}")
@@ -305,6 +325,8 @@ def _condicion(c: dict, snap: Snapshot, estado_regla: dict) -> bool:
         return bool(grupo and grupo["armed"]) == _si(p)
     if kind == "system.is_armed":
         return snap.armado == _si(p)
+    if kind == "mode.is":
+        return snap.modo == p.get("mode", "")
     if kind == "host.temp":
         valor = snap.numeros.get(f"temp:{ident}")
         if valor is None:
@@ -390,7 +412,8 @@ async def _disparar(regla: dict, marcas: dict) -> str:
                                 f"{regla['name']}: {motivo}", entidad=regla["id"])
         await asyncio.to_thread(push.enviar_notificacion,
                                 "⚠️ Automatización desactivada",
-                                f"«{regla['name']}» {motivo}")
+                                f"«{regla['name']}» {motivo}",
+                                push.TODOS, f"regla:{regla['id']}")
         return motivo
 
     hechos, errores = await _ejecutar_pasos(regla)
@@ -462,9 +485,9 @@ async def _vuelta(arrancando: bool) -> None:
         # veces al día para no hacer nada con ellos no tiene sentido. Al
         # aparecer la primera regla, la vuelta siguiente ceba las señales.
         return
-    estados, hosts, grupos, armado = await asyncio.to_thread(_leer_mundo)
+    estados, hosts, grupos, armado, modo = await asyncio.to_thread(_leer_mundo)
     numeros = await _muestrear_numeros(reglas)
-    snap = Snapshot(estados, hosts, grupos, armado, numeros)
+    snap = Snapshot(estados, hosts, grupos, armado, numeros, modo)
     cambios = _cambios(_señales(snap), snap.at)
     estados_reglas = await asyncio.to_thread(store.read_state)
 
@@ -524,6 +547,8 @@ async def run_forever() -> None:
             try:
                 await _vuelta(arrancando)
                 arrancando = False
+                global LATIDO
+                LATIDO = time.time()
             except asyncio.CancelledError:
                 raise
             except store.ArchivoCorrupto as e:

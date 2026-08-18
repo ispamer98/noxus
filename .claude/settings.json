@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pyflakes:*)",
+      "Bash(.venv/bin/python -m py_compile:*)",
+      "Bash(curl -s http://127.0.0.1:3000/*)",
+      "Bash(curl -sI http://127.0.0.1:3000/*)",
+      "Bash(curl -s http://127.0.0.1:8000/*)",
+      "Bash(curl -sI http://127.0.0.1:8000/*)"
+    ],
+    "deny": [
+      "Read(//home/spamer/noxuscmmd/.env)",
+      "Read(//home/spamer/noxuscmmd/webos_key.json)",
+      "Read(//home/spamer/noxuscmmd/tinytuya.json)",
+      "Read(//home/spamer/noxuscmmd/.web/**)"
+    ]
+  }
+}

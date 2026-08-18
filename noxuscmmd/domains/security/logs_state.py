@@ -15,16 +15,35 @@ el color que tenga en el plano, y un equipo con el suyo, porque reconocerlos de
 un vistazo es justo para lo que se mira un registro.
 """
 import asyncio
+import csv
+import io
 import time
 from datetime import datetime
 
 import reflex as rx
 
 from . import logs
+from . import logs_store
+from ..cameras import fotogramas
 from ..nodes import store as nodes_store
+from ...core import sesiones
 
 # Cuántas filas se pintan de una tacada; se amplía con el botón del final.
 PAGINA = 150
+
+# Cuántos eventos del intervalo elegido se traen a la sesión. El histórico ya no
+# tiene tope (ver logs_store), así que "Todo" puede ser un número que crece para
+# siempre y traérselo entero por pestaña abierta no es una opción.
+#
+# Con la casa generando unos 70 eventos al día, 3.000 son más de un mes: el
+# rango por defecto (7 días) y los atajos de 24 h y 30 días caben de sobra, y lo
+# normal es que esto no se note nunca. Cuando el intervalo elegido tiene más, se
+# cargan los más recientes y se dice en pantalla (ver `recortado`) — callarlo
+# haría creer que antes de esa fecha no pasó nada.
+#
+# La exportación a CSV NO pasa por aquí: va a la base de datos a por el
+# intervalo completo.
+VENTANA = 3000
 
 # Pestaña que enseña todas las familias juntas.
 TODO = "todo"
@@ -143,11 +162,14 @@ def _catalogo_entidades() -> dict[str, tuple[str, str]]:
     return catalogo
 
 
-def _instante(timestamp: str) -> float:
-    try:
-        return datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").timestamp()
-    except Exception:
-        return 0.0
+def _url_foto(nombre: str) -> str:
+    """La URL con la que pedir el fotograma de un evento, o "" si no hay.
+
+    No es un estático: lo sirve domains/cameras/endpoint.py comprobando la
+    sesión, porque son imágenes del interior de la casa."""
+    if not nombre or fotogramas.ruta(nombre) is None:
+        return ""
+    return f"/api/fotograma/{nombre}"
 
 
 def _instante_local(valor: str) -> float:
@@ -205,44 +227,77 @@ class LogsState(rx.State):
     limite: int = PAGINA
     _entradas: list[dict] = []
     _entidades: dict[str, list[str]] = {}
+    # ¿El intervalo elegido tiene más eventos de los que se han cargado? Ver
+    # VENTANA.
+    _recortado: bool = False
+    # El último evento de la casa, al margen del intervalo que se esté mirando
+    # — ver `reciente`.
+    _ultimo: dict = {}
+    # Marca del registro en la última lectura, para no releer sin motivo (ver
+    # sync_loop y logs_store.senal).
+    _senal: str = ""
 
     @rx.event
     async def on_load(self):
         self._releer()
+        self._releer_entidades()
         yield LogsState.sync_loop
 
     def _releer(self) -> None:
-        # Más reciente primero: en un registro se mira lo último, no lo primero.
-        self._entradas = [
-            {**e, "ts": _instante(e["timestamp"])} for e in reversed(logs.leer_logs())
-        ]
-        # dict[str, list] en vez de dict[str, tuple]: Reflex serializa las Vars
-        # a JSON y las tuplas vuelven como listas de todas formas.
+        """Trae los eventos del intervalo elegido, MÁS RECIENTE PRIMERO: en un
+        registro se mira lo último, no lo primero.
+
+        Se pide una fila más que la ventana justo para saber si sobran, sin
+        tener que contar el intervalo entero aparte."""
+        desde, hasta = self._limites()
+        entradas = logs_store.ultimos(VENTANA + 1, desde, hasta)
+        self._recortado = len(entradas) > VENTANA
+        self._entradas = entradas[:VENTANA]
+        ultimo = logs_store.ultimos(1)
+        self._ultimo = ultimo[0] if ultimo else {}
+        self._senal = logs_store.senal()
+
+    def _releer_entidades(self) -> None:
+        """El catálogo de iconos y colores. Va aparte de los eventos porque
+        cambia cuando alguien recolorea algo en el plano, no cuando pasa un
+        evento: releerlo en cada vuelta del sync_loop sería parsear
+        nodos_dinamicos.json cada dos segundos y por sesión para nada.
+
+        dict[str, list] en vez de dict[str, tuple]: Reflex serializa las Vars a
+        JSON y las tuplas vuelven como listas de todas formas."""
         self._entidades = {k: list(v) for k, v in _catalogo_entidades().items()}
 
     @rx.event
     def refrescar(self):
         self._releer()
+        self._releer_entidades()
 
     @rx.event(background=True)
     async def sync_loop(self):
-        """Relee cada dos segundos: un evento que pase con la pestaña abierta
+        """Vigila cada dos segundos: un evento que pase con la pestaña abierta
         tiene que aparecer solo, sin tocar el botón de recargar.
 
-        Se compara antes de asignar, y no es un detalle: sin eso cada vuelta
-        reasignaría la lista entera, el navegador repintaría las filas y se
-        cerraría el bocadillo que estuviera abierto — cada dos segundos."""
+        Lo que se consulta cada vuelta es la MARCA del registro (dos números),
+        no el listado: antes se releía el histórico completo cada dos segundos y
+        por sesión para comparar, y eso con historia de verdad no se sostiene.
+
+        Y solo se asigna cuando ha cambiado algo, que no es un detalle: sin eso
+        cada vuelta reasignaría la lista entera, el navegador repintaría las
+        filas y se cerraría el bocadillo que estuviera abierto — cada dos
+        segundos."""
+        guardia = await sesiones.guardia(self)
         while True:
             try:
-                await asyncio.sleep(2)
-                nuevas = await asyncio.to_thread(logs.leer_logs)
-                nuevas = [{**e, "ts": _instante(e["timestamp"])} for e in reversed(nuevas)]
+                if not await sesiones.espera(guardia, 2):
+                    return
+                senal = await asyncio.to_thread(logs_store.senal)
                 async with self:
-                    if nuevas != self._entradas:
-                        self._entradas = nuevas
+                    if senal != self._senal:
+                        self._releer()
             except Exception as e:
                 print(f"⚠️ Error en LogsState.sync_loop: {e}")
-                await asyncio.sleep(5)
+                if not await sesiones.espera(guardia, 5):
+                    return
 
     # ── Filtros ──────────────────────────────────────────────────────────
     @rx.event
@@ -260,6 +315,9 @@ class LogsState(rx.State):
             self.pestanas_activas = [*self.pestanas_activas, categoria]
         self.limite = PAGINA
 
+    # Los cuatro de abajo cambian el intervalo, y el intervalo lo aplica la
+    # consulta: hay que volver a preguntar. Las familias y el buscador no, que
+    # se resuelven sobre lo ya cargado.
     @rx.event
     def set_rango(self, rango: str):
         """Los atajos y el intervalo a mano se pisan: elegir "7 días" vacía el
@@ -269,18 +327,21 @@ class LogsState(rx.State):
         self.desde = ""
         self.hasta = ""
         self.limite = PAGINA
+        self._releer()
 
     @rx.event
     def set_desde(self, valor: str):
         self.desde = valor
         self.rango = PERSONALIZADO
         self.limite = PAGINA
+        self._releer()
 
     @rx.event
     def set_hasta(self, valor: str):
         self.hasta = valor
         self.rango = PERSONALIZADO
         self.limite = PAGINA
+        self._releer()
 
     @rx.event
     def limpiar_intervalo(self):
@@ -288,6 +349,7 @@ class LogsState(rx.State):
         self.hasta = ""
         self.rango = "todo"
         self.limite = PAGINA
+        self._releer()
 
     @rx.event
     def set_busqueda(self, valor: str):
@@ -297,6 +359,37 @@ class LogsState(rx.State):
     @rx.event
     def ver_mas(self):
         self.limite += PAGINA
+
+    @rx.event
+    def exportar_csv(self):
+        """Descarga en CSV lo que hay filtrado ahora mismo.
+
+        Van TODAS las coincidencias, no solo las que se ven: `limite` es
+        paginación de pantalla y quien exporta quiere el conjunto entero. Y no
+        solo las cargadas: esto va a la base de datos a por el intervalo
+        completo (`recorrer`, fila a fila para no montar el histórico en
+        memoria), así que un intervalo más grande que la ventana de pantalla se
+        exporta entero igual. El filtro es el mismo `_coincide` que pinta la
+        lista, así que el fichero y la pantalla no pueden discrepar.
+        """
+        limites = self._limites()
+        buf = io.StringIO()
+        # El BOM es para Excel: sin él abre el fichero en latin-1 y destroza
+        # cualquier acento o eñe de los detalles.
+        buf.write("﻿")
+        escritor = csv.writer(buf, delimiter=";")
+        escritor.writerow(
+            ["Fecha", "Hora", "Categoría", "Acción", "Usuario", "Detalle", "Grupo"])
+        for e in logs_store.recorrer(*limites):
+            if not self._coincide(e, limites):
+                continue
+            escritor.writerow([
+                e["timestamp"][:10], e["timestamp"][11:19], e["categoria"],
+                logs.etiqueta_accion(e["accion"]), e["usuario"],
+                e["detalle"], e["grupo"],
+            ])
+        sello = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return rx.download(data=buf.getvalue(), filename=f"registros-{sello}.csv")
 
     # ── Selección ────────────────────────────────────────────────────────
     def _limites(self) -> tuple[float, float]:
@@ -348,10 +441,15 @@ class LogsState(rx.State):
         Resumen. Tiene que ser el último de verdad pase lo que pase con los
         filtros que alguien haya dejado puestos en Registros: si tirara de
         `filtradas`, filtrar por "Luces" en una pestaña le mentiría al
-        Resumen sobre cuál fue el último suceso."""
-        if not self._entradas:
+        Resumen sobre cuál fue el último suceso.
+
+        Por eso sale de `_ultimo` y no de `_entradas[0]`: desde que el intervalo
+        se aplica en la consulta, `_entradas` ya NO es el histórico entero, y con
+        un intervalo que acabe la semana pasada su primera entrada no es el
+        último suceso de la casa."""
+        if not self._ultimo:
             return {}
-        e = self._entradas[0]
+        e = self._ultimo
         etiqueta = logs.etiqueta_accion(e["accion"])
         icono, color = self._aspecto(e)
         partes = e["detalle"].split(" · ")
@@ -399,6 +497,13 @@ class LogsState(rx.State):
 
             salida.append({
                 **e,
+                # La foto del momento, si la hay y si sigue en disco. Se
+                # comprueba que el fichero esté porque el evento se guarda para
+                # siempre y la imagen caduca al año: sin esto, un evento viejo
+                # ofrecería una foto que ya no está y saldría el icono de imagen
+                # rota. Solo se mira el disco en las filas que dicen tener foto,
+                # que son las alarmas — un puñado.
+                "foto_url": _url_foto(e["foto"]),
                 "clave": str(i),
                 "icono": icono,
                 "color": color,
@@ -418,12 +523,21 @@ class LogsState(rx.State):
 
     @rx.var
     def total_filtradas(self) -> int:
+        """Cuántas coinciden DE LAS CARGADAS. Es exacto salvo que el intervalo
+        no quepa en la ventana, y para ese caso está `recortado`, que lo dice en
+        pantalla en vez de dar un número que parece el total y no lo es."""
         limites = self._limites()
         return sum(1 for e in self._entradas if self._coincide(e, limites))
 
     @rx.var
     def hay_mas(self) -> bool:
         return self.total_filtradas > self.limite
+
+    @rx.var
+    def recortado(self) -> bool:
+        """El intervalo elegido tiene más eventos de los que se han traído a la
+        sesión (ver VENTANA)."""
+        return self._recortado
 
     @rx.var
     def pestanas(self) -> list[dict]:

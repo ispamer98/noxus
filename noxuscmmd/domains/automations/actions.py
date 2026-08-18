@@ -186,7 +186,11 @@ async def _run_notify(target: str, params: dict) -> str:
     titulo = str(params.get("title") or "NOXUS").strip()
     cuerpo = str(params.get("body") or "").strip()
     destino = str(params.get("destino") or push.TODOS)
-    await asyncio.to_thread(push.enviar_notificacion, titulo, cuerpo, destino)
+    # Tag por regla: una automatización que avisa cada vez que se abre el portal
+    # refresca su propio aviso en lugar de acumular veinte. Dos reglas distintas
+    # siguen llegando por separado.
+    await asyncio.to_thread(push.enviar_notificacion, titulo, cuerpo, destino,
+                            f"regla:{target}" if target else "regla")
     return f"Aviso enviado: {titulo}"
 
 

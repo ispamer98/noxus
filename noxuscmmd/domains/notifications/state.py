@@ -8,6 +8,8 @@ import json
 import os
 import reflex as rx
 
+from ..auth import permisos
+
 from ..infra.state import InfraState
 from ..security import audit, logs
 from .push import enviar_notificacion
@@ -46,13 +48,17 @@ class PushState(rx.State):
         self.nombre_app = valor
 
     @rx.event
-    def guardar_nombre_app(self):
+    async def guardar_nombre_app(self):
         """Escribe el nombre y regenera el manifest.
 
         No hay confirmación de "listo, ya lo ves": el cambio NO se ve hasta
         reinstalar el acceso directo en cada dispositivo, porque el sistema lee
         el manifest al instalarlo y no vuelve. Por eso el mensaje dice
         exactamente eso en vez de un "guardado" que haría esperar otra cosa."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         self.nombre_app = branding.guardar(self.nombre_app)
         return rx.toast.success(
             f"Guardado: los avisos dirán «{self.nombre_app}». Para verlo en un "
@@ -160,7 +166,13 @@ class PushState(rx.State):
                     self.current_session = endpoint
                     self.falta_vincular = False
                     print(f"👤 Usuario cargado: {self.current_user}")
-                    return
+                    # Import diferido por lo mismo que en security/audit.py:
+                    # traerlo arriba cierra el círculo de importaciones.
+                    from ..auth.state import AuthState
+                    # Casa esta suscripción con la sesión: es lo que reconoce
+                    # de entrada a los aparatos que ya estaban dados de alta
+                    # antes de que existieran los permisos.
+                    return AuthState.vincular_push(endpoint, self.current_user)
         except Exception as e:
             print(f"❌ Error cargando usuario: {e}")
             return
@@ -262,7 +274,10 @@ class PushState(rx.State):
             infra.status = f"🔔 Vinculado: '{nombre_usuario}'"
             self.nombre_nuevo = nombre_usuario
             self.aviso = f"Activado. Este dispositivo es «{nombre_usuario}» y ya recibe avisos."
-            return
+            # El aparato acaba de ponerse nombre: que la sesión lo herede, para
+            # que en los registros y en los permisos sea el mismo de la barra.
+            from ..auth.state import AuthState
+            return AuthState.vincular_push(self.current_session, nombre_usuario)
         except Exception as e:
             print(f"guardar_subscripcion error: {e}")
             infra.status = "❌ Error al vincular"

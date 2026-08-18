@@ -46,6 +46,7 @@ WIDGET_TARGET = {
     "stat_automation": "automation",
     "action_view": "view",
     "action_ir_button": "ir_button",
+    "action_ir_remote": "ir_remote",
 }
 
 VISTAS = {
@@ -54,6 +55,9 @@ VISTAS = {
     "cctv": "CCTV", "access": "Accesos", "lights": "Luces", "equipment": "Equipos",
     "logs": "Registros",
     "ir_remotes": "Mandos", "automations": "Automatizaciones",
+    "accesorios": "Accesorios", "presencia": "Simulación de presencia",
+    "movimiento": "Detección de movimiento",
+    "instalador": "Modo instalador",
     # "settings_hub" no es una pantalla con contenido propio (ver
     # ui/dashboard/views/settings_hub.py): es el punto de entrada a las cinco
     # de arriba. Se puede referenciar igual desde un widget "Ir a Ajustes".
@@ -80,13 +84,20 @@ def _catalogo() -> dict[str, dict]:
         catalogo[eid] = {"name": entidad.name, "icon": getattr(entidad, "icon", None) or ""}
 
     for coleccion in ("hosts", "nodes", "sensors", "factory_sensors", "doors",
-                      "lights", "cameras", "factory_cameras", "rooms", "host_buttons"):
+                      "lights", "cameras", "factory_cameras", "rooms", "host_buttons",
+                      "ir_remotes"):
         for item in datos[coleccion]:
             # Los botones de equipo guardan su texto en "label", no en "name"
             # — es el único de la lista, de ahí el fallback.
+            icono = item.get("icon") or item.get("floor_icon") or ""
+            # Un accesorio (la tele, el ventilador) vive en la colección de las
+            # luces, así que sin esto heredaba el icono fijo de la familia y
+            # salía con una bombilla en los accesos rápidos y en la paleta.
+            if coleccion == "lights" and not icono and not store.es_luz(item):
+                icono = store.ICONO_ASPECTO.get(item.get("aspecto"), "toggle-right")
             catalogo[item["id"]] = {
                 "name": item.get("name") or item.get("label") or "",
-                "icon": item.get("icon") or item.get("floor_icon") or "",
+                "icon": icono,
             }
     for grupo in groups_store.read_all():
         catalogo[grupo["id"]] = {"name": grupo["name"], "icon": "layers"}
@@ -142,6 +153,11 @@ def etiqueta_widget(kind: str, target_id: str, catalogo: dict | None = None) -> 
         return entrada["name"], entrada["icon"] or "video"
     if tipo == "ir_button":
         return entrada["name"], entrada["icon"] or "tv"
+    if tipo == "ir_remote":
+        return entrada["name"], entrada["icon"] or "gamepad-2"
+    if tipo == "light":
+        # Si trae icono propio es un accesorio (ver _catalogo); si no, bombilla.
+        return entrada["name"], entrada["icon"] or _ICONO_FIJO["light"]
     return entrada["name"], _ICONO_FIJO.get(tipo, "activity")
 
 

@@ -16,9 +16,11 @@ import asyncio
 import reflex as rx
 
 from . import store as nodes_store, rdp, operations
+from ..auth import permisos
 from ..security import audit, logs
 from ..devices import ssh_bus
 from ..devices.models import SSHSpec
+from ...core import sesiones
 
 # La resolución del SSH de un equipo y los nombres de acción del registro
 # viven ahora en operations.py, compartidos con el motor de automatizaciones:
@@ -73,6 +75,7 @@ class HostActionsState(rx.State):
         if _TEMP_STARTED:
             return
         _TEMP_STARTED = True
+        guardia = await sesiones.guardia(self)
         while True:
             try:
                 objetivo = await asyncio.to_thread(_hosts_con_widget_temp)
@@ -87,7 +90,8 @@ class HostActionsState(rx.State):
                         self.host_temps[host_id] = salida
             except Exception as e:
                 print(f"⚠️ Error en HostActionsState.temp_loop: {e}")
-            await asyncio.sleep(_PERIODO_TEMPERATURA)
+            if not await sesiones.espera(guardia, _PERIODO_TEMPERATURA):
+                return
 
     @staticmethod
     def _nombre_equipo(host_id: str) -> str:
@@ -123,6 +127,10 @@ class HostActionsState(rx.State):
     @rx.event(background=True)
     async def run_console_command(self, host_id: str):
         async with self:
+            # Una consola SSH sobre un equipo de la casa: el permiso se
+            # comprueba aquí, no en el botón que la pinta.
+            if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+                return no
             cmd = self.console_input.get(host_id, "").strip()
             if not cmd:
                 return
@@ -150,6 +158,13 @@ class HostActionsState(rx.State):
         los tres leían la MISMA bandera. Y el resultado sale por TOAST, no por
         self.console_output: eso alimenta la consola libre, que ahora está
         recogida por defecto — un resultado que nadie ve no sirve de nada."""
+        # En dos pasos porque esto es un generador: el permiso se consulta
+        # dentro del contexto de estado y el aviso se emite con yield.
+        async with self:
+            no = await permisos.denegar(self, permisos.EQUIPOS)
+        if no:
+            yield no
+            return
         nombre = self._nombre_equipo(host_id)
         clave = host_id + ":" + accion
         if resolve_ssh(host_id) is None:
@@ -179,6 +194,11 @@ class HostActionsState(rx.State):
     # ninguna señal de que ha pasado algo.
     @rx.event(background=True)
     async def accion_rapida(self, host_id: str, accion: str):
+        async with self:
+            no = await permisos.denegar(self, permisos.EQUIPOS)
+        if no:
+            yield no
+            return
         nombre = self._nombre_equipo(host_id)
         if resolve_ssh(host_id) is None:
             yield rx.toast.error(f"{nombre} no tiene usuario SSH configurado.",
@@ -198,6 +218,11 @@ class HostActionsState(rx.State):
         """Wake-on-LAN genérico — cualquier equipo con MAC en su ficha, no
         solo el PC de siempre (operations.wake_host, a diferencia del viejo
         InfraState.wake_pc que llevaba la MAC incrustada en el código)."""
+        async with self:
+            no = await permisos.denegar(self, permisos.EQUIPOS)
+        if no:
+            yield no
+            return
         nombre = self._nombre_equipo(host_id)
         try:
             await asyncio.to_thread(operations.wake_host, host_id)
@@ -219,6 +244,9 @@ class HostActionsState(rx.State):
         "Lanzar desde": por SSH en otro equipo (lo fiable) o pasándole la
         dirección al navegador de quien pulsa (lo que se pueda)."""
         async with self:
+            if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+                yield no
+                return
             host = nodes_store.find_host_by_id(host_id)
             problema = self._problema_rdp(host, host_id)
             if problema is not None:
@@ -266,6 +294,8 @@ class HostActionsState(rx.State):
     @rx.event
     async def download_rdp(self, host_id: str):
         """Descarga el .rdp — plan B de toda la vida, para abrirlo a mano."""
+        if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+            return no
         host = nodes_store.find_host_by_id(host_id)
         problema = self._problema_rdp(host, host_id)
         if problema is not None:
@@ -300,6 +330,10 @@ class HostActionsState(rx.State):
     # ── Botones personalizados (CRUD) ────────────────────────────────────
     @rx.event
     async def submit_add_button(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         host_id = form_data.get("host_id", "")
         label = form_data.get("label", "").strip()
         kind = form_data.get("kind", "ssh_command")
@@ -313,6 +347,10 @@ class HostActionsState(rx.State):
 
     @rx.event
     async def delete_button(self, button_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         btn = next((b for b in self.buttons if b["id"] == button_id), None)
         nodes_store.delete_host_button(button_id)
         self._reload_buttons()
@@ -333,6 +371,11 @@ class HostActionsState(rx.State):
         también el aro de carga del otro. Y el resultado sale por TOAST, no
         por self.console_output — esa consola está recogida por defecto y un
         resultado que nadie ve no sirve de nada."""
+        async with self:
+            no = await permisos.denegar(self, permisos.EQUIPOS)
+        if no:
+            yield no
+            return
         btn = operations.find("host_buttons", button_id)
         if btn is None:
             return

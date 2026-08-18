@@ -13,14 +13,16 @@ Dos cosas que conviene tener claras al leer esto:
    tipo de verdad (número, lista de días, booleano) se hace en un solo sitio,
    al guardar, usando la declaración del propio campo.
 """
-import asyncio
 import time
 
 import reflex as rx
 
+from ..auth import permisos
+
 from . import catalog, engine, store
 from ..nodes import store as nodes_store
 from ..security import audit, logs
+from ...core import sesiones
 
 # Secciones del editor. El nombre es el que se pasa a los eventos para saber
 # sobre cuál de las tres listas se está operando.
@@ -139,6 +141,7 @@ class AutomationsState(rx.State):
         """Una por sesión: refleja lo que cambie el motor (última ejecución,
         una regla que se desactive sola) y rehace el catálogo para que el
         hardware dado de alta en otra pestaña aparezca aquí."""
+        guardia = await sesiones.guardia(self)
         while True:
             try:
                 async with self:
@@ -147,10 +150,12 @@ class AutomationsState(rx.State):
                         # listas debajo del formulario haría saltar lo que se
                         # está escribiendo.
                         self._reload()
-                await asyncio.sleep(2)
+                if not await sesiones.espera(guardia, 2):
+                    return
             except Exception as e:
                 print(f"⚠️ Error en AutomationsState.sync_loop: {e}")
-                await asyncio.sleep(2)
+                if not await sesiones.espera(guardia, 2):
+                    return
 
     @rx.var
     def hay_reglas(self) -> bool:
@@ -187,6 +192,10 @@ class AutomationsState(rx.State):
     # ── Lista ────────────────────────────────────────────────────────────
     @rx.event
     async def toggle_rule(self, rule_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         regla = next((r for r in self.rules if r["id"] == rule_id), None)
         if regla is None:
             return
@@ -200,6 +209,10 @@ class AutomationsState(rx.State):
 
     @rx.event
     async def delete_rule(self, rule_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = next((r["name"] for r in self.rules if r["id"] == rule_id), rule_id)
         store.delete_rule(rule_id)
         self._reload()
@@ -215,6 +228,15 @@ class AutomationsState(rx.State):
 
     @rx.event(background=True)
     async def run_now(self, rule_id: str):
+        # Una regla puede llevar dentro un pulso de puerta o un armado, así que
+        # lanzarla a mano vale tanto como el paso más gordo que contenga. Sin un
+        # mapa de tipo-de-paso a capacidad se pide lo mismo que sus hermanos:
+        # AJUSTES (ver auth/permisos.py).
+        async with self:
+            no = await permisos.denegar(self, permisos.AJUSTES)
+        if no:
+            yield no
+            return
         async with self:
             self.status = "▶️ Ejecutando..."
         try:
@@ -228,14 +250,22 @@ class AutomationsState(rx.State):
 
     # ── Carpetas ─────────────────────────────────────────────────────────
     @rx.event
-    def submit_add_folder(self, form_data: dict):
+    async def submit_add_folder(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = (form_data.get("name") or "").strip()
         if nombre:
             store.add_folder(nombre)
             self._reload()
 
     @rx.event
-    def delete_folder(self, folder_id: str):
+    async def delete_folder(self, folder_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         store.delete_folder(folder_id)
         self._reload()
 
@@ -354,6 +384,10 @@ class AutomationsState(rx.State):
 
     @rx.event
     async def save_rule(self):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self.draft_name.strip()
         if not nombre:
             self.status = "⚠️ Ponle un nombre a la automatización."

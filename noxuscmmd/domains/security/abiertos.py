@@ -72,6 +72,35 @@ def abiertos_del_principal() -> list[str]:
     return abiertos_de_grupo(groups_store.ensure_principal_group())
 
 
+def nombres_de(ids: list[str]) -> list[str]:
+    """Los nombres de AHORA de unos ids concretos.
+
+    Para el registro de exclusiones: un sensor excluido y luego renombrado
+    tiene que salir en el registro con el nombre que se le ve en pantalla, no
+    con el que tenía cuando se excluyó. Uno que ya no existe se dice tal cual
+    en vez de callarlo — que en el registro falte un excluido sería peor que
+    verlo marcado como desaparecido."""
+    nombres = _nombres_actuales()
+    return [nombres.get(i, f"(borrado: {i})") for i in ids]
+
+
+def con_id_de_grupo(grupo: dict | None) -> list[dict]:
+    """Los miembros abiertos de un grupo, con su id — lo que necesita el
+    diálogo de armado para poder excluirlos uno a uno. `abiertos_de_grupo` solo
+    devuelve nombres porque es lo único que necesita el registro."""
+    if not grupo:
+        return []
+    nombres = _nombres_actuales()
+    estados = nodes_store.get_all_sensor_states()
+    descartados = registry.isolated_ids() | registry.hidden_ids()
+    return [
+        {"id": m["id"], "nombre": nombres[m["id"]]}
+        for m in grupo.get("members", [])
+        if m["id"] not in descartados and m["id"] in nombres
+        and estados.get(m["id"], False)
+    ]
+
+
 def detalle_armado(abiertos: list[str]) -> str:
     """Texto del registro al armar. Formato fijo: log_row lo reconoce por el
     prefijo para enseñar el desplegable con la lista."""

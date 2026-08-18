@@ -16,6 +16,10 @@ suelto sino la rejilla de todos los equipos con su estado de ping en vivo.
 """
 import reflex as rx
 
+from ....domains.auth.state import AuthState
+from ..components.modos import fila_modos
+from ..components.armado import cuenta_atras_salida
+from ....domains.security.arming_state import ArmingState
 from ....domains.security.state import SecurityState
 from ....domains.security.groups_state import GroupsState
 from ....domains.security.logs_state import LogsState
@@ -24,10 +28,10 @@ from ....domains.nodes.state import NodesState
 from ....domains.nodes.store import ACTION_FAMILIES
 from ....domains.nodes.host_actions_state import HostActionsState
 from ....domains.automations.state import AutomationsState
-from ....domains.notifications.state import PushState
 from ....domains.devices import registry
 from .. import theme
-from ..components.form_dialog import form_dialog_content, field, dialog_footer, select_content, styled_input
+
+from ..components.enviar_alerta import dialogo_enviar_alerta
 from ..components.catalog_picker import catalog_picker
 from ..state import DashboardState
 from .logs import color_de, bg_de
@@ -314,7 +318,10 @@ def _stat_sensors(w) -> rx.Component:
 
 
 def _stat_lights(w) -> rx.Component:
-    return _stat_tile("Luces", NodesState.lights.length(), "lightbulb",
+    # Solo las luces: los accesorios (la tele, el ventilador) comparten
+    # colección pero no son luces, y contarlos hacía que el contador dijera
+    # cuatro con dos bombillas en casa.
+    return _stat_tile("Luces", NodesState.total_luces, "lightbulb",
                       color=theme.WARNING, controls=_widget_controls(w))
 
 
@@ -410,24 +417,33 @@ _STAT_BUILDERS = {
 
 
 def _action_arm(w) -> rx.Component:
-    return _quick_action(
-        rx.cond(SecurityState.sistema_armado, "shield-off", "shield-check"),
-        rx.cond(SecurityState.sistema_armado, "Desarmar sistema", "Armar sistema"),
-        SecurityState.conmutar_alarma,
-        color=rx.cond(SecurityState.sistema_armado, theme.DANGER, theme.SUCCESS),
-        trailing=_widget_controls(w),
+    # A quien no puede armar no se le pinta el acceso rápido. Es solo la cara
+    # visible: quien decide es el manejador, que comprueba el permiso aunque el
+    # evento llegue sin haber pasado por aquí.
+    return rx.cond(
+        AuthState.puede_armar,
+        _quick_action(
+            rx.cond(SecurityState.sistema_armado, "shield-off", "shield-check"),
+            rx.cond(SecurityState.sistema_armado, "Desarmar sistema", "Armar sistema"),
+            ArmingState.pedir_armar(""),
+            color=rx.cond(SecurityState.sistema_armado, theme.DANGER, theme.SUCCESS),
+            trailing=_widget_controls(w),
+        ),
     )
 
 
 def _action_group(w) -> rx.Component:
     gid = w["target_id"].to(str)
     armed = GroupsState.groups_by_id[gid]["armed"].to(bool)
-    return _quick_action(
-        rx.cond(armed, "shield-off", "shield-check"),
-        rx.cond(armed, "Desarmar " + w["label"].to(str), "Armar " + w["label"].to(str)),
-        GroupsState.toggle_group_armed(gid),
-        color=rx.cond(armed, theme.DANGER, theme.SUCCESS),
-        trailing=_widget_controls(w),
+    return rx.cond(
+        AuthState.puede_armar,
+        _quick_action(
+            rx.cond(armed, "shield-off", "shield-check"),
+            rx.cond(armed, "Desarmar " + w["label"].to(str), "Armar " + w["label"].to(str)),
+            ArmingState.pedir_armar(gid),
+            color=rx.cond(armed, theme.DANGER, theme.SUCCESS),
+            trailing=_widget_controls(w),
+        ),
     )
 
 
@@ -446,10 +462,15 @@ def _action_door(w) -> rx.Component:
 
 
 def _action_light(w) -> rx.Component:
+    """Luces Y accesorios: comparten kind, así que el icono NO puede ser fijo.
+    Sale del propio elemento (ver referencias._catalogo, que se lo pone según el
+    aspecto) y solo cae en la bombilla si no trae ninguno — que es el caso de
+    las luces de siempre."""
     lid = w["target_id"].to(str)
     on = NodesState.sensor_state[lid]
     return _quick_action(
-        "lightbulb", w["label"], NodesState.toggle_light(lid),
+        rx.cond(w["icon"] != "", w["icon"].to(str), "lightbulb"),
+        w["label"], NodesState.toggle_light(lid),
         color=rx.cond(on, theme.WARNING, theme.MUTED), trailing=_widget_controls(w),
     )
 
@@ -470,27 +491,6 @@ def _action_rdp(w) -> rx.Component:
     )
 
 
-def _chip_destino(nombre, activo, on_click) -> rx.Component:
-    """Pastilla de un destinatario. Se marcan varios: mandar el mismo aviso a
-    dos personas es lo normal, y con un desplegable de una sola opción había
-    que enviarlo dos veces."""
-    return rx.hstack(
-        rx.icon(rx.cond(activo, "check", "plus"), size=12,
-                color=rx.cond(activo, theme.WARNING, theme.MUTED), flex_shrink="0"),
-        rx.text(nombre, size="1",
-                weight=rx.cond(activo, "bold", "regular"),
-                color=rx.cond(activo, theme.TEXT, theme.MUTED),
-                white_space="nowrap"),
-        on_click=on_click,
-        cursor="pointer",
-        align="center", spacing="1",
-        padding="6px 12px", border_radius="999px", flex_shrink="0",
-        background=rx.cond(activo, theme.alpha(theme.WARNING, 0.14), "transparent"),
-        border=f"1px solid {rx.cond(activo, theme.WARNING, theme.BORDER)}",
-        _hover={"border_color": theme.BORDER_STRONG},
-    )
-
-
 def _action_notify(w) -> rx.Component:
     """Enviar una alerta escrita a mano al dispositivo que se elija.
 
@@ -498,59 +498,14 @@ def _action_notify(w) -> rx.Component:
     este necesita saber a quién y qué antes de mandar nada. Por eso el acceso
     rápido es el disparador de un diálogo en vez de la acción en sí.
 
-    La lista de dispositivos se relee al abrir (on_open_change): las
-    suscripciones se dan de alta y de baja desde otros aparatos, y la de esta
-    sesión se queda vieja en cuanto alguien vincula un móvil nuevo."""
-    return rx.dialog.root(
-        rx.dialog.trigger(
-            rx.box(
-                _quick_action("bell-ring", "Enviar alerta", rx.noop(),
-                              color=theme.WARNING, trailing=_widget_controls(w)),
-                width="100%",
-            ),
+    El diálogo es el de components/enviar_alerta, compartido con el icono de la
+    barra de arriba: el mismo formulario abierto desde dos sitios."""
+    return dialogo_enviar_alerta(
+        rx.box(
+            _quick_action("bell-ring", "Enviar alerta", rx.noop(),
+                          color=theme.WARNING, trailing=_widget_controls(w)),
+            width="100%",
         ),
-        form_dialog_content(
-            icon="bell-ring",
-            title="Enviar una alerta",
-            accent=theme.WARNING,
-            form=rx.form.root(
-                rx.vstack(
-                    field(
-                        "Destinatarios",
-                        rx.vstack(
-                            _chip_destino("Todos", PushState.a_todos, PushState.enviar_a_todos),
-                            rx.flex(
-                                rx.foreach(
-                                    PushState.destinos_ui,
-                                    lambda d: _chip_destino(
-                                        d["nombre"], d["activo"],
-                                        PushState.alternar_destino(d["nombre"]),
-                                    ),
-                                ),
-                                gap="8px", wrap="wrap", width="100%",
-                            ),
-                            rx.text(PushState.resumen_destinos, size="1", color=theme.MUTED),
-                            spacing="2", width="100%", align="start",
-                        ),
-                        hint="Marca los que quieras; sin marcar ninguno va a todos. "
-                             "Solo salen los dispositivos con las notificaciones vinculadas.",
-                    ),
-                    field("Título", styled_input(
-                        name="titulo", placeholder="Aviso de Noxus", max_length=60,
-                    )),
-                    field("Mensaje", rx.text_area(
-                        name="mensaje", placeholder="Escribe aquí lo que quieres que les llegue...",
-                        rows="4", width="100%", size="3", auto_complete=False,
-                    )),
-                    dialog_footer(confirm_label="Enviar", color_scheme="orange"),
-                    spacing="3",
-                    width="100%",
-                ),
-                on_submit=PushState.enviar_alerta,
-                reset_on_submit=True,
-            ),
-        ),
-        on_open_change=PushState.refrescar_dispositivos,
     )
 
 
@@ -576,6 +531,18 @@ def _action_ir_button(w) -> rx.Component:
     referencias.sincronizar()."""
     return _quick_action(
         w["icon"].to(str), w["label"], NodesState.send_ir_button_combined(w["target_id"].to(str)),
+        color=theme.ACCENT, trailing=_widget_controls(w),
+    )
+
+
+def _action_ir_remote(w) -> rx.Component:
+    """Abre el mando ENTERO en su ventana flotante, con todos sus botones — la
+    misma que abre el botón «Abrir mando» de la pestaña Mandos.
+
+    Es lo que se quiere cuando el mando se usa de verdad (subir volumen, cambiar
+    de canal): un widget por tecla llenaría el Resumen para hacer lo mismo."""
+    return _quick_action(
+        w["icon"].to(str), w["label"], DashboardState.open_window(w["target_id"].to(str)),
         color=theme.ACCENT, trailing=_widget_controls(w),
     )
 
@@ -618,6 +585,7 @@ _ACTION_BUILDERS = {
     "action_door": _action_door,
     "action_light": _action_light,
     "action_ir_button": _action_ir_button,
+    "action_ir_remote": _action_ir_remote,
     "action_host_button": _action_host_button,
     "action_host_shutdown": _action_host_shutdown,
     "action_host_wol": _action_host_wol,
@@ -798,14 +766,23 @@ def _barra_estado() -> rx.Component:
                 rx.cond(armado, "Sistema armado", "Sistema desarmado"),
                 size="2", weight="medium", color=theme.TEXT, white_space="nowrap",
             ),
-            on_click=SecurityState.conmutar_alarma,
-            cursor="pointer",
+            # Un invitado SÍ ve si la casa está armada —es lo que evita que
+            # abra una puerta sin saber lo que va a pasar— pero la pastilla no
+            # le responde al pulsarla. Enseñarle un botón que va a rechazarle
+            # sería peor que no enseñárselo.
+            on_click=rx.cond(
+                AuthState.puede_armar, ArmingState.pedir_armar(""), rx.noop()),
+            cursor=rx.cond(AuthState.puede_armar, "pointer", "default"),
             align="center", spacing="2",
             padding="9px 14px", border_radius="999px", flex_shrink="0",
             background=rx.cond(armado, theme.alpha(theme.DANGER, 0.12), theme.alpha(theme.SUCCESS, 0.12)),
             border=f"1px solid {rx.cond(armado, theme.alpha(theme.DANGER, 0.35), theme.alpha(theme.SUCCESS, 0.35))}",
             _hover={"opacity": "0.85"},
-            title=rx.cond(armado, "Pulsa para desarmar", "Pulsa para armar"),
+            title=rx.cond(
+                AuthState.puede_armar,
+                rx.cond(armado, "Pulsa para desarmar", "Pulsa para armar"),
+                rx.cond(armado, "Sistema armado", "Sistema desarmado"),
+            ),
         ),
         spacing="2",
         width="100%",
@@ -878,6 +855,11 @@ def overview_view() -> rx.Component:
             align="center",
             wrap="wrap",
         ),
+        # La fila de modos va ENCIMA de la barra de estado y fuera de los
+        # widgets: no se puede quitar ni recolocar desde "Personalizar", igual
+        # que el armado. Es el estado de la casa, no un acceso rápido más.
+        fila_modos(),
+        cuenta_atras_salida(),
         _barra_estado(),
         _accesos_rapidos(),
         _mas_informacion(),

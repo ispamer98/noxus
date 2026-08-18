@@ -8,6 +8,17 @@ vista clásica.
 import reflex as rx
 
 
+# Todas las vistas que existen. Está aquí, y no en topbar.py junto a sus
+# títulos, porque topbar importa este módulo: al revés se cerraría el círculo.
+# Sirve para validar lo que llega por la URL — ver aplicar_url.
+VISTAS = (
+    "overview", "alarm", "groups", "floor_plan", "video_wall", "cctv", "access",
+    "lights", "ir_remotes", "automations", "equipment", "settings_hub", "system",
+    "logs", "metricas", "voz", "usuarios", "inventario", "modos", "retardos",
+    "instalador", "presencia", "accesorios", "movimiento",
+)
+
+
 class DashboardState(rx.State):
     sidebar_collapsed: bool = False
     active_view: str = "overview"
@@ -66,12 +77,31 @@ class DashboardState(rx.State):
     def set_view(self, view: str):
         self.active_view = view
 
+    @rx.event
+    def aplicar_url(self):
+        """Abre directamente la vista que pida la URL: /panel?vista=video_wall.
+
+        Es lo que hace que los atajos del icono de la aplicación (manifest.json
+        → shortcuts) lleguen a donde dicen: mantener pulsado Noxus en el móvil y
+        elegir "Mural" abre el mural, no el Resumen. Sirve igual para un enlace
+        guardado o para una tablet colgada en la pared que tenga que arrancar
+        siempre en el plano.
+
+        Se valida contra VISTAS a propósito: cualquiera puede escribir lo que
+        quiera en la barra de direcciones, y una vista inventada dejaría el menú
+        entero sin ninguna fila marcada."""
+        vista = self.router.url.query_parameters.get("vista", "")
+        if vista in VISTAS:
+            self.active_view = vista
+
     # Las pestañas de configuración ya no tienen fila propia en el menú: se
     # llega a ellas desde "Ajustes" (ver dashboard/views/settings_hub.py). Sin
     # esto, estar dentro de "Alarma" no dejaría NINGUNA fila del menú marcada
     # como activa y el usuario perdería la referencia de dónde está.
     # "equipment" NO está aquí: tiene fila propia en el menú (ver sidebar.py).
-    _EN_AJUSTES = ("alarm", "groups", "access", "cctv", "lights", "ir_remotes", "automations")
+    _EN_AJUSTES = ("alarm", "groups", "access", "cctv", "lights", "ir_remotes",
+                   "automations", "system", "voz", "usuarios", "inventario", "modos", "retardos",
+                   "instalador", "presencia", "accesorios", "movimiento")
 
     @rx.var
     def settings_hub_active(self) -> bool:

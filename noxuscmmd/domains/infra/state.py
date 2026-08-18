@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 import reflex as rx
 
+from ..auth import permisos
 from ..devices import registry, ssh_bus, gpio_bus
 from ..devices import actions as device_actions
 from ..nodes import store as nodes_store, rdp
@@ -18,6 +19,7 @@ from ..security import audit, logs
 from ...core.connectivity import NetUtils
 from ...core.sensors import Sensors
 from ...core.ssh_manager import SSHManager
+from ...core import sesiones
 
 _SSH_STARTED = False
 
@@ -149,6 +151,7 @@ class InfraState(rx.State):
         soy_el_que_pinga = not _PING_STARTED
         if soy_el_que_pinga:
             _PING_STARTED = True
+        guardia = await sesiones.guardia(self)
         while True:
             if soy_el_que_pinga:
                 host_items = list(registry.hosts().items())
@@ -162,7 +165,8 @@ class InfraState(rx.State):
                 estados = await asyncio.to_thread(nodes_store.get_all_host_online)
             async with self:
                 self.host_online.update(estados)
-            await asyncio.sleep(8 if soy_el_que_pinga else 3)
+            if not await sesiones.espera(guardia, 8 if soy_el_que_pinga else 3):
+                return
 
     # ── Acciones genéricas por host ──────────────────────────────────────
     @rx.event(background=True)
@@ -293,12 +297,25 @@ class InfraState(rx.State):
 
     # ── Subida de archivos ───────────────────────────────────────────────
     async def handle_upload(self, files: list[rx.UploadFile]):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         upload_dir = Path(os.getenv("UPLOAD_FOLDER", "/home/spamer/archivos"))
         upload_dir.mkdir(parents=True, exist_ok=True)
+        guardados = 0
         for file in files:
+            # El nombre lo pone el cliente: tal cual, un «../../auth_secreto.json»
+            # o un «../.ssh/authorized_keys» se escribiría fuera de la carpeta y
+            # con los permisos del servicio. .name se queda con la última parte
+            # del camino, y sin punto delante para no colar dotfiles.
+            nombre = Path(file.name or "").name
+            if not nombre or nombre.startswith("."):
+                continue
             data = await file.read()
-            (upload_dir / file.name).write_bytes(data)
-        self.status = f"✅ {len(files)} archivo(s) subido(s)"
+            (upload_dir / nombre).write_bytes(data)
+            guardados += 1
+        rechazados = len(files) - guardados
+        self.status = f"✅ {guardados} archivo(s) subido(s)" + (
+            f" · {rechazados} con nombre no válido" if rechazados else "")
 
     # ── Temperatura CPU (Raspberry, vía SSH persistente) ────────────────
     @rx.event(background=True)

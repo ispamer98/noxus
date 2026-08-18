@@ -2,20 +2,52 @@
   "name": "Noxus",
   "short_name": "Noxus",
   "description": "Centro de control de la casa",
-  "start_url": "/",
+  "start_url": "/panel",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "orientation": "any",
+  "background_color": "#05070a",
+  "theme_color": "#05070a",
+  "lang": "es",
+  "dir": "ltr",
   "icons": [
     {
-      "src": "/icono.png",
+      "src": "/icono-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/icono.png",
+      "src": "/icono-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icono-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mural de vídeo",
+      "short_name": "Mural",
+      "description": "Todas las cámaras a la vez",
+      "url": "/panel?vista=video_wall"
+    },
+    {
+      "name": "Plano de planta",
+      "short_name": "Plano",
+      "description": "La casa sobre el plano",
+      "url": "/panel?vista=floor_plan"
+    },
+    {
+      "name": "Registros",
+      "short_name": "Registros",
+      "description": "Qué ha pasado en la casa",
+      "url": "/panel?vista=logs"
     }
   ]
 }

@@ -1,26 +1,24 @@
 """
-Registro de eventos de TODO el sistema (logs.json). Funciones planas — no
-necesitan ser reactivas; los States las envuelven donde hace falta actualizar
-la UI.
+Registro de eventos de TODO el sistema. Funciones planas — no necesitan ser
+reactivas; los States las envuelven donde hace falta actualizar la UI.
+
+Este módulo es el VOCABULARIO del registro: qué familias hay, cómo se llama
+cada acción en castellano y cómo se interpretan las entradas de las épocas
+anteriores. Guardarlas y buscarlas es de logs_store.py (SQLite en modo WAL),
+que es donde está explicado por qué ya no es un JSON.
 
 Cada entrada lleva una `categoria` para poder filtrar por familia en la
-pestaña Registros. Nació guardando solo alarma (armar/desarmar/tampers) y por
-eso las entradas antiguas no la traen: se les asigna al leer, deduciéndola de
-la acción (ver _categoria_heredada), así que el histórico que ya había sigue
-apareciendo y encajado en su sitio sin tener que migrar el fichero.
+pestaña Registros. El registro nació guardando solo alarma (armar/desarmar/
+tampers) y por eso las entradas antiguas no la traen: se les asigna al
+importarlas, deduciéndola de la acción (ver _categoria_heredada), así que el
+histórico que ya había sigue apareciendo y encajado en su sitio.
 
 Quién hizo cada cosa sale de la identidad push de la pestaña (el nombre del
 dispositivo suscrito: "iPhone Ruben", "Mac Gaby"...). Lo resuelve
 security/audit.py, que es por dónde deberían pasar los States: aquí no se
 puede, porque para saberlo hace falta el State de la sesión.
 """
-import fcntl
-import json
-import os
-import time
-
-ARCHIVO = "logs.json"
-MAX_ENTRIES = 1500
+from . import logs_store
 
 # (id, etiqueta, icono) — este orden es el de los filtros de la pestaña
 # Registros, así que va de lo más "de seguridad" a lo más administrativo.
@@ -82,6 +80,8 @@ _ETIQUETAS = {
     "EQUIPO_ENCENDIDO_WOL": "Encendido por red",
     "SENSOR_AISLADO": "Sensor aislado de la alarma",
     "SENSOR_REINTEGRADO": "Sensor devuelto a la alarma",
+    "SENSOR_CAMARA_PUESTA": "Cámara asignada al elemento",
+    "SENSOR_CAMARA_QUITADA": "Cámara quitada del elemento",
     "GRUPO_PRINCIPAL_CAMBIADO": "Grupo principal cambiado",
     "PLANO_ELEMENTO_COLOCADO": "Elemento colocado en el plano",
     "PLANO_ELEMENTO_QUITADO": "Elemento quitado del plano",
@@ -98,6 +98,7 @@ _ETIQUETAS = {
     "CAMARA_PRIVACIDAD_ON": "Privacidad activada",
     "CAMARA_PRIVACIDAD_OFF": "Privacidad desactivada",
     "LUZ_CAMBIADA_DE_ESTANCIA": "Luz cambiada de estancia",
+    "PRESENCIA_LUZ": "Luz movida por la simulación de presencia",
     "SENSOR_AÑADIDO_A_GRUPO": "Sensor añadido al grupo",
     "SENSOR_QUITADO_DE_GRUPO": "Sensor quitado del grupo",
     "PUERTA_AÑADIDA_A_NIVEL": "Puerta añadida al nivel",
@@ -110,6 +111,7 @@ _ETIQUETAS = {
     "MANDO_IR_BOTON_APRENDIDO": "Botón aprendido",
     "MANDO_IR_BOTON_ELIMINADO": "Botón eliminado",
     "MANDO_IR_BOTON_ENVIADO": "Botón enviado",
+    "MANDO_IR_BOTON_FALLIDO": "Botón que no se pudo enviar",
     # Automatizaciones. Con tilde a mano, como las de arriba.
     "AUTOMATIZACION_EJECUTADA": "Automatización ejecutada",
     "AUTOMATIZACION_FALLIDA": "Automatización fallida",
@@ -121,7 +123,57 @@ _ETIQUETAS = {
     "AUTOMATIZACION_ACTIVADA_MANUAL": "Automatización activada",
     "AUTOMATIZACION_DESACTIVADA_MANUAL": "Automatización desactivada",
     "NOTA": "Nota de una automatización",
+    # Sesiones, roles e invitaciones (domains/auth). Van con tildes puestas a
+    # mano como el resto: el nombre de la acción viaja sin ellas.
+    "ACCESO_DENEGADO": "Acceso denegado",
+    "DISPOSITIVO_IDENTIFICADO": "Dispositivo identificado",
+    "DISPOSITIVO_NUEVO": "Dispositivo nuevo sin acceso",
+    "DISPOSITIVO_ELIMINADO": "Dispositivo eliminado",
+    "ROL_CAMBIADO": "Permisos cambiados",
+    "INVITACION_CREADA": "Invitación creada",
+    "INVITACION_USADA": "Invitación usada",
+    "INVITACION_REVOCADA": "Invitación revocada",
+    "ARMADO_CON_EXCLUSIONES": "Armado dejando algo fuera",
+    "ARMADO_AL_CERRAR": "Se armará al cerrar",
+    "ARMADO_EN_ESPERA": "Armado que estaba en espera",
+    "ARMADO_CANCELADO": "Armado cancelado",
+    "SALIDA_EN_CURSO": "Cuenta atrás para salir",
+    "ENTRADA_EN_CURSO": "Tiempo para desarmar",
+    "ALERTA_REPETIDA": "Alerta repetida sin confirmar",
+    "ALERTA_CONFIRMADA": "Alerta confirmada",
+    "ALERTA_SILENCIADA": "Alerta silenciada",
+    "MODO_CAMBIADO": "Modo de la casa",
+    "MODO_EDITADO": "Modo editado",
+    "MODO_BORRADO": "Modo borrado",
+    "INVENTARIO_EDITADO": "Ficha del inventario editada",
+    "INVENTARIO_ANADIDO": "Elemento añadido al inventario",
+    # Tablero de métricas: los paneles y qué equipos guardan histórico.
+    "PANEL_METRICA_CREADO": "Panel de métricas creado",
+    "PANEL_METRICA_EDITADO": "Panel de métricas editado",
+    "PANEL_METRICA_ELIMINADO": "Panel de métricas eliminado",
+    "EQUIPO_EN_METRICAS": "Equipo añadido al histórico",
+    "EQUIPO_FUERA_DE_METRICAS": "Equipo quitado del histórico",
 }
+
+
+# Qué cuenta como "se ha abierto algo", para las gráficas de aperturas por hora
+# y por día. Vive aquí porque es vocabulario: este módulo es el que sabe lo que
+# significa cada acción. logs_store solo sabe contar lo que se le diga.
+#
+# Están las cuatro formas que ha tenido el mismo hecho a lo largo del tiempo:
+# ELEMENTO_ABIERTO es la de ahora, PUERTA_ABIERTA la de cuando el contacto de la
+# entrada tenía acción propia, _ARMADA la que salta con el sistema armado y
+# _MANDO la apertura mandada desde el panel. Contar solo la de ahora daría una
+# gráfica que empieza el día que se renombró la acción.
+#
+# NO están los cierres ni los tampers: una gráfica de "aperturas" que incluyera
+# el cierre contaría cada paso por la puerta dos veces.
+ACCIONES_APERTURA = (
+    "ELEMENTO_ABIERTO",
+    "PUERTA_ABIERTA",
+    "PUERTA_ABIERTA_ARMADA",
+    "PUERTA_ABIERTA_MANDO",
+)
 
 
 def etiqueta_accion(accion: str) -> str:
@@ -163,11 +215,15 @@ def _reubicar_nombre(entrada: dict) -> tuple[str, str]:
     return usuario, detalle
 
 
-def _normalizar(entrada: dict) -> dict:
-    """Toda entrada sale de aquí con las mismas claves. Hace falta porque el
-    fichero mezcla entradas de tres épocas (sin `grupo`, sin `categoria`, y las
-    de ahora): sin esto, la vista pediría una clave que en unas filas está y en
-    otras no, y en el navegador eso se pinta como "undefined"."""
+def normalizar_heredada(entrada: dict) -> dict:
+    """Una entrada del logs.json de antes, con las claves de ahora.
+
+    El fichero mezclaba entradas de tres épocas (sin `grupo`, sin `categoria`, y
+    las de ahora), y hasta ahora esto se aplicaba en CADA lectura para que la
+    vista no pidiera una clave que en unas filas está y en otras no. Ahora se
+    aplica una sola vez, al importar el fichero a la base de datos
+    (logs_store._importar): lo que se guarda ya está interpretado, y lo que sale
+    de una consulta tiene siempre las mismas columnas por definición."""
     accion = entrada.get("accion", "")
     usuario, detalle = _reubicar_nombre(entrada)
     return {
@@ -187,28 +243,26 @@ def _normalizar(entrada: dict) -> dict:
     }
 
 
-def leer_logs() -> list[dict]:
-    if not os.path.exists(ARCHIVO):
-        return []
-    try:
-        with open(ARCHIVO, "r") as f:
-            content = f.read().strip()
-        return [_normalizar(e) for e in (json.loads(content) if content else [])]
-    except Exception:
-        return []
+def leer_logs(limite: int | None = None) -> list[dict]:
+    """Del más antiguo al más reciente, como devolvía el fichero.
+
+    `limite` acota a los N más RECIENTES (devueltos igualmente de antiguo a
+    reciente). Pedirlo sin límite trae el histórico entero, que ya no tiene tope
+    de 1.500 entradas: quien pinta una lista debe acotar."""
+    return logs_store.leer(limite)
 
 
 def ultimo_log_puerta() -> str:
-    for log in reversed(leer_logs()):
-        accion = log.get("accion", "")
-        if accion in ("PUERTA_ABIERTA", "PUERTA_ABIERTA_ARMADA", "PUERTA_CERRADA"):
-            return accion
-    return ""
+    return logs_store.ultima_accion(
+        ("PUERTA_ABIERTA", "PUERTA_ABIERTA_ARMADA", "PUERTA_CERRADA"))
 
 
 def registrar(categoria: str, accion: str, usuario: str = "sistema",
-              detalle: str = "", grupo: str = "", entidad: str = "") -> None:
-    """Apunta un evento.
+              detalle: str = "", grupo: str = "", entidad: str = "") -> int:
+    """Apunta un evento. Devuelve su id, o 0 si no se guardó (repetido, o fallo).
+
+    Casi nadie mira el id: hace falta para poder colgarle algo al evento
+    después, como el fotograma de la cámara (ver logs_store.adjuntar_foto).
 
     detalle: el SUJETO primero y los añadidos detrás, separados por " · "
     ("Habitación · Raspberry pin 5"). El listado parte por ahí para enseñar el
@@ -219,50 +273,23 @@ def registrar(categoria: str, accion: str, usuario: str = "sistema",
     DESARMADO_GRUPO) — "TOTAL" si es el grupo principal, o el nombre del
     grupo si es parcial. Se guarda aparte de `detalle` porque `detalle` para
     estos eventos lleva el resumen "Armado con abiertos: ..." (mismo formato
-    que el armado clásico), y hacen falta las dos cosas a la vez en el log."""
+    que el armado clásico), y hacen falta las dos cosas a la vez en el log.
+
+    Los fallos se tragan y se imprimen, como siempre: apuntar un evento es
+    SIEMPRE lo secundario de la acción que lo provoca. Que no se pueda escribir
+    el registro no puede impedir que se abra una puerta ni que se arme la
+    alarma."""
     if categoria not in IDS_CATEGORIAS:
         categoria = SISTEMA
     try:
-        with open(ARCHIVO, "a+" if os.path.exists(ARCHIVO) else "w+") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            f.seek(0)
-            content = f.read().strip()
-            logs = []
-            if content:
-                try:
-                    logs = json.loads(content)
-                except Exception:
-                    logs = []
-            # Repetido exacto e inmediato = ruido (un sensor que rebota, un
-            # botón pulsado dos veces). No se filtra nada más antiguo: dos
-            # eventos iguales separados en el tiempo son dos hechos distintos y
-            # un registro que se los come deja de servir para lo que sirve.
-            if logs:
-                ultimo = logs[-1]
-                if (ultimo.get("accion") == accion and ultimo.get("detalle") == detalle
-                        and ultimo.get("grupo") == grupo):
-                    return
-            logs.append({
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "categoria": categoria,
-                "accion": accion,
-                "usuario": usuario or "sistema",
-                "detalle": detalle,
-                "grupo": grupo,
-                "entidad": entidad,
-            })
-            if len(logs) > MAX_ENTRIES:
-                logs = logs[-MAX_ENTRIES:]
-            f.seek(0)
-            f.truncate()
-            json.dump(logs, f, indent=2, ensure_ascii=False)
-            f.flush()
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        return logs_store.registrar(categoria, accion, usuario, detalle, grupo,
+                                    entidad)
     except Exception as e:
         print(f"❌ Error escribiendo log: {e}")
+        return 0
 
 
-def registrar_log(accion: str, usuario: str, detalle: str = "", grupo: str = "") -> None:
+def registrar_log(accion: str, usuario: str, detalle: str = "", grupo: str = "") -> int:
     """Forma anterior, sin categoría — se deduce. La siguen usando los avisos
     que emite el propio sistema (sensores por MQTT), que son todos de alarma."""
-    registrar(_categoria_heredada(accion), accion, usuario, detalle, grupo)
+    return registrar(_categoria_heredada(accion), accion, usuario, detalle, grupo)

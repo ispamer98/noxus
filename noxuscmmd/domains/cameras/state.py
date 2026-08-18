@@ -2,6 +2,8 @@
 import os
 import asyncio
 import reflex as rx
+
+from ..auth import permisos
 import aiohttp
 
 from ..devices import registry
@@ -104,6 +106,11 @@ class CameraState(rx.State):
     # ── Control PTZ: go2rtc local -> Tuya LAN (tinytuya) -> Tuya cloud ────
     @rx.event(background=True)
     async def move_ptz(self, direction: str):
+        # Mover una camara, callar su sirena o taparle el objetivo es
+        # actuar sobre la vigilancia de la casa: pide el mismo permiso
+        # que verlas (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.CAMARAS)):
+            return no
         move = _MOVE_MAP.get(direction, "stop")
         try:
             go2rtc_url = f"http://{os.getenv('IP_RASPBERRY', '100.76.90.7')}:1984/api/ptz"
@@ -147,6 +154,11 @@ class CameraState(rx.State):
     # ── Modo privacidad: Tuya LAN primero, Tuya cloud como fallback ──────
     @rx.event(background=True)
     async def toggle_privacy(self, cam_entity_id: str, enable: bool):
+        # Mover una camara, callar su sirena o taparle el objetivo es
+        # actuar sobre la vigilancia de la casa: pide el mismo permiso
+        # que verlas (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.CAMARAS)):
+            return no
         local = _tuya_local_client(cam_entity_id)
         dp_privacy = os.getenv(f"TUYA_DP_PRIVACY_{_cam_suffix(cam_entity_id)}")
         if local and dp_privacy:
@@ -185,6 +197,10 @@ class CameraState(rx.State):
     # ── Sirena de la cámara (solo Tuya LAN — no hay equivalente cloud aquí) ──
     @rx.event(background=True)
     async def trigger_siren(self, cam_entity_id: str):
+        # Mismo permiso que ver las camaras: hacer sonar la sirena de una
+        # camara es actuar sobre la vigilancia de la casa.
+        if (no := await permisos.denegar(self, permisos.CAMARAS)):
+            return no
         local = _tuya_local_client(cam_entity_id)
         dp_siren = os.getenv(f"TUYA_DP_SIREN_{_cam_suffix(cam_entity_id)}")
         if not local or not dp_siren:

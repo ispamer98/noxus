@@ -25,6 +25,11 @@ class MQTTBus:
         }
         self._dynamic_topic_to_entity: dict[str, str] = {}
         self._dynamic_callback: OnBinarySensor | None = None
+        # Oyente del modo instalador (domains/devices/descubrimiento.py): ve
+        # TODO lo que entra, incluso lo que no corresponde a ninguna entidad
+        # dada de alta — que es justo lo que se quiere descubrir. Se llama
+        # desde el hilo de paho, así que lo que le cuelgue no puede bloquear.
+        self._oyente: Callable[[str, str], None] | None = None
         self._ultimo_estado: dict[str, str] = {}
         self._ultimo_timestamp = 0.0
 
@@ -43,7 +48,15 @@ class MQTTBus:
 
     def _on_message(self, client, userdata, msg):
         ahora = time.time()
-        payload = msg.payload.decode()
+        payload = msg.payload.decode(errors="replace")
+
+        # Primero el oyente del instalador: tiene que ver también los topics
+        # que no están mapeados, que son los que salen por el return de abajo.
+        if self._oyente is not None:
+            try:
+                self._oyente(msg.topic, payload)
+            except Exception as e:
+                print(f"⚠️ Instalador: el oyente ha fallado con {msg.topic}: {e}")
 
         entity_id = self._topic_to_entity.get(msg.topic)
         callback = self._on_binary_sensor
@@ -65,11 +78,42 @@ class MQTTBus:
     def set_dynamic_callback(self, callback: OnBinarySensor) -> None:
         self._dynamic_callback = callback
 
+    # ── Modo instalador ──────────────────────────────────────────────────
+    # Escuchar un comodín es temporal a propósito: deja al broker mandando a
+    # este proceso todo lo que se publica en la casa, y eso solo interesa
+    # mientras alguien está mirando la pantalla de descubrimiento.
+    def escuchar_todo(self, oyente: Callable[[str, str], None],
+                      comodin: str = "casa/#") -> None:
+        self._oyente = oyente
+        self.client.subscribe(comodin)
+        self._comodin = comodin
+
+    def dejar_de_escuchar_todo(self) -> None:
+        comodin = getattr(self, "_comodin", "")
+        self._oyente = None
+        if not comodin:
+            return
+        self._comodin = ""
+        # Solo se desuscribe del comodín. Los topics concretos de las entidades
+        # dadas de alta se suscribieron por separado (ver _on_connect y
+        # subscribe_dynamic) y siguen valiendo: desuscribir "casa/#" no los
+        # toca, y si se hiciera al revés la alarma se quedaría sorda.
+        self.client.unsubscribe(comodin)
+
     def subscribe_dynamic(self, topic: str, entity_id: str) -> None:
+        # Un topic vacío se ignora en vez de reventar. No es teórico: los
+        # accesorios que se accionan por mando (la luz del ventilador, la tele)
+        # no tienen topic ninguno, y paho contesta a un subscribe("") con
+        # ValueError: Invalid topic, que tumbaba el evento que engancha la
+        # sesión al bus y dejaba la pantalla a medio cargar.
+        if not topic:
+            return
         self._dynamic_topic_to_entity[topic] = entity_id
         self.client.subscribe(topic)
 
     def unsubscribe_dynamic(self, topic: str) -> None:
+        if not topic:
+            return
         self._dynamic_topic_to_entity.pop(topic, None)
         self.client.unsubscribe(topic)
 

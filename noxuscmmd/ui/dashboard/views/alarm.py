@@ -8,6 +8,8 @@ primera" y "sensores de segunda".
 """
 import reflex as rx
 
+from ....domains.auth.state import AuthState
+from ....domains.security.arming_state import ArmingState
 from ....domains.security.state import SecurityState
 from ....domains.security.groups_state import GroupsState
 from ....domains.devices import registry
@@ -18,7 +20,8 @@ from ..components.node_select import node_select
 from ..components.edit_entity_dialog import edit_entity_dialog
 from ..components.hidden_card import hidden_entities_card
 from ..components.actions_menu import actions_menu, confirm_delete
-from ..components.form_dialog import form_dialog_content, field, dialog_footer, styled_input, styled_select
+from ..components.form_dialog import (form_dialog_content, field, dialog_footer,
+                                      styled_input, styled_select, select_content)
 from ..components.floor_fields import floor_plan_fields
 
 
@@ -225,12 +228,15 @@ def _master_arm_card() -> rx.Component:
             align="start",
         ),
         rx.spacer(),
-        rx.button(
-            rx.cond(armed, "DESARMAR", "ARMAR"),
-            on_click=GroupsState.toggle_group_armed(principal["id"]),
-            color_scheme=rx.cond(armed, "red", "green"),
-            variant=rx.cond(armed, "solid", "surface"),
-            size="3",
+        rx.cond(
+            AuthState.puede_armar,
+            rx.button(
+                rx.cond(armed, "DESARMAR", "ARMAR"),
+                on_click=ArmingState.pedir_armar(principal["id"]),
+                color_scheme=rx.cond(armed, "red", "green"),
+                variant=rx.cond(armed, "solid", "surface"),
+                size="3",
+            ),
         ),
         width="100%",
         align="center",
@@ -522,6 +528,70 @@ def _add_sensor_dialog() -> rx.Component:
     )
 
 
+def _elemento_vigilado(e: rx.Var) -> rx.Component:
+    """Una línea: elemento y el desplegable de qué cámara lo mira."""
+    return rx.hstack(
+        rx.icon("radar", size=15, color=theme.MUTED, flex_shrink="0"),
+        rx.vstack(
+            rx.text(e["nombre"], size="2", color=theme.TEXT),
+            rx.cond(
+                e["aviso"] != "",
+                rx.text(e["aviso"], size="1", color=theme.WARNING),
+            ),
+            spacing="0", align="start", min_width="0",
+        ),
+        rx.spacer(),
+        rx.select.root(
+            rx.select.trigger(placeholder="Sin cámara", variant="surface"),
+            select_content(
+                rx.foreach(
+                    NodesState.camaras_vigilancia,
+                    lambda c: rx.select.item(c["nombre"], value=c["id"]),
+                ),
+            ),
+            value=e["camara"],
+            on_change=lambda v: NodesState.asignar_camara(e["id"], v),
+            size="1",
+        ),
+        align="center", spacing="3", width="100%",
+        padding="8px 10px", border_radius="10px",
+        background=theme.BG_CARD,
+        border=f"1px solid {theme.BORDER}",
+    )
+
+
+def _camaras_de_los_elementos() -> rx.Component:
+    """Qué cámara mira a cada elemento de la alarma.
+
+    Va en una sección propia y no dentro de la ficha de cada sensor: los
+    elementos que disparan están repartidos entre los de fábrica y los dados de
+    alta, con dos tarjetas y dos diálogos distintos, y esto se entiende mucho
+    mejor visto todo junto — es una tabla de «quién mira a qué».
+
+    Solo para quien puede tocar ajustes: es configuración de la instalación.
+    Esconderlo no es el permiso, que se comprueba dentro del manejador
+    (NodesState.asignar_camara); esto es para no ofrecer lo que no se va a
+    poder usar."""
+    return rx.cond(
+        AuthState.puede_ajustes,
+        rx.vstack(
+            rx.hstack(
+                rx.text("CÁMARA POR ELEMENTO", size="1", color=theme.MUTED,
+                        letter_spacing="0.08em", weight="bold"),
+                rx.spacer(),
+                width="100%", align="center", padding_top="3",
+            ),
+            rx.text(
+                "Al saltar la alarma se guarda un fotograma de la cámara "
+                "elegida y queda dentro del evento, en Registros.",
+                size="1", color=theme.MUTED,
+            ),
+            rx.foreach(NodesState.elementos_vigilados, _elemento_vigilado),
+            spacing="2", width="100%",
+        ),
+    )
+
+
 def alarm_view() -> rx.Component:
     hidden = registry.hidden_ids()
     sensors = {sid: s for sid, s in registry.binary_sensors().items() if sid not in hidden}
@@ -556,6 +626,7 @@ def alarm_view() -> rx.Component:
             for sid, s in sensors.items()
         ],
         rx.foreach(NodesState.sensors, _dynamic_sensor_card),
+        _camaras_de_los_elementos(),
         hidden_entities_card("SENSORES", hidden_sensors),
         spacing="3",
         width="100%",

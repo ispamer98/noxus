@@ -16,7 +16,7 @@ sumarse a ella (ver LogsState.ver_pestana).
 """
 import reflex as rx
 
-from ....domains.security.logs_state import LogsState
+from ....domains.security.logs_state import LogsState, VENTANA
 from .. import theme
 
 # Traducción de la clave de color que trae cada fila. Hay dos familias de
@@ -192,6 +192,13 @@ def _controles() -> rx.Component:
                 on_click=LogsState.refrescar, size="2", variant="surface",
                 title="Releer ahora", flex_shrink="0",
             ),
+            # Exporta lo filtrado, no lo que se ve: el título lo dice para que
+            # nadie crea que se lleva solo la página cargada.
+            rx.button(
+                rx.icon("download", size=14),
+                on_click=LogsState.exportar_csv, size="2", variant="surface",
+                title="Exportar a CSV lo filtrado", flex_shrink="0",
+            ),
             gap="10px", wrap="wrap", align="center", width="100%",
         ),
         spacing="3", width="100%",
@@ -237,6 +244,32 @@ def _bocadillo(e, color) -> rx.Component:
             # .to(str) para poder concatenar: el valor de una clave de dict
             # llega sin tipo y el "+" no sabe si es suma o unión de textos.
             _dato("Cuándo", e["fecha"].to(str) + "  " + e["hora"].to(str), mono=True),
+            # Lo que vio la cámara en ese instante. Va al final y solo si la hay:
+            # es lo más grande del bocadillo, y en la enorme mayoría de eventos
+            # (una luz, un armado) no existe. Se abre a tamaño completo en otra
+            # pestaña porque aquí caben 300 px y la imagen tiene 2304.
+            rx.cond(
+                e["foto_url"] != "",
+                rx.vstack(
+                    rx.divider(border_color=theme.BORDER),
+                    rx.hstack(
+                        rx.icon("camera", size=13, color=theme.MUTED),
+                        rx.text("Lo que vio la cámara", size="1",
+                                color=theme.MUTED),
+                        spacing="2", align="center",
+                    ),
+                    rx.link(
+                        rx.image(
+                            src=e["foto_url"],
+                            width="100%", border_radius="8px",
+                            border=f"1px solid {theme.BORDER}",
+                            loading="lazy",
+                        ),
+                        href=e["foto_url"], is_external=True, width="100%",
+                    ),
+                    spacing="2", width="100%",
+                ),
+            ),
             spacing="2", width="100%",
         ),
         background=theme.BG_WINDOW,
@@ -309,6 +342,13 @@ def _fila(e) -> rx.Component:
                     rx.badge(e["grupo"], size="1", variant="soft",
                              color_scheme="purple", flex_shrink="0"),
                 ),
+                # Que este evento tiene foto se ve SIN abrirlo: con decenas de
+                # aperturas en la lista, tener que abrirlas una a una para
+                # descubrir cuál trae imagen haría que no se mirara nunca.
+                rx.cond(
+                    e["foto_url"] != "",
+                    rx.icon("camera", size=13, color=color, flex_shrink="0"),
+                ),
                 # El detalle solo se asoma cuando hay sitio: en el móvil vive
                 # en el bocadillo.
                 rx.text(
@@ -352,6 +392,22 @@ def logs_view() -> rx.Component:
         _controles(),
         rx.text(f"{LogsState.total_filtradas} eventos · más reciente primero",
                 size="1", color=theme.MUTED),
+        # Solo aparece cuando el intervalo tiene más eventos de los que se han
+        # traído (ver LogsState.VENTANA). Sin esto, un "Todo" con años de
+        # historia haría creer que antes de esa fecha no pasó nada.
+        rx.cond(
+            LogsState.recortado,
+            rx.hstack(
+                rx.icon("info", size=13, color=theme.MUTED),
+                rx.text(
+                    f"Se están mirando los {VENTANA} eventos más recientes del "
+                    f"intervalo. Acota las fechas para ver más atrás, o "
+                    f"descarga el CSV, que sí lleva el intervalo completo.",
+                    size="1", color=theme.MUTED,
+                ),
+                spacing="2", align="center", width="100%",
+            ),
+        ),
         rx.cond(
             LogsState.filtradas.length() > 0,
             rx.vstack(

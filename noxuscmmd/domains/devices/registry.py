@@ -72,6 +72,7 @@ def _build_factory_sensors() -> dict[str, BinarySensorEntity]:
             node=s.get("node_id") or None,
             floor_top=s.get("floor_top"), floor_left=s.get("floor_left"), floor_icon=s.get("floor_icon"),
             floor_subtle=s.get("floor_subtle", False), floor_color=s.get("floor_color"),
+            floor_color_on=s.get("floor_color_on"),
         )
         for s in nodes_store.get_all_factory_sensors()
     }
@@ -86,6 +87,7 @@ def _build_factory_cameras() -> dict[str, CameraEntity]:
             icon=c.get("icon"),
             floor_top=c.get("floor_top"), floor_left=c.get("floor_left"), floor_icon=c.get("floor_icon"),
             floor_subtle=c.get("floor_subtle", False), floor_color=c.get("floor_color"),
+            floor_color_on=c.get("floor_color_on"),
         )
         for c in nodes_store.get_all_factory_cameras()
     }
@@ -191,6 +193,19 @@ def set_factory_floor_color(entity_id: str, color: str) -> None:
         return
     if entity_id in DEVICES:
         DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_color": color or None})
+
+
+def set_factory_floor_color_on(entity_id: str, color: str) -> None:
+    """El color de cuando está activo, para las entidades de fábrica. Mismo
+    camino que set_factory_floor_color: al almacén y a la copia en memoria."""
+    if entity_id in _factory_sensor_ids():
+        nodes_store.set_floor_color_on("factory_sensors", entity_id, color)
+    elif entity_id in _factory_camera_ids():
+        nodes_store.set_floor_color_on("factory_cameras", entity_id, color)
+    else:
+        return
+    if entity_id in DEVICES:
+        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_color_on": color or None})
 
 
 def toggle_factory_floor_subtle(entity_id: str) -> bool:
@@ -334,12 +349,14 @@ EDITABLE_FIELDS = {
         "name": "name", "topic": "mqtt.topic", "node": "node", "kind": "kind",
         "floor_top": "floor_top", "floor_left": "floor_left", "floor_icon": "floor_icon",
         "floor_subtle": "floor_subtle", "floor_color": "floor_color",
+        "floor_color_on": "floor_color_on",
     },
     RelayEntity: {"name": "name", "host": "gpio.host", "pin": "gpio.pin"},
     CameraEntity: {
         "name": "name", "tuya_device_id": "tuya_device_id", "icon": "icon",
         "floor_top": "floor_top", "floor_left": "floor_left", "floor_icon": "floor_icon",
         "floor_subtle": "floor_subtle", "floor_color": "floor_color",
+        "floor_color_on": "floor_color_on",
     },
 }
 

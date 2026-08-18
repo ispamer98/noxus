@@ -8,6 +8,8 @@ mediante el botón ☆ de cada tarjeta.
 """
 import reflex as rx
 
+from ....domains.auth.state import AuthState
+from ....domains.security.arming_state import ArmingState
 from ....domains.security.groups_state import GroupsState
 from .. import theme
 from ..components.sensor_select import sensor_select
@@ -82,12 +84,15 @@ def _group_card(group: dict) -> rx.Component:
                 ),
             ),
             rx.spacer(),
-            rx.button(
-                rx.cond(armed, "DESARMAR", "ARMAR"),
-                on_click=GroupsState.toggle_group_armed(group["id"]),
-                color_scheme=rx.cond(armed, "red", "green"),
-                variant=rx.cond(armed, "solid", "surface"),
-                size="2",
+            rx.cond(
+                AuthState.puede_armar,
+                rx.button(
+                    rx.cond(armed, "DESARMAR", "ARMAR"),
+                    on_click=ArmingState.pedir_armar(group["id"]),
+                    color_scheme=rx.cond(armed, "red", "green"),
+                    variant=rx.cond(armed, "solid", "surface"),
+                    size="2",
+                ),
             ),
             actions_menu(
                 edit_content=_edit_group_dialog(group),

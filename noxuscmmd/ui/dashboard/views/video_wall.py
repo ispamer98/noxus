@@ -76,14 +76,30 @@ def _slot_empty(slot_id) -> rx.Component:
     )
 
 
-def _slot_video(cam: dict) -> rx.Component:
+def _slot_loading() -> rx.Component:
+    """Mientras le toca esperar su turno en reveal_gradually — ver
+    domains/cameras/wall_state.py sobre por qué no se abren todas a la vez."""
+    return rx.center(
+        rx.spinner(size="2", color=theme.MUTED),
+        width="100%", aspect_ratio=_ASPECTO,
+        background="#000", border_radius="10px",
+        border=f"1px solid {theme.BORDER}",
+    )
+
+
+def _slot_video(cam: dict, slot_id) -> rx.Component:
     """El vídeo en sí, o —si es RTSP y el navegador no puede reproducirlo—
     la URL para copiar y abrir con VLC, mismo plan B que ya usa la ventana
-    flotante de cámara suelta."""
+    flotante de cámara suelta.
+
+    La URL lleva un "_r" con el contador de retry_slot pegado al final: es lo
+    que fuerza al navegador a pedirla de nuevo cuando se pulsa "Recargar"
+    SOLO en este hueco, sin tocar el src de los demás iframes."""
+    url = cam["stream_url"].to(str) + "&_r=" + VideoWallState.reload_nonce.get(slot_id, 0).to_string()
     return rx.cond(
         cam["playable"].to(bool),
         rx.el.iframe(
-            src=cam["stream_url"].to(str),
+            src=url,
             style={"width": "100%", "height": "100%", "border": "none"},
             allow="autoplay; fullscreen",
         ),
@@ -103,25 +119,32 @@ def _slot_video(cam: dict) -> rx.Component:
 
 def _slot_filled(slot_id, camera_id) -> rx.Component:
     cam = VideoWallState.cameras_by_id[camera_id]
-    return rx.box(
-        _slot_video(cam),
-        rx.hstack(
-            rx.text(cam["name"], size="1", color="white", weight="bold",
-                    white_space="nowrap", overflow="hidden", text_overflow="ellipsis"),
-            rx.spacer(),
-            rx.icon("replace", size=13, color="white", cursor="pointer",
-                    on_click=VideoWallState.open_picker(slot_id).stop_propagation,
-                    title="Cambiar cámara"),
-            rx.icon("x", size=13, color="white", cursor="pointer",
-                    on_click=VideoWallState.clear_slot(slot_id).stop_propagation,
-                    title="Quitar del mural"),
-            align="center", spacing="2", width="100%",
-            position="absolute", top="0", left="0", padding="6px 8px",
-            background="linear-gradient(to bottom, rgba(0,0,0,0.65), transparent)",
+    return rx.cond(
+        VideoWallState.visible_slots.contains(slot_id),
+        rx.box(
+            _slot_video(cam, slot_id),
+            rx.hstack(
+                rx.text(cam["name"], size="1", color="white", weight="bold",
+                        white_space="nowrap", overflow="hidden", text_overflow="ellipsis"),
+                rx.spacer(),
+                rx.icon("rotate-cw", size=13, color="white", cursor="pointer",
+                        on_click=VideoWallState.retry_slot(slot_id).stop_propagation,
+                        title="Recargar solo esta cámara"),
+                rx.icon("replace", size=13, color="white", cursor="pointer",
+                        on_click=VideoWallState.open_picker(slot_id).stop_propagation,
+                        title="Cambiar cámara"),
+                rx.icon("x", size=13, color="white", cursor="pointer",
+                        on_click=VideoWallState.clear_slot(slot_id).stop_propagation,
+                        title="Quitar del mural"),
+                align="center", spacing="2", width="100%",
+                position="absolute", top="0", left="0", padding="6px 8px",
+                background="linear-gradient(to bottom, rgba(0,0,0,0.65), transparent)",
+            ),
+            position="relative", width="100%", aspect_ratio=_ASPECTO,
+            border_radius="10px", overflow="hidden", background="#000",
+            border=f"1px solid {theme.BORDER}",
         ),
-        position="relative", width="100%", aspect_ratio=_ASPECTO,
-        border_radius="10px", overflow="hidden", background="#000",
-        border=f"1px solid {theme.BORDER}",
+        _slot_loading(),
     )
 
 

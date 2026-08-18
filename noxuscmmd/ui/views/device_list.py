@@ -6,6 +6,7 @@ from ...domains.notifications.state import PushState
 from ...domains.notifications.push import VAPID_PUBLIC as _VAPID_PUBLIC
 from ...domains.devices import registry
 from ...domains.devices.registry_state import RegistryState
+from ...domains.auth.state import AuthState
 from ...domains.nodes.state import NodesState
 from ...domains.nodes.host_actions_state import HostActionsState
 from ..dashboard.state import DashboardState
@@ -152,6 +153,22 @@ def _resting_color(color_key):
     )
 
 
+def _active_color(color_key, por_defecto):
+    """Color del marcador CUANDO ESTÁ ACTIVO — encendido, abierto o disparado.
+
+    Si no se ha elegido ninguno, el que pone el sistema para esa familia
+    (`por_defecto`): ámbar para lo que se enciende, rojo para lo que se abre o
+    salta. Poder elegirlo importa cuando en el mismo plano hay diez marcadores
+    y el color es lo único que los distingue de un vistazo."""
+    if color_key is None:
+        return por_defecto
+    return rx.match(
+        color_key,
+        *[(k, v) for k, v in FLOOR_COLORS.items() if k],
+        por_defecto,
+    )
+
+
 def _quiet(subtle, *activos):
     """Combina el ajuste "integrado" del usuario con el estado en vivo: solo
     se pinta discreto MIENTRAS ESTÁ EN REPOSO. Si alguno de `activos` está a
@@ -184,7 +201,7 @@ def _marker_animation(alarmed, animation_override):
 
 
 def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=None,
-            animation_override=None, subtle=None) -> rx.Component:
+            animation_override=None, subtle=None, forma="50%") -> rx.Component:
     """Marcador genérico del plano — el MISMO componente para sensores,
     cámaras, puertas y luces: solo cambian icono, color, título y qué hace al
     pulsarlo. `color` puede ser un Var (rx.cond) para los que tienen estado en
@@ -214,7 +231,7 @@ def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=Non
         # halo y palpitado: discreto mientras todo va bien, imposible de pasar
         # por alto cuando salta.
         border=rx.cond(subtle, "none", f"2px solid {color}") if subtle is not None else f"2px solid {color}",
-        border_radius="50%",
+        border_radius=forma,
         padding=rx.cond(subtle, "2px", "6px") if subtle is not None else "6px",
         box_shadow=rx.cond(subtle, "none", f"0 0 12px {color}") if subtle is not None else f"0 0 12px {color}",
         filter=rx.cond(subtle, f"drop-shadow(0 0 5px {color})", "none") if subtle is not None else "none",
@@ -241,21 +258,24 @@ def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=Non
 
 
 def _sensor_marker(entity_id, name, icon, is_open, top, left, on_click=None, subtle=None,
-                    color=None) -> rx.Component:
+                    color=None, color_on=None) -> rx.Component:
     """Sensor (incluidos los tampers): en reposo, el color elegido en el plano;
-    abierto/activo, ROJO parpadeando rápido. El rojo de alarma lo pone el
-    sistema y no se puede cambiar desde el selector, a propósito, para que
-    ningún ajuste estético pueda esconder un aviso."""
+    abierto/activo, el que se haya elegido para el estado activo y, si no se ha
+    elegido ninguno, ROJO parpadeando rápido.
+
+    El PARPADEO no se puede quitar aunque se cambie el color: es lo que hace que
+    un aviso no pase desapercibido, y eso no es cuestión de estética."""
     return _marker(
         entity_id, icon,
-        rx.cond(is_open, _RED, _resting_color(color)),
+        rx.cond(is_open, _active_color(color_on, _RED), _resting_color(color)),
         rx.cond(is_open, name + ": ABIERTO", name + ": Cerrado"),
         top, left, on_click=on_click, alarmed=is_open,
         subtle=_quiet(subtle, is_open),
     )
 
 
-def _camera_marker(entity_id, name, icon, top, left, on_click, subtle=None, color=None) -> rx.Component:
+def _camera_marker(entity_id, name, icon, top, left, on_click, subtle=None, color=None,
+                   color_on=None) -> rx.Component:
     """Cámara: no tiene estado de alarma, así que siempre va del color elegido
     en el plano. Al pulsarla se abre su stream."""
     return _marker(entity_id, icon, _resting_color(color), name + " — ver stream", top, left,
@@ -263,7 +283,7 @@ def _camera_marker(entity_id, name, icon, top, left, on_click, subtle=None, colo
 
 
 def _door_marker(entity_id, name, icon, is_open, pulsing, top, left, on_click, subtle=None,
-                  color=None) -> rx.Component:
+                  color=None, color_on=None) -> rx.Component:
     """Puerta: en reposo (cerrada) el color elegido en el plano; ROJO
     parpadeando rápido si el sensor la da por abierta. Al pulsarla se lanza su
     pulso de apertura (igual que el botón "Abrir" de Accesos).
@@ -274,7 +294,8 @@ def _door_marker(entity_id, name, icon, is_open, pulsing, top, left, on_click, s
     estado (muchas solo tienen relé y nunca cambian `is_open`)."""
     return _marker(
         entity_id, icon,
-        rx.cond(pulsing, _AMBER, rx.cond(is_open, _RED, _resting_color(color))),
+        rx.cond(pulsing, _AMBER,
+                rx.cond(is_open, _active_color(color_on, _RED), _resting_color(color))),
         rx.cond(
             pulsing,
             name + ": ABRIENDO...",
@@ -289,7 +310,7 @@ def _door_marker(entity_id, name, icon, is_open, pulsing, top, left, on_click, s
 
 
 def _light_marker(entity_id, name, icon, is_on, top, left, on_click, subtle=None,
-                   color=None) -> rx.Component:
+                   color=None, color_on=None) -> rx.Component:
     """Luz: al pulsarla se conmuta. En reposo (apagada) va del color elegido en
     el plano, igual que el resto de familias; encendida se pone ámbar cálido,
     que es el estado que interesa ver de un vistazo.
@@ -298,7 +319,7 @@ def _light_marker(entity_id, name, icon, is_on, top, left, on_click, subtle=None
     ámbar es lo único que pone el sistema, y solo mientras está encendida."""
     return _marker(
         entity_id, icon,
-        rx.cond(is_on, _AMBER, _resting_color(color)),
+        rx.cond(is_on, _active_color(color_on, _AMBER), _resting_color(color)),
         rx.cond(is_on, name + ": ENCENDIDA — pulsa para apagar", name + ": Apagada — pulsa para encender"),
         top, left, on_click=on_click, subtle=_quiet(subtle, is_on),
     )
@@ -319,7 +340,8 @@ def _factory_sensor_markers() -> list[rx.Component]:
         icon = rx.cond(pos["icon"] != "", pos["icon"], default_icon)
         is_open = SecurityState.sensor_abierto[sid]
         marker = _sensor_marker(sid, RegistryState.names[sid], icon, is_open, pos["top"], pos["left"],
-                                subtle=pos["subtle"] != "", color=pos["color"])
+                                subtle=pos["subtle"] != "", color=pos["color"],
+                                color_on=pos["color_on"])
         markers.append(rx.cond(pos["top"] != "", marker, rx.fragment()))
     return markers
 
@@ -342,7 +364,8 @@ def _factory_camera_markers() -> list[rx.Component]:
         else:
             on_click = DashboardState.open_window(cid)
         marker = _camera_marker(cid, RegistryState.names[cid], icon, pos["top"], pos["left"], on_click,
-                                subtle=pos["subtle"] != "", color=pos["color"])
+                                subtle=pos["subtle"] != "", color=pos["color"],
+                                color_on=pos["color_on"])
         markers.append(rx.cond(pos["top"] != "", marker, rx.fragment()))
     return markers
 
@@ -355,6 +378,7 @@ def _dynamic_sensor_marker(s: dict) -> rx.Component:
         s["id"].to(str), s["name"].to(str), icon, s["is_open"],
         s["floor_top"].to(str), s["floor_left"].to(str),
         subtle=s["floor_subtle"], color=s["floor_color"].to(str),
+        color_on=s["floor_color_on"].to(str),
     )
 
 
@@ -368,6 +392,7 @@ def _dynamic_camera_marker(c: dict) -> rx.Component:
         c["floor_top"].to(str), c["floor_left"].to(str),
         DashboardState.open_window(c["id"]),
         subtle=c["floor_subtle"], color=c["floor_color"].to(str),
+        color_on=c["floor_color_on"].to(str),
     )
 
 
@@ -382,6 +407,7 @@ def _dynamic_door_marker(d: dict) -> rx.Component:
         d["floor_top"].to(str), d["floor_left"].to(str),
         NodesState.open_door(did),
         subtle=d["floor_subtle"], color=d["floor_color"].to(str),
+        color_on=d["floor_color_on"].to(str),
     )
 
 
@@ -389,9 +415,15 @@ def _ir_remote_marker(entity_id, name, icon, top, left, on_click, subtle=None, c
     """Mando IR: sin estado propio (es transmisor puro, no hay lectura de
     vuelta — ver domains/devices/ir_bus.py), así que igual que una cámara,
     siempre del color elegido en el plano. Al pulsarlo se abre el mando
-    virtual en una ventana flotante."""
+    virtual en una ventana flotante.
+
+    CUADRADO y no redondo, a diferencia de todos los demás: en el mismo plano
+    conviven ya los botones de encender y apagar de cada aparato, y un mando no
+    es un interruptor —no dice si algo está encendido, abre una botonera—. La
+    forma es lo que deja distinguirlos de un vistazo sin tener que leer el
+    icono, que es justo lo que no se puede hacer en un plano lleno."""
     return _marker(entity_id, icon, _resting_color(color), name + " — abrir mando", top, left,
-                   on_click=on_click, subtle=subtle)
+                   on_click=on_click, subtle=subtle, forma="7px")
 
 
 def _dynamic_ir_remote_marker(r: dict) -> rx.Component:
@@ -417,6 +449,7 @@ def _dynamic_light_marker(l: dict) -> rx.Component:
         l["floor_top"].to(str), l["floor_left"].to(str),
         NodesState.toggle_light(lid),
         subtle=l["floor_subtle"], color=l["floor_color"].to(str),
+        color_on=l["floor_color_on"].to(str),
     )
 
 
@@ -595,7 +628,10 @@ def floor_plan_content():
     return rx.box(
         rx.script(_PLAN_DRAG_SCRIPT),
         rx.image(
-            src="/room.png",
+            # La imagen del plano que se está mirando. Ya no es un estático fijo:
+            # la sirve /api/plano comprobando la sesión, porque es el mapa de una
+            # casa (ver domains/nodes/planos.py).
+            src=NodesState.plano_imagen_url,
             width="100%",
             height="100%",
             object_fit="contain",
@@ -612,9 +648,15 @@ def floor_plan_content():
             user_select="none",
         ),
         *_factory_sensor_markers(),
-        *_factory_camera_markers(),
+        # Las camaras del plano tambien piden permiso: el marcador abre su
+        # imagen en directo, asi que ensenarlo a quien no puede verlas seria
+        # dejar la puerta abierta por el otro lado.
+        rx.cond(AuthState.puede_camaras, rx.fragment(*_factory_camera_markers())),
         rx.foreach(NodesState.sensors_on_floor, _dynamic_sensor_marker),
-        rx.foreach(NodesState.cameras_on_floor, _dynamic_camera_marker),
+        rx.cond(
+            AuthState.puede_camaras,
+            rx.foreach(NodesState.cameras_on_floor, _dynamic_camera_marker),
+        ),
         rx.foreach(NodesState.doors_on_floor, _dynamic_door_marker),
         rx.foreach(NodesState.lights_on_floor, _dynamic_light_marker),
         rx.foreach(NodesState.ir_remotes_on_floor, _dynamic_ir_remote_marker),
@@ -627,12 +669,16 @@ def floor_plan_content():
         ),
         position="relative",
         width="100%",
-        # room.png es cuadrada (1254x1254) — con aspect_ratio en vez de una altura fija en
-        # vh, el contenedor SIEMPRE mantiene la misma proporción que la imagen sea cual sea
-        # el ancho disponible (móvil, popover compacto, pestaña completa...), así que la
-        # imagen nunca se recorta ni se desplaza dentro de su caja, y las posiciones en %
-        # de los sensores/cámara siempre caen en el mismo punto visual de la imagen.
-        aspect_ratio="1 / 1",
+        # Con aspect_ratio en vez de una altura fija en vh, el contenedor SIEMPRE mantiene
+        # la misma proporción que la imagen sea cual sea el ancho disponible (móvil,
+        # popover compacto, pestaña completa...), así que la imagen nunca se recorta ni se
+        # desplaza dentro de su caja, y las posiciones en % de los marcadores siempre caen
+        # en el mismo punto visual del dibujo.
+        #
+        # La proporción sale de las medidas del plano que se esté mirando y no de un 1/1
+        # fijo: room.png era cuadrada, pero una planta alta puede no serlo, y con la
+        # proporción equivocada todos los marcadores caen desplazados.
+        aspect_ratio=NodesState.plano_aspecto,
         background="#0f172a",
         border_radius="6px",
         border="1px solid rgba(255, 255, 255, 0.05)",

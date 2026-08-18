@@ -17,11 +17,13 @@ nadie mirando.
 import asyncio
 import reflex as rx
 
+from ..auth import permisos
 from . import arming, audit, groups_store, logs
 from .state import SecurityState
 from ..devices import registry
 from ..nodes.state import NodesState
 from ..notifications.state import PushState
+from ...core import sesiones
 
 
 class GroupsState(rx.State):
@@ -75,20 +77,27 @@ class GroupsState(rx.State):
 
     @rx.event(background=True)
     async def sync_loop(self):
+        guardia = await sesiones.guardia(self)
         while True:
             try:
                 real = await asyncio.to_thread(groups_store.read_all)
                 async with self:
                     if real != self.groups:
                         self.groups = real
-                await asyncio.sleep(1)
+                if not await sesiones.espera(guardia, 1):
+                    return
             except Exception as e:
                 print(f"⚠️ Error en GroupsState.sync_loop: {e}")
-                await asyncio.sleep(1)
+                if not await sesiones.espera(guardia, 1):
+                    return
 
     # ── Alta / baja de grupos ────────────────────────────────────────────
     @rx.event
     async def submit_add_group(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         if not name:
             return
@@ -98,6 +107,10 @@ class GroupsState(rx.State):
 
     @rx.event
     async def delete_group(self, group_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._group_name(group_id)
         groups_store.delete_group(group_id)
         self._reload()
@@ -105,6 +118,10 @@ class GroupsState(rx.State):
 
     @rx.event
     async def submit_edit_group(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         group_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         if not group_id or not name:
@@ -123,6 +140,8 @@ class GroupsState(rx.State):
         """El armado del grupo (disco, puente con el armado general y registro)
         está en arming.py, compartido con el motor de automatizaciones. Aquí
         queda quién lo ha pulsado y el repintado de las dos pantallas."""
+        if (no := await permisos.denegar(self, permisos.ARMAR)):
+            return no
         push_state = await self.get_state(PushState)
         usuario = push_state.current_user if push_state.current_user.strip() else "sistema"
         try:
@@ -142,6 +161,10 @@ class GroupsState(rx.State):
 
     @rx.event
     async def set_principal_group(self, group_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         groups_store.set_principal(group_id)
         self._reload()
         await audit.registrar(self, logs.GRUPOS, "GRUPO_PRINCIPAL_CAMBIADO",
@@ -158,6 +181,10 @@ class GroupsState(rx.State):
 
     @rx.event
     async def add_sensor_to_group(self, group_id: str, sensor_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if not sensor_id:
             return
         name = await self._sensor_name(sensor_id)
@@ -168,6 +195,10 @@ class GroupsState(rx.State):
 
     @rx.event
     async def remove_sensor_from_group(self, group_id: str, sensor_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = await self._sensor_name(sensor_id)
         grupo = self._group_name(group_id)
         groups_store.remove_member(group_id, sensor_id)

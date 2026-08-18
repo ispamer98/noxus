@@ -28,7 +28,8 @@ ARCHIVO = Path(os.getenv("NODOS_FILE", "nodos_dinamicos.json"))
 
 _COLLECTIONS = (
     "nodes", "sensors", "doors", "lights", "cameras", "hosts", "host_buttons", "rooms",
-    "factory_sensors", "factory_cameras", "overview_widgets", "ir_remotes",
+    "factory_sensors", "factory_cameras", "overview_widgets", "ir_remotes", "planos",
+    "metricas_paneles", "comandos_voz",
 )
 
 # Sistemas operativos que sabe manejar ssh_bus (apagar/reiniciar cambian de
@@ -42,7 +43,7 @@ SISTEMAS = ("linux", "windows")
 # "acciones_extra" va al final porque es la única lista, y suele estar vacía.
 CLAVES_EQUIPO = (
     "id", "created_at", "name", "ip", "user", "rdp_user", "rdp_launch_host",
-    "os", "mac", "ping_retries", "icon", "order", "acciones_extra",
+    "os", "mac", "ping_retries", "icon", "order", "en_metricas", "acciones_extra",
 )
 
 
@@ -107,6 +108,12 @@ def _normalizar_equipos(data: dict) -> None:
             # (fichero de antes de que se pudiera ordenar) se toma el orden
             # actual del fichero, que es justo como se venían pintando.
             "order": _entero(host.get("order"), por_defecto=i, minimo=0),
+            # ¿Se guarda en el histórico si este equipo está en línea? Apagado
+            # por defecto a propósito: son 288 muestras al día POR EQUIPO, y
+            # guardarlas de los once para luego mirar dos es engordar la base
+            # para nada. Se enciende el que se quiera vigilar (pestaña
+            # Métricas). El recuento total sí se guarda siempre.
+            "en_metricas": bool(host.get("en_metricas", False)),
             "acciones_extra": host.get("acciones_extra") or [],
         }
         normalizados.append(limpio)
@@ -146,13 +153,20 @@ def _apply_defaults(data: dict) -> dict:
         node.setdefault("user", "")
     for cam in data["cameras"]:
         cam.setdefault("kind", "embed")
+    # Qué cámara mira a ese elemento, para guardar un fotograma cuando salte la
+    # alarma (ver domains/cameras/fotogramas.py). Vacío = ninguna. Va también en
+    # los de fábrica, que son justo los de la puerta y los tampers.
+    for sensor in data["factory_sensors"]:
+        sensor.setdefault("camara", "")
     for sensor in data["sensors"]:
+        sensor.setdefault("camara", "")
         sensor.setdefault("isolated", False)
         sensor.setdefault("floor_top", None)
         sensor.setdefault("floor_left", None)
         sensor.setdefault("floor_icon", None)
         sensor.setdefault("floor_subtle", False)
         sensor.setdefault("floor_color", None)
+        sensor.setdefault("floor_color_on", None)
     for door in data["doors"]:
         door.setdefault("pulse_seconds", 2)
         door.setdefault("floor_top", None)
@@ -160,13 +174,22 @@ def _apply_defaults(data: dict) -> dict:
         door.setdefault("floor_icon", None)
         door.setdefault("floor_subtle", False)
         door.setdefault("floor_color", None)
+        door.setdefault("floor_color_on", None)
     for light in data["lights"]:
+        # Las luces de antes de que existieran las de mando son todas de relé.
+        light.setdefault("kind", LUZ_RELE)
+        light.setdefault("aspecto", "luz")
+        light.setdefault("mando_modo", DOS_TECLAS)
+        light.setdefault("remote_id", "")
+        light.setdefault("btn_on", "")
+        light.setdefault("btn_off", "")
         light.setdefault("room_id", "")
         light.setdefault("floor_top", None)
         light.setdefault("floor_left", None)
         light.setdefault("floor_icon", None)
         light.setdefault("floor_subtle", False)
         light.setdefault("floor_color", None)
+        light.setdefault("floor_color_on", None)
     # Una luz que apunte a una estancia que ya no existe pasa a "sin estancia".
     # delete_room ya lo deja así, pero esto recupera además las que quedaron
     # huérfanas antes (y las que pueda dejar cualquier edición a mano del
@@ -182,6 +205,7 @@ def _apply_defaults(data: dict) -> dict:
         cam.setdefault("floor_icon", None)
         cam.setdefault("floor_subtle", False)
         cam.setdefault("floor_color", None)
+        cam.setdefault("floor_color_on", None)
     _normalizar_equipos(data)
     for sensor in data["factory_sensors"]:
         sensor.setdefault("isolated", False)
@@ -190,6 +214,7 @@ def _apply_defaults(data: dict) -> dict:
         sensor.setdefault("floor_icon", None)
         sensor.setdefault("floor_subtle", False)
         sensor.setdefault("floor_color", None)
+        sensor.setdefault("floor_color_on", None)
     for cam in data["factory_cameras"]:
         cam.setdefault("tuya_device_id", None)
         cam.setdefault("has_ptz", False)
@@ -199,6 +224,7 @@ def _apply_defaults(data: dict) -> dict:
         cam.setdefault("floor_icon", None)
         cam.setdefault("floor_subtle", False)
         cam.setdefault("floor_color", None)
+        cam.setdefault("floor_color_on", None)
     for remote in data["ir_remotes"]:
         remote.setdefault("icon", "tv")
         remote.setdefault("buttons", [])
@@ -212,6 +238,7 @@ def _apply_defaults(data: dict) -> dict:
         remote.setdefault("floor_icon", None)
         remote.setdefault("floor_subtle", False)
         remote.setdefault("floor_color", None)
+        remote.setdefault("floor_color_on", None)
         for boton in remote["buttons"]:
             # Botones de antes de que existieran las plantillas: todos eran
             # infrarrojos y todos tenían señal, así que ese es el valor que les
@@ -227,6 +254,12 @@ def _apply_defaults(data: dict) -> dict:
             # solo se distinguen por eso.
             boton.setdefault("icon_size", "46%")
         _asegurar_posiciones(remote)
+    # LO ÚLTIMO: los planos y la posición de cada elemento en cada plano. Va al
+    # final y no en medio porque es quien tiene la última palabra sobre
+    # floor_top/floor_left (los mantiene como espejo del plano principal), y
+    # ponerlo antes de los `setdefault` de esos campos haría que el resultado
+    # dependiera del orden en que están escritos los bucles de aquí arriba.
+    _sincronizar_planos(data)
     return data
 
 
@@ -387,6 +420,124 @@ def update_node(node_id: str, name: str, ip: str, kind: str = "esp32", user: str
 # el propio plano usa set_floor_position() directamente (ver device_list.py).
 _FLOOR_DEFAULT_POS = {"floor_top": "50%", "floor_left": "50%"}
 
+# ── Planos múltiples ─────────────────────────────────────────────────────────
+# Hasta ahora había UN plano: la imagen estaba escrita en el código
+# (`/room.png`) y cada elemento guardaba su sitio en `floor_top`/`floor_left`.
+# Ahora hay una colección `planos` y cada elemento guarda una posición POR
+# PLANO, en `posiciones`:
+#
+#   "posiciones": {"plano_1": {"top": "80.9%", "left": "89.8%"}}
+#
+# El icono, el color y lo de «apagado» siguen siendo del ELEMENTO y no del
+# plano: una luz es la misma luz se pinte donde se pinte, y tener que
+# recolorearla en cada plano sería trabajo repetido para acabar igual.
+#
+# LO QUE HACE QUE ESTE CAMBIO NO ROMPA NADA: `floor_top`/`floor_left` siguen
+# existiendo, mantenidos como ESPEJO de la posición en el plano principal (ver
+# _sincronizar_planos). Así todo lo que ya leía esos dos campos —los marcadores
+# del plano, el popover de la vista clásica, el catálogo— sigue funcionando sin
+# tocar una línea, y lo nuevo lee `posiciones`. Cuando no quede nadie leyendo el
+# espejo, se quita y no se entera nadie.
+#
+# El id del primer plano es FIJO y no un uuid. Es importante: _apply_defaults se
+# ejecuta en cada LECTURA, y una lectura no escribe, así que un id aleatorio
+# saldría distinto en cada lectura hasta que alguien guardara algo — y las
+# posiciones apuntarían a un plano que cambia de nombre solo.
+PLANO_INICIAL = "plano_1"
+NOMBRE_PLANO_INICIAL = "Planta baja"
+
+# La imagen que ya estaba en el código. Su tamaño va escrito porque se conoce
+# (1254x1254) y así la migración no tiene que abrir un fichero de 2 MB en cada
+# lectura del store.
+IMAGEN_INICIAL = "room.png"
+_MEDIDAS_INICIALES = (1254, 1254)
+
+# Colecciones cuyos elementos pueden estar en un plano. Es la misma lista que
+# construye el catálogo del plano (ver nodes/state._build_floor_catalog).
+COLECCIONES_EN_PLANO = (
+    "factory_sensors", "sensors", "factory_cameras", "cameras",
+    "doors", "lights", "ir_remotes",
+)
+
+
+def plano_principal(data: dict) -> dict | None:
+    """El plano que se abre por defecto. Si ninguno está marcado, el primero:
+    quedarse sin plano principal por un fichero editado a mano dejaría el plano
+    en blanco, y es mejor enseñar uno que ninguno."""
+    planos = data.get("planos") or []
+    if not planos:
+        return None
+    return next((p for p in planos if p.get("principal")), planos[0])
+
+
+def _sincronizar_planos(data: dict) -> None:
+    """Crea el primer plano si no hay ninguno, y mantiene el espejo de
+    floor_top/floor_left. Idempotente: se ejecuta en cada lectura y escritura.
+
+    Del orden depende que la migración sea correcta: primero se asegura que hay
+    un plano al que atribuir las posiciones de antes, después se sube cada
+    `floor_top` a `posiciones`, y solo al final se vuelve a bajar el espejo."""
+    planos = data.setdefault("planos", [])
+
+    hay_posiciones = any(
+        e.get("floor_top") or e.get("posiciones")
+        for coleccion in COLECCIONES_EN_PLANO for e in data.get(coleccion, [])
+    )
+    if not planos and hay_posiciones:
+        # Instalación de antes de los planos múltiples: lo que había se convierte
+        # en el plano principal, con la imagen que estaba escrita en el código.
+        planos.append({
+            "id": PLANO_INICIAL,
+            "nombre": NOMBRE_PLANO_INICIAL,
+            "imagen": IMAGEN_INICIAL,
+            "ancho": _MEDIDAS_INICIALES[0],
+            "alto": _MEDIDAS_INICIALES[1],
+            "orden": 0,
+            "principal": True,
+        })
+
+    for i, plano in enumerate(planos):
+        plano.setdefault("nombre", f"Plano {i + 1}")
+        plano.setdefault("imagen", "")
+        plano.setdefault("ancho", 0)
+        plano.setdefault("alto", 0)
+        plano.setdefault("orden", i)
+        plano.setdefault("principal", False)
+    # Exactamente uno principal, nunca cero ni dos: con dos, cuál se abre
+    # dependería del orden del fichero.
+    if planos and not any(p["principal"] for p in planos):
+        planos[0]["principal"] = True
+
+    principal = plano_principal(data)
+    ids = {p["id"] for p in planos}
+    for coleccion in COLECCIONES_EN_PLANO:
+        for elemento in data.get(coleccion, []):
+            posiciones = elemento.get("posiciones")
+            if not isinstance(posiciones, dict):
+                posiciones = {}
+                elemento["posiciones"] = posiciones
+            # Sube la posición de antes al plano principal. La condición es «no
+            # tiene NINGUNA posición», no «le falta la del principal»: con lo
+            # segundo, quitar un elemento del plano principal se deshacía solo —
+            # se borraba de `posiciones`, y esta misma función lo volvía a crear
+            # leyendo el `floor_top` viejo, que todavía no se había recalculado.
+            # Un elemento sin ninguna posición y con floor_top puesto es lo único
+            # que de verdad significa «esto viene de antes de los planos» (o «lo
+            # acaba de escribir floor_fields al marcar "mostrar en el plano"»).
+            if principal and elemento.get("floor_top") and not posiciones:
+                posiciones[principal["id"]] = {
+                    "top": elemento["floor_top"],
+                    "left": elemento.get("floor_left") or "50%",
+                }
+            # Posiciones de planos borrados: fuera, o el elemento contaría como
+            # colocado en un plano que no existe.
+            for plano_id in [k for k in posiciones if k not in ids]:
+                posiciones.pop(plano_id)
+            # Y el espejo, para todo lo que sigue leyendo floor_top.
+            sitio = posiciones.get(principal["id"]) if principal else None
+            elemento["floor_top"] = sitio["top"] if sitio else None
+            elemento["floor_left"] = sitio["left"] if sitio else None
+
 
 def floor_fields(show_on_floor: bool, floor_icon: str, current: dict | None) -> dict:
     if not show_on_floor:
@@ -397,10 +548,38 @@ def floor_fields(show_on_floor: bool, floor_icon: str, current: dict | None) -> 
     return fields
 
 
-def set_floor_position(collection: str, entity_id: str, top: str, left: str) -> dict | None:
-    """Persiste la posición (%) de un marcador tras arrastrarlo — genérico
-    para cualquier colección con floor_top/floor_left."""
-    return _update(collection, entity_id, {"floor_top": top, "floor_left": left})
+def _poner_posicion(data: dict, coleccion: str, entity_id: str, plano_id: str,
+                    top: str | None, left: str | None) -> dict | None:
+    """Escribe (o borra, con top=None) la posición de un elemento en un plano.
+
+    Uso interno: hay que estar dentro de un _mutate, porque hace falta `data`
+    para saber cuál es el plano principal cuando no se dice ninguno."""
+    destino = plano_id or (plano_principal(data) or {}).get("id", "")
+    if not destino:
+        return None
+    for item in data.get(coleccion, []):
+        if item.get("id") != entity_id:
+            continue
+        posiciones = item.setdefault("posiciones", {})
+        if top is None:
+            posiciones.pop(destino, None)
+            # El espejo se limpia aquí también, y no solo al final: mientras
+            # `floor_top` siga puesto, cualquier cosa que lo lea dentro de esta
+            # misma escritura creería que el elemento sigue colocado.
+            item["floor_top"] = None
+            item["floor_left"] = None
+        else:
+            posiciones[destino] = {"top": top, "left": left or "50%"}
+        return item
+    return None
+
+
+def set_floor_position(collection: str, entity_id: str, top: str, left: str,
+                       plano_id: str = "") -> dict | None:
+    """Persiste la posición (%) de un marcador tras arrastrarlo. Sin `plano_id`
+    va al plano principal, que es lo que hacía cuando solo había uno."""
+    return _mutate(lambda data: _poner_posicion(
+        data, collection, entity_id, plano_id, top, left))
 
 
 def set_floor_positions_bulk(updates: list[dict]) -> None:
@@ -409,25 +588,45 @@ def set_floor_positions_bulk(updates: list[dict]) -> None:
     recolocar iconos junta. Al ir en un único _mutate, o se guardan todas o no
     se guarda ninguna: no puede quedar media recolocación a medias.
 
-    Cada entrada: {"collection": ..., "id": ..., "top": ..., "left": ...}."""
+    Cada entrada: {"collection", "id", "top", "left"} y opcionalmente "plano".
+    Sin "plano" se entiende el principal — así el editor de siempre sigue
+    funcionando sin enterarse de que ahora hay más de un plano."""
     def _apply(data):
-        por_coleccion: dict[str, dict] = {}
         for u in updates:
-            por_coleccion.setdefault(u["collection"], {})[u["id"]] = u
-        for collection, pendientes in por_coleccion.items():
-            for item in data.get(collection, []):
-                u = pendientes.get(item.get("id"))
-                if u:
-                    item["floor_top"] = u["top"]
-                    item["floor_left"] = u["left"]
+            _poner_posicion(data, u["collection"], u["id"], u.get("plano", ""),
+                            u["top"], u["left"])
 
     _mutate(_apply)
 
 
-def clear_floor_position(collection: str, entity_id: str) -> dict | None:
-    """Quita el elemento del plano (deja de pintarse) sin tocar nada más de
-    su configuración — floor_top a None es lo que significa "no se muestra"."""
-    return _update(collection, entity_id, {"floor_top": None, "floor_left": None})
+def clear_floor_position(collection: str, entity_id: str,
+                         plano_id: str = "") -> dict | None:
+    """Quita el elemento de ESE plano (deja de pintarse ahí) sin tocar nada más
+    de su configuración, ni su sitio en los demás planos."""
+    return _mutate(lambda data: _poner_posicion(
+        data, collection, entity_id, plano_id, None, None))
+
+
+def duplicar_en_plano(coleccion: str, entity_id: str, origen: str,
+                      destino: str) -> bool:
+    """Pone un elemento en otro plano, en el mismo sitio que ocupaba en el de
+    origen.
+
+    Copiar la posición y no centrarlo es lo útil de verdad cuando los planos son
+    dos plantas de la misma casa: la puerta de arriba suele caer casi donde la de
+    abajo, así que se queda a un empujón en vez de haber que buscarle el sitio."""
+    def _apply(data):
+        for item in data.get(coleccion, []):
+            if item.get("id") != entity_id:
+                continue
+            sitio = (item.get("posiciones") or {}).get(origen)
+            if not sitio:
+                return False
+            item.setdefault("posiciones", {})[destino] = dict(sitio)
+            return True
+        return False
+
+    return bool(_mutate(_apply))
 
 
 def set_floor_icon(collection: str, entity_id: str, icon: str) -> dict | None:
@@ -435,10 +634,20 @@ def set_floor_icon(collection: str, entity_id: str, icon: str) -> dict | None:
 
 
 def set_floor_color(collection: str, entity_id: str, color: str) -> dict | None:
-    """Color EN REPOSO del marcador. El estado activo (abierto/alarma) sigue
-    mandando siempre en rojo, así que cambiar esto no oculta nunca una
-    alerta — solo decide de qué color se ve cuando todo está en orden."""
+    """Color EN REPOSO del marcador: de qué color se ve cuando todo está en
+    orden. El de cuando está activo se elige aparte (ver set_floor_color_on)."""
     return _update(collection, entity_id, {"floor_color": color or None})
+
+
+def set_floor_color_on(collection: str, entity_id: str, color: str) -> dict | None:
+    """Color del marcador CUANDO ESTÁ ACTIVO: encendido si es una luz o un
+    accesorio, abierto o disparado si es un sensor o una puerta.
+
+    Vacío = el que pone el sistema para esa familia (ámbar para lo que se
+    enciende, rojo para lo que se abre o salta), que es lo que había antes de
+    que esto se pudiera elegir. Se guarda por elemento porque en un plano con
+    diez marcadores el color es lo único que los distingue de un vistazo."""
+    return _update(collection, entity_id, {"floor_color_on": color or None})
 
 
 def toggle_floor_subtle(collection: str, entity_id: str) -> bool:
@@ -482,6 +691,78 @@ def update_sensor(sensor_id: str, name: str, kind: str, node_id: str, node_name:
         "pin": pin, "topic": sensor_topic(node_name, pin),
         **floor_fields(show_on_floor, floor_icon, current),
     })
+
+
+# ── Elemento de alarma -> cámara que lo mira ─────────────────────────────────
+# Vive aquí y no en el dominio de cámaras porque es puro dato: este módulo es
+# el que guarda la ficha del sensor Y la de la cámara, así que es el único sitio
+# donde resolver la cadena no obliga a nadie a importar a nadie.
+_COLECCIONES_SENSOR = ("factory_sensors", "sensors")
+
+
+def set_sensor_camera(sensor_id: str, camera_id: str) -> bool:
+    """Asigna (o quita, con "") la cámara de un elemento. False si no existe.
+
+    Busca en las dos colecciones porque los elementos que disparan la alarma
+    están repartidos: la puerta y los tampers son de fábrica, los añadidos desde
+    la web viven en `sensors`."""
+    def _apply(data):
+        for coleccion in _COLECCIONES_SENSOR:
+            for s in data[coleccion]:
+                if s["id"] == sensor_id:
+                    s["camara"] = camera_id
+                    return True
+        return False
+
+    return bool(_mutate(_apply))
+
+
+def camara_de_sensor(sensor_id: str) -> str:
+    data = _read()
+    for coleccion in _COLECCIONES_SENSOR:
+        for s in data[coleccion]:
+            if s["id"] == sensor_id:
+                return s.get("camara", "") or ""
+    return ""
+
+
+def src_de_sensor(sensor_id: str) -> str:
+    """El stream de go2rtc que hay que pedirle para ver ese elemento, o "".
+
+    Devuelve "" tanto si no tiene cámara asignada como si la que tiene no puede
+    dar una imagen fija, y eso es lo mismo para quien captura: no hay foto.
+
+    Las dos clases de cámara guardan su stream en sitios distintos, y esto es
+    herencia, no capricho: las de fábrica lo llevan en `stream_src`, y las
+    añadidas desde la web reutilizan el campo `url` (ver cameras/wall.py). De
+    las añadidas, solo las de tipo `go2rtc` sirven: a un `embed` o a un `rtsp`
+    no hay a quién pedirle un fotograma."""
+    camara_id = camara_de_sensor(sensor_id)
+    if not camara_id:
+        return ""
+    data = _read()
+    for c in data["factory_cameras"]:
+        if c["id"] == camara_id:
+            # El respaldo por convención (cam_ptz -> ptz) es el mismo que usa
+            # catalogo_camaras, para que las dos partes coincidan si una ficha
+            # antigua se quedó sin stream_src.
+            return c.get("stream_src") or camara_id.replace("cam_", "")
+    for c in data["cameras"]:
+        if c["id"] == camara_id:
+            return c.get("url", "") if c.get("kind") == "go2rtc" else ""
+    # Apuntaba a una cámara que ya no está.
+    return ""
+
+
+def camaras_para_fotograma() -> list[dict]:
+    """[{"id", "name"}] de las cámaras que pueden dar una imagen fija — las que
+    tiene sentido ofrecer al elegir la cámara de un elemento."""
+    data = _read()
+    salida = [{"id": c["id"], "name": c.get("name", c["id"])}
+              for c in data["factory_cameras"]]
+    salida += [{"id": c["id"], "name": c.get("name", c["id"])}
+               for c in data["cameras"] if c.get("kind") == "go2rtc"]
+    return salida
 
 
 def toggle_sensor_isolated(sensor_id: str) -> dict | None:
@@ -532,12 +813,82 @@ def update_door(door_id: str, name: str, node_id: str, node_name: str, pin: str,
 # ── Luces ─────────────────────────────────────────────────────────────────────
 # room_id agrupa las luces por estancia (ver add_room/list_rooms más abajo) —
 # opcional, "" significa "sin estancia asignada".
-def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = "",
-              show_on_floor: bool = False, floor_icon: str = "") -> dict:
-    item = {
-        "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
+# Cómo se acciona una luz. RELE es la de siempre (GPIO por SSH o MQTT); MANDO es
+# una luz que solo se enciende por infrarrojos, como la del ventilador de techo:
+# no tiene relé ni topic, tiene dos teclas de un mando virtual.
+LUZ_RELE, LUZ_MANDO = "rele", "mando"
+
+# Qué es el aparato, para el icono y para cómo se le llama en la pantalla. La
+# mecánica es la misma para todos (encender/apagar y guardar el estado), así que
+# comparten colección con las luces a propósito: de ahí les viene gratis salir en
+# el plano, en los accesos rápidos del Resumen, en las automatizaciones y en la
+# paleta de comandos. Un ventilador de techo y una tele que se encienden con el
+# mando son eso: un interruptor con otro icono.
+ASPECTOS = ("luz", "ventilador", "tv", "enchufe", "otro")
+
+# Icono de cada uno. Vive aquí y no en la vista porque lo necesitan tres sitios:
+# la pestaña Accesorios, el catálogo del plano y el del Resumen. Con una copia
+# por sitio, un accesorio nuevo salía con icono distinto según dónde se mirara.
+ICONO_ASPECTO = {
+    "luz": "lightbulb", "ventilador": "fan", "tv": "tv",
+    "enchufe": "plug", "otro": "toggle-right",
+}
+
+
+def es_luz(item: dict) -> bool:
+    """Si esta ficha de la colección `lights` es una luz de verdad o un
+    accesorio (el ventilador, la tele). Se pregunta desde varios sitios y
+    siempre con la misma regla: sin aspecto, es una luz de las de antes."""
+    return (item.get("aspecto") or "luz") == "luz"
+
+# Cómo se apaga y enciende con el mando, que no todos los mandos son iguales:
+#   DOS_TECLAS  el ventilador de techo, con «Luz ON» y «Luz OFF» separadas.
+#   UNA_TECLA   la tele, con una sola tecla de encendido que hace las dos cosas.
+# Con una sola tecla el panel no puede SABER si está encendido: manda la misma
+# orden siempre y se limita a llevar la cuenta. Si alguien la apaga con el mando
+# de la mano, el panel se queda creyendo lo contrario hasta que se le vuelva a
+# dar (lo mismo que le pasa a cualquier mando de toda la vida).
+DOS_TECLAS, UNA_TECLA = "dos", "una"
+
+
+def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
+                btn_on: str, btn_off: str,
+                mando_modo: str = DOS_TECLAS) -> dict:
+    """Lo que distingue a una luz de relé de una de mando.
+
+    Una de mando se queda SIN topics a propósito: no hay nada publicando su
+    estado ni escuchando órdenes, y dejar ahí un "casa//" con el nodo vacío haría
+    que el bus se suscribiera a un topic inventado."""
+    if kind == LUZ_MANDO:
+        modo = mando_modo if mando_modo in (DOS_TECLAS, UNA_TECLA) else DOS_TECLAS
+        # Con una sola tecla se guarda la misma en los dos sitios: así todo lo
+        # que lea la ficha (el envío, el inventario, las pruebas) encuentra
+        # siempre una tecla donde la busca, y el modo solo decide si se
+        # distinguen.
+        if modo == UNA_TECLA:
+            btn_off = btn_on
+        return {
+            "kind": LUZ_MANDO, "topic_cmd": "", "topic_state": "",
+            "remote_id": remote_id, "btn_on": btn_on, "btn_off": btn_off,
+            "mando_modo": modo,
+        }
+    return {
+        "kind": LUZ_RELE,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
+        "remote_id": "", "btn_on": "", "btn_off": "", "mando_modo": DOS_TECLAS,
+    }
+
+
+def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = "",
+              show_on_floor: bool = False, floor_icon: str = "",
+              kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
+              btn_off: str = "", aspecto: str = "luz",
+              mando_modo: str = DOS_TECLAS) -> dict:
+    item = {
+        "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, None),
     }
@@ -549,12 +900,15 @@ def delete_light(light_id: str) -> None:
 
 
 def update_light(light_id: str, name: str, node_id: str, node_name: str, pin: str, room_id: str = "",
-                 show_on_floor: bool = False, floor_icon: str = "") -> dict | None:
+                 show_on_floor: bool = False, floor_icon: str = "",
+                 kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
+                 btn_off: str = "", aspecto: str = "luz",
+                 mando_modo: str = DOS_TECLAS) -> dict | None:
     current = next((l for l in _read()["lights"] if l["id"] == light_id), None)
     return _update("lights", light_id, {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        "topic_cmd": command_topic(node_name, pin),
-        "topic_state": sensor_topic(node_name, pin),
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, current),
     })
@@ -1196,6 +1550,7 @@ def delete_widget(widget_id: str) -> None:
 ACTION_FAMILIES = (
     ("alarma", "Alarma y grupos", "shield"),
     ("luces", "Luces", "lightbulb"),
+    ("accesorios", "Accesorios", "toggle-right"),
     ("puertas", "Puertas", "door-open"),
     ("camaras", "Cámaras", "video"),
     ("mandos", "Mandos", "gamepad-2"),
@@ -1208,7 +1563,7 @@ FAMILIA_ACCION = {
     "action_light": "luces",
     "action_door": "puertas",
     "action_camera": "camaras",
-    "action_ir_button": "mandos",
+    "action_ir_button": "mandos", "action_ir_remote": "mandos",
     "action_rdp": "equipos", "action_host_button": "equipos",
     "action_host_shutdown": "equipos", "action_host_wol": "equipos",
     "action_view": "otros", "action_logs": "otros", "action_notify": "otros",
@@ -1218,10 +1573,287 @@ FAMILIA_ACCION = {
 def familia_de(kind: str) -> str:
     """Familia de un widget cualquiera. Los contadores ("stat_*") siguen
     siendo UNA sola familia — no se pintan agrupados por sub-tipo, así que
-    basta con que no se mezclen con los accesos rápidos."""
+    basta con que no se mezclen con los accesos rápidos.
+
+    OJO: "action_light" cae aquí en Luces, pero un accesorio (la tele, el
+    ventilador) usa ese mismo kind y tiene que ir a Accesorios. Eso no se puede
+    decidir solo con el kind —hace falta saber A QUÉ apunta—, así que lo afina
+    NodesState.actions_by_family, que sí tiene las fichas delante."""
     if kind.startswith("stat_"):
         return "stat"
     return FAMILIA_ACCION.get(kind, "otros")
+
+
+# ── Paneles de la pestaña Métricas ───────────────────────────────────────────
+# Mismo patrón que los widgets del Resumen: una colección de fichas que el
+# usuario añade, quita y ordena, y la pantalla pinta lo que haya. La diferencia
+# es que aquí cada ficha lleva además QUÉ mide y en qué forma, porque la gracia
+# de esta pantalla es que la monte cada uno con lo que le interese.
+#
+# Una ficha de panel:
+#   {"id", "titulo", "forma": "linea"|"barras_hora"|"barras_dia",
+#    "medida": "<clave de serie>" o "<grupo de acciones>", "dias": 7,
+#    "color": "accent"|"warning"|"purple"|"success"|"danger", "orden": 0}
+#
+# `medida` es una cadena y no una estructura a propósito: el catálogo de lo que
+# se puede medir lo construye infra/metricas_state.py leyendo lo que la casa ha
+# registrado de verdad, así que aquí no hay que saber nada de categorías ni de
+# acciones — solo guardar la elección.
+FORMAS_PANEL = ("linea", "barras_hora", "barras_dia")
+COLORES_PANEL = ("accent", "warning", "purple", "success", "danger")
+
+
+def list_paneles() -> list[dict]:
+    return sorted(_read()["metricas_paneles"], key=lambda p: p.get("orden", 0))
+
+
+def add_panel(titulo: str, forma: str, medida: str, dias: int = 7,
+              color: str = "accent") -> dict:
+    def _apply(data):
+        item = {
+            "id": _new_id("panel"),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "titulo": titulo.strip() or "Sin título",
+            "forma": forma if forma in FORMAS_PANEL else "barras_dia",
+            "medida": medida,
+            "dias": _entero(dias, por_defecto=7, minimo=1),
+            "color": color if color in COLORES_PANEL else "accent",
+            "orden": len(data["metricas_paneles"]),
+        }
+        data["metricas_paneles"].append(item)
+        return item
+
+    return _mutate(_apply)
+
+
+def update_panel(panel_id: str, campos: dict) -> dict | None:
+    """Cambia los campos que se le pasen y deja el resto como estaban.
+
+    Se filtra lo que llega: esto lo alimenta un formulario de la web, y una
+    clave inventada acabaría guardada en el fichero de la casa para siempre."""
+    permitidos = {"titulo", "forma", "medida", "dias", "color"}
+
+    def _apply(data):
+        for panel in data["metricas_paneles"]:
+            if panel["id"] != panel_id:
+                continue
+            for clave, valor in campos.items():
+                if clave not in permitidos:
+                    continue
+                if clave == "dias":
+                    panel["dias"] = _entero(valor, por_defecto=7, minimo=1)
+                elif clave == "forma":
+                    panel["forma"] = valor if valor in FORMAS_PANEL else panel["forma"]
+                elif clave == "color":
+                    panel["color"] = valor if valor in COLORES_PANEL else panel["color"]
+                elif clave == "titulo":
+                    panel["titulo"] = str(valor).strip() or panel["titulo"]
+                else:
+                    panel["medida"] = str(valor)
+            return panel
+        return None
+
+    return _mutate(_apply)
+
+
+def delete_panel(panel_id: str) -> None:
+    def _apply(data):
+        data["metricas_paneles"] = [p for p in data["metricas_paneles"]
+                                    if p["id"] != panel_id]
+        # Se renumera para que el orden no acumule huecos al borrar.
+        for i, p in enumerate(sorted(data["metricas_paneles"],
+                                     key=lambda p: p.get("orden", 0))):
+            p["orden"] = i
+
+    _mutate(_apply)
+
+
+def move_panel(panel_id: str, direccion: int) -> None:
+    """direccion: -1 sube, +1 baja. Intercambia con el vecino."""
+    def _apply(data):
+        items = sorted(data["metricas_paneles"], key=lambda p: p.get("orden", 0))
+        actual = next((p for p in items if p["id"] == panel_id), None)
+        if actual is None:
+            return
+        i = items.index(actual)
+        j = i + direccion
+        if not (0 <= j < len(items)):
+            return
+        items[i]["orden"], items[j]["orden"] = items[j]["orden"], items[i]["orden"]
+
+    _mutate(_apply)
+
+
+# ── Planos: alta, baja, renombrado y cuál es el principal ────────────────────
+def list_planos() -> list[dict]:
+    return sorted(_read()["planos"], key=lambda p: p.get("orden", 0))
+
+
+def add_plano(nombre: str, imagen: str, ancho: int, alto: int) -> dict:
+    """Añade un plano. El primero que entra manda: si no hay ninguno, se queda
+    como principal, porque un panel sin plano principal no pinta nada."""
+    def _apply(data):
+        item = {
+            "id": _new_id("plano"),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "nombre": nombre.strip() or f"Plano {len(data['planos']) + 1}",
+            "imagen": imagen,
+            "ancho": _entero(ancho, por_defecto=0, minimo=0),
+            "alto": _entero(alto, por_defecto=0, minimo=0),
+            "orden": len(data["planos"]),
+            "principal": not data["planos"],
+        }
+        data["planos"].append(item)
+        return item
+
+    return _mutate(_apply)
+
+
+def rename_plano(plano_id: str, nombre: str) -> dict | None:
+    def _apply(data):
+        for p in data["planos"]:
+            if p["id"] == plano_id:
+                p["nombre"] = nombre.strip() or p["nombre"]
+                return p
+        return None
+
+    return _mutate(_apply)
+
+
+def set_plano_principal(plano_id: str) -> bool:
+    """Marca uno y desmarca los demás. Exactamente uno, siempre."""
+    def _apply(data):
+        if not any(p["id"] == plano_id for p in data["planos"]):
+            return False
+        for p in data["planos"]:
+            p["principal"] = p["id"] == plano_id
+        return True
+
+    return bool(_mutate(_apply))
+
+
+def delete_plano(plano_id: str) -> str:
+    """Borra el plano y devuelve el nombre de su imagen, para que quien llama
+    decida si borra el fichero (no se hace aquí: este módulo no toca imágenes).
+
+    NO se borra el último que queda si hay elementos colocados: dejar la casa sin
+    ningún plano y con las posiciones apuntando a la nada es más fácil de hacer
+    que de deshacer. Devuelve "" si no se ha borrado.
+
+    Las posiciones que apuntaban a él las limpia _sincronizar_planos, que se
+    ejecuta dentro de esta misma escritura."""
+    def _apply(data):
+        planos = data["planos"]
+        objetivo = next((p for p in planos if p["id"] == plano_id), None)
+        if objetivo is None or len(planos) <= 1:
+            return ""
+        imagen = objetivo.get("imagen", "")
+        data["planos"] = [p for p in planos if p["id"] != plano_id]
+        for i, p in enumerate(sorted(data["planos"], key=lambda p: p.get("orden", 0))):
+            p["orden"] = i
+        # Si el que se va era el principal, el primero de los que quedan lo
+        # hereda — de eso se encarga _sincronizar_planos, que exige que haya uno.
+        return imagen
+
+    return _mutate(_apply) or ""
+
+
+def elementos_de_plano(plano_id: str) -> list[dict]:
+    """Qué hay colocado en ese plano: [{"ref", "top", "left"}].
+
+    `ref` es "<colección>:<id>", el mismo apaño que usa el catálogo del plano,
+    para que la interfaz no tenga que saber de qué colección viene cada cosa."""
+    data = _read()
+    salida = []
+    for coleccion in COLECCIONES_EN_PLANO:
+        for item in data[coleccion]:
+            sitio = (item.get("posiciones") or {}).get(plano_id)
+            if sitio:
+                salida.append({
+                    "ref": f"{coleccion}:{item['id']}",
+                    "id": item["id"],
+                    "nombre": item.get("name", item["id"]),
+                    "top": sitio["top"],
+                    "left": sitio["left"],
+                })
+    return salida
+
+
+# ── Comandos de voz: una frase atada a una acción ────────────────────────────
+# Existen porque el reconocimiento por parecido no es suficiente para una casa
+# que abre puertas: «buenas noches» no se parece a ningún comando del catálogo,
+# y aun así es lo que uno le dice al altavoz. Con esto la frase la elige el
+# usuario y la correspondencia es EXACTA, no adivinada.
+#
+# Una ficha: {"id", "frase", "comando", "creado"}. `comando` es el id del
+# catálogo (ver devices/comandos.py) — se guarda el id y no el paso entero para
+# que renombrar una luz no deje el comando de voz apuntando a un nombre viejo.
+def list_comandos_voz() -> list[dict]:
+    return sorted(_read()["comandos_voz"], key=lambda c: c.get("frase", ""))
+
+
+def add_comando_voz(frase: str, comando: str) -> dict | None:
+    """Nuevo. Devuelve None si la frase ya estaba: dos frases iguales apuntando a
+    dos acciones distintas es una moneda al aire cada vez que se dicen."""
+    limpia = " ".join(frase.strip().lower().split())
+    if not limpia or not comando:
+        return None
+
+    def _apply(data):
+        if any(c["frase"] == limpia for c in data["comandos_voz"]):
+            return None
+        item = {
+            "id": _new_id("voz"),
+            "creado": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "frase": limpia,
+            "comando": comando,
+        }
+        data["comandos_voz"].append(item)
+        return item
+
+    return _mutate(_apply)
+
+
+def update_comando_voz(voz_id: str, frase: str = "", comando: str = "") -> dict | None:
+    def _apply(data):
+        for c in data["comandos_voz"]:
+            if c["id"] != voz_id:
+                continue
+            if frase.strip():
+                c["frase"] = " ".join(frase.strip().lower().split())
+            if comando:
+                c["comando"] = comando
+            return c
+        return None
+
+    return _mutate(_apply)
+
+
+def delete_comando_voz(voz_id: str) -> None:
+    def _apply(data):
+        data["comandos_voz"] = [c for c in data["comandos_voz"]
+                                if c["id"] != voz_id]
+
+    _mutate(_apply)
+
+
+def toggle_equipo_en_metricas(host_id: str) -> bool:
+    """Enciende o apaga el guardado del histórico de ESE equipo. Devuelve cómo
+    se ha quedado."""
+    def _apply(data):
+        for host in data["hosts"]:
+            if host["id"] == host_id:
+                host["en_metricas"] = not host.get("en_metricas", False)
+                return host["en_metricas"]
+        return False
+
+    return bool(_mutate(_apply))
+
+
+def equipos_en_metricas() -> list[dict]:
+    """Los equipos cuyo estado se guarda, con su id y nombre."""
+    return [{"id": h["id"], "name": h["name"]}
+            for h in _read()["hosts"] if h.get("en_metricas")]
 
 
 def move_widget(widget_id: str, direction: int) -> None:

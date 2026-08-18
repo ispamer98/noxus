@@ -154,6 +154,12 @@ def actions_menu(
                 color_scheme="gray",
                 size="1",
                 cursor="pointer",
+                # La marca que busca la pulsación larga. Al mantener el dedo
+                # sobre una tarjeta, el script encuentra el menú de ESA tarjeta y
+                # lo pulsa por ti (ver components/pulsacion_larga.py). Está aquí,
+                # en un solo sitio, y no repartida por las treinta tarjetas del
+                # panel: cualquier tarjeta con menú lo gana sin tocarla.
+                custom_attrs={"data-nx-menu": "1"},
             ),
         ),
         rx.popover.content(

@@ -7,7 +7,11 @@ __pycache__/
 .web/
 *.log
 .env
+# El histórico de eventos de la casa (historico.db) y sus dos ficheros
+# satélite del modo WAL, que son parte de la base de datos y no basura suelta.
 *.db
+*.db-wal
+*.db-shm
 webos_key.json
 
 # Estado en vivo de la casa y credenciales — datos de esta instalación
@@ -25,5 +29,34 @@ nodos_dinamicos.json
 registry_overrides.json
 suscriptores.json
 tinytuya.json
+# Quién es cada dispositivo y qué puede tocar. auth_secreto.json es el que
+# firma las sesiones: con él se fabrica una cookie de administrador para esta
+# casa, así que es tan grave como una contraseña. dispositivos.json lleva los
+# nombres de los aparatos de la familia y los códigos de invitación vivos.
+auth_secreto.json
+dispositivos.json
+# El mapa de la instalación: IPs, MAC y dónde está físicamente cada aparato.
+inventario.json
+# Los modos de la casa y cuál está puesto ahora.
+modos.json
+# Retardos, exclusiones del armado en curso y armados en espera.
+retardos.json
+# Alertas pendientes de confirmar y silencios temporales.
+alertas.json
+# Si la simulación de presencia está encendida y con qué luces.
+presencia.json
+# Qué cámaras vigilan movimiento y con qué sensibilidad.
+movimiento.json
 *.bak.*
 copias_antes_refactor_*/
+# Copias automáticas de los JSON de la casa (domains/infra/backups.py). Llevan
+# dentro los mismos datos reales que los ficheros de arriba.
+copias/
+# Fotogramas que guarda la alarma al saltar (domains/cameras/fotogramas.py):
+# imágenes del interior de la casa. Por eso tampoco se sirven como estático —
+# se piden por un endpoint que comprueba la sesión.
+fotogramas/
+# Los planos que se suben desde la web (domains/nodes/planos.py). El mapa de una
+# casa real, así que fuera del repositorio y servidos por una ruta que comprueba
+# la sesión — nunca como estático. (room.png, el de siempre, sigue en assets/.)
+planos/

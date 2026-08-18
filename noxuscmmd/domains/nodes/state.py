@@ -10,14 +10,18 @@ MQTTBus ya arrancado por SecurityState.on_load vía callback dinámico.
 """
 import asyncio
 import json
+from pathlib import Path
 
 import reflex as rx
 
-from . import store, sensor_events, rdp, referencias, operations
+from . import store, sensor_events, rdp, referencias, operations, planos
+from ..auth import permisos
+from ..infra.deshacer import DeshacerState
 from ..devices import mqtt_bus, registry, ir_bus
 from ..devices.registry_state import RegistryState
 from ..security import audit, groups_store, logs
 from ..infra.state import InfraState
+from ...core import sesiones
 
 _STARTED = False
 
@@ -39,22 +43,36 @@ _FLOOR_DEFAULT_ICONS = {
 _SENSOR_KIND_ICONS = {"door": "door-closed", "tamper": "lock", "pir": "radar"}
 
 
-def _build_floor_catalog(data: dict) -> list[dict]:
+def _build_floor_catalog(data: dict, plano_actual: str = "",
+                         nombres_plano: dict[str, str] | None = None) -> list[dict]:
     """Todo lo que puede aparecer en el plano, en una sola lista plana, para
     que la UI del plano no tenga que saber de qué colección viene cada cosa:
     `ref` ("<colección>:<id>") es lo único que necesita para añadirlo,
     quitarlo o cambiarle el icono."""
     catalog: list[dict] = []
 
+    nombres = nombres_plano or {}
+
     def add(collection: str, item: dict, kind_label: str, default_icon: str):
+        posiciones = item.get("posiciones") or {}
+        # En qué OTROS planos está ya colocado. Es lo que permite ofrecer
+        # «traerlo de la Planta baja» en vez de tener que colocarlo a ciegas y
+        # buscarle el sitio otra vez (ver NodesState.duplicar_desde_plano).
+        otros = [p for p in posiciones if p != plano_actual and p in nombres]
         catalog.append({
             "ref": f"{collection}:{item['id']}",
             "label": item.get("name", item["id"]),
             "kind_label": kind_label,
-            "on_floor": bool(item.get("floor_top")),
+            # "on_floor" es «está en el plano que se está mirando», no «está en
+            # alguno»: es lo que decide en qué lista sale.
+            "on_floor": plano_actual in posiciones if plano_actual
+                        else bool(item.get("floor_top")),
+            "origen": otros[0] if otros else "",
+            "origen_nombre": nombres.get(otros[0], "") if otros else "",
             "icon": item.get("floor_icon") or default_icon,
             "subtle": bool(item.get("floor_subtle")),
             "color": item.get("floor_color") or "",
+            "color_on": item.get("floor_color_on") or "",
         })
 
     for collection in ("factory_sensors", "sensors"):
@@ -66,11 +84,17 @@ def _build_floor_catalog(data: dict) -> list[dict]:
     for d in data["doors"]:
         add("doors", d, "Puerta", _FLOOR_DEFAULT_ICONS["doors"])
     for l in data["lights"]:
-        add("lights", l, "Luz", _FLOOR_DEFAULT_ICONS["lights"])
+        # Luces y accesorios comparten colección pero NO grupo en el plano: la
+        # tele del salón entre las bombillas no hay quien la encuentre.
+        if store.es_luz(l):
+            add("lights", l, "Luz", _FLOOR_DEFAULT_ICONS["lights"])
+        else:
+            add("lights", l, "Accesorio",
+                store.ICONO_ASPECTO.get(l.get("aspecto"), "toggle-right"))
     for r in data["ir_remotes"]:
         # El icono por defecto es el propio del mando (TV, ventilador...), no
         # uno fijo por familia como puertas/luces — cada mando IR es de un
-        # aparato distinto.
+        # accesorio distinto.
         add("ir_remotes", r, "Mando IR", r.get("icon") or "tv")
     return catalog
 
@@ -201,10 +225,21 @@ def _build_widget_catalog(data: dict) -> list[dict]:
         for h in data["hosts"] if h.get("mac")
     ])
 
+    # Luces y accesorios comparten colección pero se ofrecen por separado, igual
+    # que en el menú: quien busca el ventilador no lo busca entre las bombillas.
+    _luces = [l for l in data["lights"] if (l.get("aspecto") or "luz") == "luz"]
+    _accesorios = [l for l in data["lights"] if (l.get("aspecto") or "luz") != "luz"]
+
     section("Luces", [
-        (f"Contador · Estado de {l['name']}", f"stat_light:{l['id']}") for l in data["lights"]
+        (f"Contador · Estado de {l['name']}", f"stat_light:{l['id']}") for l in _luces
     ] + [
-        (f"Acción · Encender/apagar {l['name']}", f"action_light:{l['id']}") for l in data["lights"]
+        (f"Acción · Encender/apagar {l['name']}", f"action_light:{l['id']}") for l in _luces
+    ])
+
+    section("Accesorios", [
+        (f"Contador · Estado de {l['name']}", f"stat_light:{l['id']}") for l in _accesorios
+    ] + [
+        (f"Acción · Encender/apagar {l['name']}", f"action_light:{l['id']}") for l in _accesorios
     ])
 
     # Una tecla de un mando virtual — solo las que YA tienen señal aprendida:
@@ -212,8 +247,16 @@ def _build_widget_catalog(data: dict) -> list[dict]:
     # nada. El identificador lleva dos ids ("mando:tecla") en un único
     # target_id — al partirse el widget solo una vez (kind:target_id), el
     # segundo ":" se queda dentro tal cual, y así se recupera en overview.py.
+    # El mando ENTERO primero: desde que los aparatos (el ventilador, la tele)
+    # tienen su propio apartado y sus teclas se pulsan desde allí, lo que se
+    # quiere en el Resumen suele ser el mando de verdad, con todos sus botones.
+    # Las teclas sueltas se quedan detrás: siguen valiendo, y quitarlas dejaría
+    # sin sentido los widgets que ya haya puestos.
     section("Mandos", [
-        (f"Acción · {r['name']} · {b['label']}", f"action_ir_button:{r['id']}:{b['id']}")
+        (f"Acción · Abrir mando {r['name']}", f"action_ir_remote:{r['id']}")
+        for r in data["ir_remotes"]
+    ] + [
+        (f"Acción · Tecla · {r['name']} · {b['label']}", f"action_ir_button:{r['id']}:{b['id']}")
         for r in data["ir_remotes"] for b in r.get("buttons", []) if b.get("code")
     ])
 
@@ -454,9 +497,70 @@ def _remote_para_ui(remote: dict) -> dict:
     }
 
 
+# ── Elemento de la alarma -> cámara que lo mira ──────────────────────────────
+# Valor del desplegable para "ninguna". No puede ser la cadena vacía: el
+# desplegable de Reflex (Radix) la reserva para "sin elegir" y protesta si se la
+# das como valor de una opción.
+SIN_CAMARA = "-"
+
+
+def _nombre_camara(cam: dict) -> str:
+    return (cam.get("name") or cam["id"]).strip()
+
+
+def _camaras_vigilancia(data: dict) -> list[dict]:
+    """Las cámaras a las que se les puede pedir una imagen fija, más la opción
+    de ninguna. Las de tipo `embed` o `rtsp` no salen: no hay a quién pedirle un
+    fotograma (ver nodes/store.src_de_sensor)."""
+    return [
+        {"id": SIN_CAMARA, "nombre": "Sin cámara"},
+        *({"id": c["id"], "nombre": _nombre_camara(c)}
+          for c in data["factory_cameras"]),
+        *({"id": c["id"], "nombre": _nombre_camara(c)}
+          for c in data["cameras"] if c.get("kind") == "go2rtc"),
+    ]
+
+
+def _elementos_vigilados(data: dict) -> list[dict]:
+    """Cada elemento que puede disparar la alarma, con la cámara que tiene
+    puesta. Van los de fábrica y los dados de alta desde la web, porque los que
+    disparan están repartidos entre las dos colecciones."""
+    nombres = {c["id"]: _nombre_camara(c)
+               for c in data["factory_cameras"] + data["cameras"]}
+    salida = []
+    for coleccion in ("factory_sensors", "sensors"):
+        for s in data[coleccion]:
+            camara = s.get("camara", "") or ""
+            existe = camara in nombres
+            salida.append({
+                "id": s["id"],
+                "nombre": (s.get("name") or s["id"]).strip(),
+                # Si apunta a una cámara borrada, el desplegable vuelve a "Sin
+                # cámara" y el aviso lo cuenta. Dejar seleccionado un id que ya
+                # no está en la lista deja el desplegable en blanco y parece que
+                # no hay nada puesto, que es peor que decirlo.
+                "camara": camara if existe else SIN_CAMARA,
+                "aviso": ("la cámara que tenía puesta ya no existe"
+                          if camara and not existe else ""),
+            })
+    return salida
+
+
 class NodesState(rx.State):
     nodes: list[dict] = []
     sensors: list[dict] = []
+    # Qué cámara mira a cada elemento de la alarma, para guardar un fotograma
+    # cuando salte (ver ../cameras/fotogramas.py). Los dos van con TODO en str:
+    # dentro de un rx.foreach, el valor de una clave que no sea texto tumba el
+    # frontend en esta versión de Reflex.
+    camaras_vigilancia: list[dict] = []
+    elementos_vigilados: list[dict] = []
+    # Planos y cuál se está mirando. `plano_actual` es de la SESIÓN: dos
+    # personas pueden estar mirando plantas distintas a la vez.
+    planos: list[dict] = []
+    plano_actual: str = ""
+    _nombres_plano: dict[str, str] = {}
+    _elementos_por_plano: dict[str, int] = {}
     doors: list[dict] = []
     lights: list[dict] = []
     cameras: list[dict] = []
@@ -472,8 +576,14 @@ class NodesState(rx.State):
         aquí y no en el frontend: filtrar self.widgets dentro de un
         rx.foreach obliga a condicionales anidados por cada fila."""
         salida: dict[str, list[dict]] = {fid: [] for fid, _, _ in store.ACTION_FAMILIES}
+        # Los accesorios usan el mismo kind que las luces ("action_light"), así
+        # que la familia no se puede decidir solo con el kind: hace falta mirar a
+        # qué apunta. Sin esto, la tele y el ventilador salían bajo «Luces».
+        accesorios = {l["id"] for l in self.lights if (l.get("aspecto") or "luz") != "luz"}
         for w in self.widgets:
             familia = store.familia_de(w["kind"])
+            if w["kind"] == "action_light" and w.get("target_id") in accesorios:
+                familia = "accesorios"
             if familia in salida:
                 salida[familia].append(w)
         return salida
@@ -564,8 +674,25 @@ class NodesState(rx.State):
         self.widgets = sorted(data["overview_widgets"], key=lambda w: w.get("order", 0))
         self.sensor_state = data["sensor_states"]
         self.host_online = data["host_online"]
-        self.floor_catalog = _build_floor_catalog(data)
+        self.floor_catalog = _build_floor_catalog(data, self.plano_actual,
+                                                  self._nombres_plano)
         self.widget_catalog = _build_widget_catalog(data)
+        self.camaras_vigilancia = _camaras_vigilancia(data)
+        self.elementos_vigilados = _elementos_vigilados(data)
+        self.planos = sorted(data["planos"], key=lambda p: p.get("orden", 0))
+        self._nombres_plano = {p["id"]: p["nombre"] for p in self.planos}
+        self._elementos_por_plano = {
+            p["id"]: sum(
+                1 for c in store.COLECCIONES_EN_PLANO for x in data[c]
+                if p["id"] in (x.get("posiciones") or {})
+            )
+            for p in self.planos
+        }
+        # Al entrar se mira el principal. Y si el que se estaba mirando ya no
+        # existe (lo ha borrado otro dispositivo), se vuelve al principal en vez
+        # de quedarse enseñando un plano fantasma.
+        if not any(p["id"] == self.plano_actual for p in self.planos):
+            self.plano_actual = (store.plano_principal(data) or {}).get("id", "")
 
     # ── Registro de acciones ─────────────────────────────────────────────
     # Todo lo que hace el usuario en esta pestaña queda apuntado con el
@@ -617,6 +744,10 @@ class NodesState(rx.State):
     async def add_to_floor(self, ref: str):
         """Coloca un elemento en el centro del plano, listo para arrastrarlo.
         `ref` es "<colección>:<id>" (ver _build_floor_catalog)."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
@@ -626,33 +757,68 @@ class NodesState(rx.State):
             reg_state = await self.get_state(RegistryState)
             reg_state._place_factory_on_floor(entity_id, icon)
         else:
-            store.set_floor_position(collection, entity_id, "50%", "50%")
             store.set_floor_icon(collection, entity_id, icon)
+        # La posición se escribe SIEMPRE por aquí, también la de los de fábrica.
+        # `_place_factory_on_floor` pasa por apply_override, que solo sabe de
+        # floor_top —el espejo del plano principal—, así que colocar algo
+        # mirando la segunda planta lo habría puesto en la primera.
+        store.set_floor_position(collection, entity_id, "50%", "50%",
+                                 self.plano_actual)
         self._reload()
         await self._log(logs.SISTEMA, "PLANO_ELEMENTO_COLOCADO",
                         entry["label"] if entry else ref)
 
     @rx.event
     async def remove_from_floor(self, ref: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
         # El nombre hay que cogerlo ANTES de recargar: el catálogo del plano se
         # rehace y la entrada ya no está donde estaba.
         entry = next((e for e in self.floor_catalog if e["ref"] == ref), None)
+        # Y la posición también antes de quitarla, que es lo único que hace falta
+        # para poder volver a ponerlo donde estaba (ver infra/deshacer.py).
+        sitio = self._sitio_actual(collection, entity_id)
         if collection in ("factory_sensors", "factory_cameras"):
             reg_state = await self.get_state(RegistryState)
             reg_state._remove_factory_from_floor(entity_id)
-        else:
-            store.clear_floor_position(collection, entity_id)
+        # Y la posición se quita SIEMPRE por aquí. Sin esto, quitar del plano un
+        # elemento de fábrica no hacía nada: apply_override pone floor_top a
+        # None, pero floor_top es el espejo de `posiciones`, así que a la lectura
+        # siguiente volvía a aparecer donde estaba.
+        store.clear_floor_position(collection, entity_id, self.plano_actual)
         self._reload()
-        await self._log(logs.SISTEMA, "PLANO_ELEMENTO_QUITADO",
-                        entry["label"] if entry else ref)
+        nombre = entry["label"] if entry else ref
+        await self._log(logs.SISTEMA, "PLANO_ELEMENTO_QUITADO", nombre)
+        if not sitio:
+            return
+        return DeshacerState.apuntar(
+            "plano_quitado",
+            {"coleccion": collection, "id": entity_id, "nombre": nombre,
+             "plano": self.plano_actual, **sitio},
+            f"«{nombre}» quitado del plano",
+        )
+
+    def _sitio_actual(self, coleccion: str, entity_id: str) -> dict:
+        """{"top","left"} del elemento en el plano que se está mirando, o {}."""
+        for item in store.read_all().get(coleccion, []):
+            if item.get("id") == entity_id:
+                return dict((item.get("posiciones") or {}).get(self.plano_actual)
+                            or {})
+        return {}
 
     @rx.event
     async def set_floor_color(self, ref: str, color: str):
         """Color en reposo del marcador. El rojo de "abierto/alarma" sigue
         mandando siempre, así que esto no puede esconder un aviso."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
@@ -664,8 +830,30 @@ class NodesState(rx.State):
         self._reload()
 
     @rx.event
+    async def set_floor_color_on(self, ref: str, color: str):
+        """Color del marcador cuando está ACTIVO: encendido, abierto o
+        disparado. Vacío = el que pone el sistema para esa familia."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        if ":" not in ref:
+            return
+        collection, entity_id = ref.split(":", 1)
+        if collection in ("factory_sensors", "factory_cameras"):
+            reg_state = await self.get_state(RegistryState)
+            reg_state._set_factory_floor_color_on(entity_id, color)
+        else:
+            store.set_floor_color_on(collection, entity_id, color)
+        self._reload()
+
+    @rx.event
     async def toggle_floor_subtle(self, ref: str):
         """Alterna el modo discreto (pequeño y atenuado) de un marcador."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
@@ -678,6 +866,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def set_floor_icon(self, ref: str, icon: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if ":" not in ref or not icon:
             return
         collection, entity_id = ref.split(":", 1)
@@ -699,10 +891,33 @@ class NodesState(rx.State):
         sitio y parece borrada."""
         known = {r["id"] for r in self.rooms}
         result: dict[str, list[dict]] = {}
+        # Solo las que son LUZ: el ventilador y la tele comparten colección
+        # (para heredar plano, resumen, automatizaciones y paleta) pero tienen
+        # su propia pestaña, Accesorios. Ver `accesorios` más abajo.
         for l in self.lights:
+            if (l.get("aspecto") or "luz") != "luz":
+                continue
             room_id = l.get("room_id") or ""
             result.setdefault(room_id if room_id in known else "_none", []).append(l)
         return result
+
+    @rx.var
+    def accesorios(self) -> list[dict]:
+        """Lo que no es una luz: el ventilador de techo, la tele, un enchufe.
+
+        Misma mecánica que una luz (encender, apagar, guardar el estado) y por
+        eso viven en la misma colección; lo que cambia es qué son, y por eso se
+        listan aparte."""
+        return [l for l in self.lights if (l.get("aspecto") or "luz") != "luz"]
+
+    @rx.var
+    def total_luces(self) -> int:
+        """Cuántas LUCES hay, sin contar los accesorios (ver `accesorios`)."""
+        return sum(1 for l in self.lights if (l.get("aspecto") or "luz") == "luz")
+
+    @rx.var
+    def hay_luces(self) -> bool:
+        return any((l.get("aspecto") or "luz") == "luz" for l in self.lights)
 
     @rx.var
     def room_names(self) -> dict[str, str]:
@@ -710,6 +925,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_add_room(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         if not name:
             return
@@ -719,6 +938,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_room(self, room_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.rooms, room_id)
         store.delete_room(room_id)
         self._reload()
@@ -747,7 +970,10 @@ class NodesState(rx.State):
             for d in self.doors:
                 bus.subscribe_dynamic(d["topic_state"], d["id"])
             for l in self.lights:
-                bus.subscribe_dynamic(l["topic_state"], l["id"])
+                # Los accesorios por mando no tienen topic: no hay nada
+                # publicando su estado (ver store._campos_luz).
+                if l["topic_state"]:
+                    bus.subscribe_dynamic(l["topic_state"], l["id"])
 
     def _subscribe_if_running(self, topic: str, entity_id: str):
         bus = mqtt_bus.get_running_bus()
@@ -757,6 +983,7 @@ class NodesState(rx.State):
     # ── Sync loop (por sesión): refleja nodos_dinamicos.json en la UI ──────
     @rx.event(background=True)
     async def sync_loop(self):
+        guardia = await sesiones.guardia(self)
         while True:
             try:
                 real_sensors = await asyncio.to_thread(store.get_all_sensor_states)
@@ -766,14 +993,20 @@ class NodesState(rx.State):
                         self.sensor_state = real_sensors
                     if real_hosts != self.host_online:
                         self.host_online = real_hosts
-                await asyncio.sleep(0.5)
+                if not await sesiones.espera(guardia, 0.5):
+                    return
             except Exception as e:
                 print(f"⚠️ Error en NodesState.sync_loop: {e}")
-                await asyncio.sleep(1)
+                if not await sesiones.espera(guardia, 1):
+                    return
 
     # ── Alta: nodos ──────────────────────────────────────────────────────
     @rx.event
     async def submit_add_node(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         ip = form_data.get("ip", "").strip()
         kind = form_data.get("kind", "esp32")
@@ -794,6 +1027,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_node(self, node_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.nodes, node_id)
         store.delete_node(node_id)
         self._reload()
@@ -801,6 +1038,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_edit_node(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         node_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         ip = form_data.get("ip", "").strip()
@@ -824,6 +1065,10 @@ class NodesState(rx.State):
     # ── Alta: sensores ───────────────────────────────────────────────────
     @rx.event
     async def submit_add_sensor(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         kind = form_data.get("kind", "generic")
         node_id = form_data.get("node_id", "")
@@ -841,6 +1086,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_sensor(self, sensor_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.sensors, sensor_id)
         store.delete_sensor(sensor_id)
         self._reload()
@@ -848,6 +1097,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def toggle_sensor_isolated(self, sensor_id: str):
+        # Aislar un sensor es desarmar media casa sin tocar el botón de armar:
+        # la alarma deja de vigilarlo. Pide el mismo permiso que armar.
+        if (no := await permisos.denegar(self, permisos.ARMAR)):
+            return no
         nombre = self._nombre(self.sensors, sensor_id)
         actualizado = store.toggle_sensor_isolated(sensor_id)
         self._reload()
@@ -858,7 +1111,38 @@ class NodesState(rx.State):
         )
 
     @rx.event
+    async def asignar_camara(self, sensor_id: str, camara_id: str):
+        """Dice qué cámara mira a un elemento, para el fotograma de la alarma.
+
+        Pide AJUSTES y no ARMAR: esto no cambia lo que vigila la alarma ni
+        cuándo suena, es configuración de la instalación. Aislar un sensor sí es
+        ARMAR, porque ahí la alarma deja de mirarlo."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        real = "" if camara_id == SIN_CAMARA else camara_id
+        nombre = self._nombre_elemento(sensor_id)
+        if not store.set_sensor_camera(sensor_id, real):
+            return
+        camara = next((c["nombre"] for c in self.camaras_vigilancia
+                       if c["id"] == camara_id), camara_id)
+        self._reload()
+        if real:
+            await self._log(logs.SENSORES, "SENSOR_CAMARA_PUESTA",
+                            f"{nombre} · la mira {camara}")
+        else:
+            await self._log(logs.SENSORES, "SENSOR_CAMARA_QUITADA",
+                            f"{nombre} · ya no se guarda fotograma")
+
+    def _nombre_elemento(self, sensor_id: str) -> str:
+        return next((e["nombre"] for e in self.elementos_vigilados
+                     if e["id"] == sensor_id), sensor_id)
+
+    @rx.event
     async def submit_edit_sensor(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         sensor_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         kind = form_data.get("kind", "generic")
@@ -888,6 +1172,10 @@ class NodesState(rx.State):
     # ── Alta: puertas / cerraduras ──────────────────────────────────────
     @rx.event
     async def submit_add_door(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         node_id = form_data.get("node_id", "")
         pin = form_data.get("pin", "").strip()
@@ -905,6 +1193,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_door(self, door_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.doors, door_id)
         _cancel_pulse(door_id)
         store.delete_door(door_id)
@@ -913,6 +1205,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_edit_door(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         door_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         node_id = form_data.get("node_id", "")
@@ -942,6 +1238,10 @@ class NodesState(rx.State):
         El pulso en sí lo lleva operations.pulse_door, que es quien guarda la
         tarea en el registro compartido con el motor."""
         async with self:
+            # Dentro del `async with` porque en un evento de fondo es donde se
+            # puede tocar el estado — y consultar quién es esta sesión lo es.
+            if (no := await permisos.denegar(self, permisos.PUERTAS)):
+                return no
             door = next((d for d in self.doors if d["id"] == door_id), None)
             if door is None:
                 return
@@ -966,6 +1266,9 @@ class NodesState(rx.State):
     async def cut_door_pulse(self, door_id: str):
         """Cortar pulso: interrumpe YA un "Abrir (pulso)" en marcha, sin
         esperar a que acabe su temporizador — el relé se fuerza a OFF."""
+        async with self:
+            if (no := await permisos.denegar(self, permisos.PUERTAS)):
+                return no
         _cancel_pulse(door_id)
         async with self:
             self.pulsing_doors.pop(door_id, None)
@@ -987,6 +1290,9 @@ class NodesState(rx.State):
         """Mantener abierto (state=True) / Mantener cerrado (state=False):
         fuerza el relé a ese estado y lo mantiene — cancela cualquier pulso
         en curso para que no lo pise el auto-cierre."""
+        async with self:
+            if (no := await permisos.denegar(self, permisos.PUERTAS)):
+                return no
         _cancel_pulse(door_id)
         async with self:
             door = next((d for d in self.doors if d["id"] == door_id), None)
@@ -1007,26 +1313,87 @@ class NodesState(rx.State):
             )
 
     # ── Alta: luces ──────────────────────────────────────────────────────
+    @rx.var
+    def teclas_de_mando(self) -> list[dict]:
+        """Todas las teclas aprendidas de todos los mandos, para elegir con qué
+        se enciende y con qué se apaga un accesorio.
+
+        Van en UN solo desplegable con el valor compuesto "mando:tecla" (misma
+        convención que el catálogo de widgets, más arriba) en vez de dos
+        desplegables encadenados: dentro de un rx.form, un segundo select que
+        dependa de lo elegido en el primero no se puede filtrar sin sacar el
+        formulario entero al estado. Así el mando se deduce de la tecla.
+
+        Solo las que ya tienen señal: ofrecer una tecla sin aprender sería un
+        interruptor que no hace nada."""
+        return [
+            {"valor": f"{r['id']}:{b['id']}",
+             "etiqueta": f"{r['name']} · {b['label']}"}
+            for r in self.ir_remotes for b in r.get("buttons", []) if b.get("code")
+        ]
+
     @rx.event
     async def submit_add_light(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         node_id = form_data.get("node_id", "")
         pin = form_data.get("pin", "").strip()
         room_id = form_data.get("room_id", "")
         show_on_floor = bool(form_data.get("show_on_floor"))
         floor_icon = form_data.get("floor_icon", "")
-        if not name or not node_id or not pin:
+        # Una luz puede ser un relé o una tecla de un mando (la del ventilador de
+        # techo, por ejemplo): cada forma pide unos datos distintos.
+        kind = form_data.get("light_kind", store.LUZ_RELE)
+        # Las teclas llegan como "mando:tecla" (ver teclas_de_mando): el mando
+        # sale de ahi, y se exige que las dos sean del MISMO mando — encender con
+        # uno y apagar con otro es siempre una equivocacion al elegir.
+        remote_on, _, btn_on = form_data.get("btn_on", "").partition(":")
+        remote_off, _, btn_off = form_data.get("btn_off", "").partition(":")
+        remote_id = remote_on
+        aspecto = form_data.get("aspecto", "luz")
+        mando_modo = form_data.get("mando_modo", store.DOS_TECLAS)
+        if not name:
+            return
+        if kind == store.LUZ_MANDO:
+            if mando_modo == store.UNA_TECLA:
+                # Una sola tecla para las dos cosas (la de encendido de la tele):
+                # solo se pide esa, y la de apagar se ignora aunque venga puesta.
+                if not remote_id or not btn_on:
+                    self.status = "⚠️ Elige la tecla de encendido del mando."
+                    return
+                btn_off, remote_off = btn_on, remote_on
+            elif not remote_id or not btn_on or not btn_off:
+                self.status = ("⚠️ Un accesorio con dos teclas necesita las dos: "
+                               "la de encender y la de apagar.")
+                return
+            if remote_on != remote_off:
+                self.status = ("⚠️ Las dos teclas tienen que ser del mismo mando.")
+                return
+            node_id, pin = "", ""
+        elif not node_id or not pin:
             return
         item = store.add_light(name, node_id, self._node_name(node_id), pin, room_id,
-                               show_on_floor, floor_icon)
+                               show_on_floor, floor_icon, kind=kind,
+                               remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
+                               aspecto=aspecto, mando_modo=mando_modo)
         self._reload()
-        self._subscribe_if_running(item["topic_state"], item["id"])
+        # Una luz de mando no tiene topic al que suscribirse (ver store._campos_luz).
+        if item["topic_state"]:
+            self._subscribe_if_running(item["topic_state"], item["id"])
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
-        await self._log(logs.LUCES, "LUZ_CREADA",
-                        f"{name} · {self._node_name(node_id)} pin {pin} · {estancia}")
+        como = ("por mando" if kind == store.LUZ_MANDO
+                else f"{self._node_name(node_id)} pin {pin}")
+        await self._log(logs.LUCES, "LUZ_CREADA", f"{name} · {como} · {estancia}")
 
     @rx.event
     async def delete_light(self, light_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.lights, light_id)
         store.delete_light(light_id)
         self._reload()
@@ -1034,6 +1401,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_edit_light(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         light_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         node_id = form_data.get("node_id", "")
@@ -1041,22 +1412,57 @@ class NodesState(rx.State):
         room_id = form_data.get("room_id", "")
         show_on_floor = bool(form_data.get("show_on_floor"))
         floor_icon = form_data.get("floor_icon", "")
-        if not light_id or not name or not node_id or not pin:
+        kind = form_data.get("light_kind", store.LUZ_RELE)
+        # Las teclas llegan como "mando:tecla" (ver teclas_de_mando): el mando
+        # sale de ahi, y se exige que las dos sean del MISMO mando — encender con
+        # uno y apagar con otro es siempre una equivocacion al elegir.
+        remote_on, _, btn_on = form_data.get("btn_on", "").partition(":")
+        remote_off, _, btn_off = form_data.get("btn_off", "").partition(":")
+        remote_id = remote_on
+        aspecto = form_data.get("aspecto", "luz")
+        mando_modo = form_data.get("mando_modo", store.DOS_TECLAS)
+        if not light_id or not name:
+            return
+        if kind == store.LUZ_MANDO:
+            if mando_modo == store.UNA_TECLA:
+                # Una sola tecla para las dos cosas (la de encendido de la tele):
+                # solo se pide esa, y la de apagar se ignora aunque venga puesta.
+                if not remote_id or not btn_on:
+                    self.status = "⚠️ Elige la tecla de encendido del mando."
+                    return
+                btn_off, remote_off = btn_on, remote_on
+            elif not remote_id or not btn_on or not btn_off:
+                self.status = ("⚠️ Un accesorio con dos teclas necesita las dos: "
+                               "la de encender y la de apagar.")
+                return
+            if remote_on != remote_off:
+                self.status = ("⚠️ Las dos teclas tienen que ser del mismo mando.")
+                return
+            node_id, pin = "", ""
+        elif not node_id or not pin:
             return
         old = next((l for l in self.lights if l["id"] == light_id), None)
         item = store.update_light(light_id, name, node_id, self._node_name(node_id), pin, room_id,
-                                  show_on_floor, floor_icon)
+                                  show_on_floor, floor_icon, kind=kind,
+                                  remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
+                               aspecto=aspecto, mando_modo=mando_modo)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
         movida = old and (old.get("room_id") or "") != (room_id or "")
-        detalle = f"{cambio} · {self._node_name(node_id)} pin {pin} · {estancia}"
+        como = ("por mando" if kind == store.LUZ_MANDO
+                else f"{self._node_name(node_id)} pin {pin}")
+        detalle = f"{cambio} · {como} · {estancia}"
         await self._log(logs.LUCES, "LUZ_CAMBIADA_DE_ESTANCIA" if movida else "LUZ_EDITADA", detalle)
         if item and old and old["topic_state"] != item["topic_state"]:
             bus = mqtt_bus.get_running_bus()
             if bus:
-                bus.unsubscribe_dynamic(old["topic_state"])
-                bus.subscribe_dynamic(item["topic_state"], light_id)
+                # Cualquiera de los dos puede estar vacío: al pasar una luz de
+                # relé a mando pierde su topic, y al revés lo estrena.
+                if old["topic_state"]:
+                    bus.unsubscribe_dynamic(old["topic_state"])
+                if item["topic_state"]:
+                    bus.subscribe_dynamic(item["topic_state"], light_id)
 
     @rx.event(background=True)
     async def toggle_light(self, light_id: str):
@@ -1077,6 +1483,8 @@ class NodesState(rx.State):
         disco y dale la vuelta» que pueden leer el mismo valor y pedir lo mismo
         las dos veces."""
         async with self:
+            if (no := await permisos.denegar(self, permisos.LUCES)):
+                return no
             light = next((l for l in self.lights if l["id"] == light_id), None)
             if light is None:
                 return
@@ -1111,6 +1519,10 @@ class NodesState(rx.State):
     # ── Alta: cámaras extra ─────────────────────────────────────────────
     @rx.event
     async def submit_add_camera(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         url = form_data.get("url", "").strip()
         icon = form_data.get("icon", "video")
@@ -1123,6 +1535,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_camera(self, camera_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.cameras, camera_id)
         store.delete_camera(camera_id)
         self._reload()
@@ -1130,6 +1546,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_edit_camera(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         camera_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         url = form_data.get("url", "").strip()
@@ -1147,11 +1567,15 @@ class NodesState(rx.State):
 
     # ── Mandos IR (Broadlink) ─────────────────────────────────────────────
     # El hub físico es uno solo (IP_BROADLINK/MAC_BROADLINK) — cada "mando" de
-    # aquí es solo un nombre + una lista de botones, uno por aparato real
+    # aquí es solo un nombre + una lista de botones, uno por accesorio real
     # (TV, ventilador, aire...). Aprender y disparar botones van por
     # domains/devices/ir_bus.py, 100% LAN, sin pasar por ninguna nube.
     @rx.event
     async def submit_add_ir_remote(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         icon = form_data.get("icon", "tv")
         show_on_floor = bool(form_data.get("show_on_floor"))
@@ -1167,6 +1591,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_ir_remote(self, remote_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.ir_remotes, remote_id)
         store.delete_ir_remote(remote_id)
         self._reload()
@@ -1174,6 +1602,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_edit_ir_remote(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         remote_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         icon = form_data.get("icon", "tv")
@@ -1250,6 +1682,10 @@ class NodesState(rx.State):
     async def submit_edit_ir_button(self, form_data: dict):
         """Solo renombra/cambia el icono — recapturar la señal es borrar el
         botón y volver a aprenderlo, no hay edición del código a mano."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         remote_id = form_data.get("remote_id", "")
         button_id = form_data.get("button_id", "")
         label = form_data.get("label", "").strip()
@@ -1261,6 +1697,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_ir_button(self, remote_id: str, button_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         remote = next((r for r in self.ir_remotes if r["id"] == remote_id), None)
         label = next(
             (b["label"] for b in (remote or {}).get("buttons", []) if b["id"] == button_id), button_id,
@@ -1293,6 +1733,7 @@ class NodesState(rx.State):
         tecla aprendida en otra pestaña no se podía disparar desde esta hasta
         recargar la página."""
         etiqueta = ""
+        fallo = ""
         try:
             etiqueta = await operations.send_remote_button(remote_id, button_id)
             msg = f"📡 {etiqueta}"
@@ -1304,12 +1745,23 @@ class NodesState(rx.State):
             return
         except operations.OperationError as e:
             msg = f"❌ {e}"
+            # El error ya trae dentro "Mando · Tecla" (ver operations), que es
+            # lo único que identifica la pulsación cuando el envío no llegó a
+            # devolver etiqueta.
+            fallo = str(e)
         async with self:
             infra = await self.get_state(InfraState)
             infra.status = msg
             self.ir_status = msg
             if etiqueta:
                 await self._log(logs.SISTEMA, "MANDO_IR_BOTON_ENVIADO", etiqueta)
+            elif fallo:
+                # Un envío que falla TAMBIÉN se apunta. Sin esto, un mando que
+                # ha dejado de funcionar no deja ni una línea en el histórico y
+                # el fallo solo se ve en la barra de estado de quien lo pulsó:
+                # es lo que hizo que un hub inalcanzable pasara horas sin que
+                # nada lo delatara.
+                await self._log(logs.SISTEMA, "MANDO_IR_BOTON_FALLIDO", fallo)
 
     @rx.event(background=True)
     async def send_ir_button(self, remote_id: str, button_id: str):
@@ -1374,6 +1826,10 @@ class NodesState(rx.State):
         """Guarda nombre/icono, y para los botones de red también qué comando
         webOS ejecutan. La señal infrarroja NO se toca aquí: se re-aprende con
         learn_into_button."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if not self.editing_button_id:
             return
         etiqueta = self.editing_button_label.strip()
@@ -1453,6 +1909,10 @@ class NodesState(rx.State):
         evento del botón: encadenado en la vista podía ejecutarse ANTES de que
         el navegador devolviera las posiciones, y entonces esto ya no sabía de
         qué mando eran."""
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         remote_id = self.remote_layout_editing
         self.remote_layout_editing = ""
         if not payload or not remote_id:
@@ -1494,7 +1954,7 @@ class NodesState(rx.State):
 
     @rx.var
     def ir_remotes_on_floor(self) -> list[dict]:
-        return [r for r in self.ir_remotes if r.get("floor_top")]
+        return self._en_plano(self.ir_remotes)
 
     # ── Posición en el plano de planta (arrastrar un marcador) ───────────
     @rx.event
@@ -1553,7 +2013,8 @@ class NodesState(rx.State):
             top, left = pos.get("top"), pos.get("left")
             if not top or not left:
                 continue
-            cambios.append({"collection": col, "id": eid, "top": top, "left": left})
+            cambios.append({"collection": col, "id": eid, "top": top,
+                            "left": left, "plano": self.plano_actual})
             if col in ("factory_sensors", "factory_cameras"):
                 de_fabrica.append((eid, top, left))
         if not cambios:
@@ -1568,20 +2029,213 @@ class NodesState(rx.State):
                 reg_state._reflect_factory_floor_pos(eid, top, left)
         self._reload()
 
+    # ── Qué plano se está mirando ────────────────────────────────────────
+    @rx.event
+    async def ver_plano(self, plano_id: str):
+        """Cambia de plano. Los de fábrica no viven en ninguna colección
+        reactiva, así que hay que reconstruirles a mano sus posiciones para el
+        plano nuevo (ver RegistryState.cargar_plano)."""
+        if not any(p["id"] == plano_id for p in self.planos):
+            return
+        self.plano_actual = plano_id
+        reg_state = await self.get_state(RegistryState)
+        reg_state.cargar_plano(plano_id)
+
+    def _en_plano(self, items: list[dict]) -> list[dict]:
+        """Los elementos colocados en el plano que se está mirando, con
+        floor_top/floor_left ya puestos a la posición de ESE plano.
+
+        Se sustituyen los dos campos en vez de añadir otros nuevos justo para
+        que los marcadores no cambien: siguen leyendo floor_top como siempre y no
+        se enteran de que ahora hay más de un plano."""
+        plano = self.plano_actual
+        salida = []
+        for item in items:
+            sitio = (item.get("posiciones") or {}).get(plano)
+            if not sitio:
+                continue
+            salida.append({**item, "floor_top": sitio["top"],
+                           "floor_left": sitio["left"]})
+        return salida
+
+    @rx.event
+    async def subir_plano(self, files: list[rx.UploadFile]):
+        """Sube una imagen y la da de alta como plano nuevo.
+
+        El nombre del plano sale del nombre del fichero ("Planta alta.png" ->
+        "Planta alta"): es lo que la persona acaba de escribir al guardarlo, así
+        que es mejor que pedirle que lo escriba otra vez. Se puede renombrar."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        if not files:
+            return rx.toast.error("No llegó ningún fichero.",
+                                  position="top-center")
+        for file in files:
+            datos = await file.read()
+            # En el log, para poder distinguir «no llegó» de «llegó y falló»: el
+            # primer intento de subir un plano no dejaba ni rastro y no había
+            # forma de saber en qué lado estaba el problema.
+            print(f"🗺️ Plano recibido: {file.name} ({len(datos)} bytes)")
+            try:
+                imagen, ancho, alto = planos.guardar(file.name, datos)
+            except ValueError as e:
+                return rx.toast.error(str(e), position="top-center")
+            nuevo = store.add_plano(Path(file.name).stem, imagen, ancho, alto)
+            await self._log(logs.SISTEMA, "PLANO_CREADO",
+                            f"{nuevo['nombre']} · {ancho}x{alto}")
+        self._reload()
+        return rx.toast.success("Plano añadido.", position="top-center")
+
+    @rx.event
+    def plano_rechazado(self):
+        """El navegador ni ha intentado subirlo. Pasa cuando el fichero no casa
+        con el filtro de tipos, y sin esto no se entera nadie: se vuelve a abrir
+        el selector de ficheros y parece que la aplicación no responde."""
+        return rx.toast.error(
+            "Ese fichero no lo acepta el navegador. Tiene que ser una imagen "
+            "PNG, JPG o WebP de menos de 12 MB.",
+            position="top-center", duration=8000,
+        )
+
+    @rx.event
+    async def renombrar_plano(self, plano_id: str, nombre: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        actualizado = store.rename_plano(plano_id, nombre)
+        self._reload()
+        if actualizado:
+            await self._log(logs.SISTEMA, "PLANO_EDITADO", actualizado["nombre"])
+
+    @rx.event
+    async def marcar_plano_principal(self, plano_id: str):
+        """El principal es el que se abre por defecto, y el que refleja el
+        espejo floor_top que sigue usando la vista clásica."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        if not store.set_plano_principal(plano_id):
+            return
+        nombre = next((p["nombre"] for p in self.planos if p["id"] == plano_id),
+                      plano_id)
+        self._reload()
+        await self._log(logs.SISTEMA, "PLANO_PRINCIPAL_CAMBIADO", nombre)
+
+    @rx.event
+    async def borrar_plano(self, plano_id: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        nombre = next((p["nombre"] for p in self.planos if p["id"] == plano_id),
+                      plano_id)
+        imagen = store.delete_plano(plano_id)
+        if not imagen:
+            return rx.toast.error(
+                "No se puede quitar el único plano que queda.",
+                position="top-center")
+        # La imagen se borra DESPUÉS de que el plano ya no esté guardado: si se
+        # borrara antes y fallara la escritura, quedaría un plano apuntando a una
+        # imagen que no existe.
+        planos.borrar(imagen)
+        self._reload()
+        await self._log(logs.SISTEMA, "PLANO_ELIMINADO", nombre)
+
+    @rx.event
+    async def duplicar_desde_plano(self, ref: str, origen: str):
+        """Trae a ESTE plano un elemento que ya está colocado en otro, en el
+        mismo sitio que ocupaba allí.
+
+        Es el caso de «tengo un plano general y otro por habitaciones», o de un
+        contacto magnético en una puerta que comparten dos estancias: el mismo
+        elemento tiene que salir en los dos planos, y cada uno con su posición
+        independiente a partir de ahí."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        coleccion, _, entity_id = ref.partition(":")
+        if not store.duplicar_en_plano(coleccion, entity_id, origen,
+                                       self.plano_actual):
+            return rx.toast.error("Ese elemento ya no está en el otro plano.",
+                                  position="top-center")
+        nombre = self._nombre_elemento(entity_id)
+        self._reload()
+        await self._log(logs.SISTEMA, "PLANO_ELEMENTO_DUPLICADO",
+                        f"{nombre} · traído de "
+                        f"{self._nombres_plano.get(origen, origen)}")
+        return rx.toast.success(f"«{nombre}» copiado aquí, en el mismo sitio.",
+                                position="top-center")
+
+    @rx.event
+    async def duplicar_a_plano(self, ref: str, destino: str):
+        """Pone en otro plano un elemento que ya está en el actual, en el mismo
+        sitio. `ref` es "<colección>:<id>" (ver _build_floor_catalog)."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        coleccion, _, entity_id = ref.partition(":")
+        if not store.duplicar_en_plano(coleccion, entity_id, self.plano_actual,
+                                      destino):
+            return rx.toast.error("Ese elemento no está en este plano.",
+                                  position="top-center")
+        nombre_destino = next((p["nombre"] for p in self.planos
+                               if p["id"] == destino), destino)
+        self._reload()
+        await self._log(logs.SISTEMA, "PLANO_ELEMENTO_DUPLICADO",
+                        f"{self._nombre_elemento(entity_id)} · a {nombre_destino}")
+        return rx.toast.success(f"Copiado a «{nombre_destino}».",
+                                position="top-center")
+
+    @rx.var
+    def otros_planos(self) -> list[dict]:
+        """Los planos que NO se están mirando — a los que se puede copiar algo."""
+        return [{"id": p["id"], "nombre": p["nombre"]}
+                for p in self.planos if p["id"] != self.plano_actual]
+
+    @rx.var
+    def planos_ui(self) -> list[dict]:
+        """Las pestañas de planos, con todo en str para el rx.foreach."""
+        return [
+            {"id": p["id"], "nombre": p["nombre"],
+             "activo": p["id"] == self.plano_actual,
+             "principal": "1" if p.get("principal") else "",
+             "elementos": str(self._elementos_por_plano.get(p["id"], 0)),
+             # Preformateado: concatenar el valor de una clave de dict dentro de
+             # un rx.foreach revienta el frontend en esta versión de Reflex.
+             "elementos_texto": (
+                 f"{self._elementos_por_plano.get(p['id'], 0)} elemento(s)")}
+            for p in self.planos
+        ]
+
+    @rx.var
+    def plano_imagen_url(self) -> str:
+        """La imagen del plano actual, servida por /api/plano (no es un
+        estático: ver domains/nodes/planos.py)."""
+        actual = next((p for p in self.planos if p["id"] == self.plano_actual), None)
+        imagen = (actual or {}).get("imagen", "")
+        return f"/api/plano/{imagen}" if imagen else ""
+
+    @rx.var
+    def plano_aspecto(self) -> str:
+        """La proporción del plano, para que las posiciones en tanto por ciento
+        caigan siempre en el mismo punto del dibujo. Sin medidas conocidas se
+        usa la cuadrada, que es la que tenía el plano de siempre."""
+        actual = next((p for p in self.planos if p["id"] == self.plano_actual), None)
+        ancho, alto = (actual or {}).get("ancho", 0), (actual or {}).get("alto", 0)
+        return f"{ancho} / {alto}" if ancho and alto else "1 / 1"
+
+    @rx.var
+    def hay_varios_planos(self) -> bool:
+        return len(self.planos) > 1
+
     @rx.var
     def sensors_on_floor(self) -> list[dict]:
         return [
             {**s, "is_open": self.sensor_state.get(s["id"], False)}
-            for s in self.sensors if s.get("floor_top")
+            for s in self._en_plano(self.sensors)
         ]
 
     @rx.var
     def cameras_on_floor(self) -> list[dict]:
-        return [c for c in self.cameras if c.get("floor_top")]
+        return self._en_plano(self.cameras)
 
     @rx.var
     def doors_on_floor(self) -> list[dict]:
-        return [d for d in self.doors if d.get("floor_top")]
+        return self._en_plano(self.doors)
 
     @rx.var
     def lights_on_floor(self) -> list[dict]:
@@ -1590,7 +2244,7 @@ class NodesState(rx.State):
         frontend (mismo criterio que sensors_on_floor)."""
         return [
             {**l, "is_on": self.sensor_state.get(l["id"], False)}
-            for l in self.lights if l.get("floor_top")
+            for l in self._en_plano(self.lights)
         ]
 
     # ── Equipos (todos, sin distinción de origen) ────────────────────────
@@ -1620,7 +2274,15 @@ class NodesState(rx.State):
             icon=form_data.get("icon", "server"),
         )
 
-    async def _alta_equipo(self, form_data: dict) -> None:
+    # Los tres siguientes DEVUELVEN lo que diga permisos.denegar para que el
+    # manejador lo propague: son el único sitio por el que pasan los seis
+    # puntos de entrada (los tres eventos y sus tres alias antiguos), así que
+    # comprobar aquí cierra todos a la vez.
+    async def _alta_equipo(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         campos = self._campos_equipo(form_data)
         if not campos["name"] or not campos["ip"]:
             return
@@ -1639,7 +2301,10 @@ class NodesState(rx.State):
         await self._log(logs.EQUIPOS, "EQUIPO_CREADO",
                         f"{campos['name']} · {campos['ip']} · {campos['os']}")
 
-    async def _edicion_equipo(self, form_data: dict) -> None:
+    async def _edicion_equipo(self, form_data: dict):
+        # Reapuntar un equipo cambia su IP y su destino SSH: solo AJUSTES.
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         host_id = form_data.get("entity_id", "")
         campos = self._campos_equipo(form_data)
         if not host_id or not campos["name"] or not campos["ip"]:
@@ -1653,7 +2318,11 @@ class NodesState(rx.State):
         await self._log(logs.EQUIPOS, "EQUIPO_EDITADO",
                         f"{cambio} · {campos['ip']} · {campos['os']}")
 
-    async def _baja_equipo(self, host_id: str) -> None:
+    async def _baja_equipo(self, host_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.hosts, host_id)
         store.delete_host(host_id)
         registry.forget_host(host_id)
@@ -1662,23 +2331,31 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_add_host(self, form_data: dict):
-        await self._alta_equipo(form_data)
+        return await self._alta_equipo(form_data)
 
     @rx.event
     async def submit_edit_host(self, form_data: dict):
-        await self._edicion_equipo(form_data)
+        return await self._edicion_equipo(form_data)
 
     @rx.event
     async def delete_host(self, host_id: str):
-        await self._baja_equipo(host_id)
+        return await self._baja_equipo(host_id)
 
     @rx.event
-    def move_host_up(self, host_id: str):
+    async def move_host_up(self, host_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         store.move_host(host_id, -1)
         self._reload()
 
     @rx.event
-    def move_host_down(self, host_id: str):
+    async def move_host_down(self, host_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         store.move_host(host_id, 1)
         self._reload()
 
@@ -1691,15 +2368,15 @@ class NodesState(rx.State):
     # poder tumbar el backend, así que aquí se le atiende igual.
     @rx.event
     async def submit_add_custom_host(self, form_data: dict):
-        await self._alta_equipo(form_data)
+        return await self._alta_equipo(form_data)
 
     @rx.event
     async def submit_edit_custom_host(self, form_data: dict):
-        await self._edicion_equipo(form_data)
+        return await self._edicion_equipo(form_data)
 
     @rx.event
     async def delete_custom_host(self, host_id: str):
-        await self._baja_equipo(host_id)
+        return await self._baja_equipo(host_id)
 
     # ── Widgets del Resumen (pestaña "Resumen" completamente configurable) ──
     # A qué apunta cada clase de widget y cómo se nombra vive en
@@ -1778,6 +2455,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def submit_add_widget(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         raw = form_data.get("widget", "")
         if ":" not in raw:
             return
@@ -1794,6 +2475,10 @@ class NodesState(rx.State):
 
     @rx.event
     async def delete_widget(self, widget_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         widget = next((w for w in self.widgets if w["id"] == widget_id), None)
         store.delete_widget(widget_id)
         self._reload()
@@ -1801,11 +2486,19 @@ class NodesState(rx.State):
                         f"{widget['kind']} · {widget.get('label') or ''}" if widget else widget_id)
 
     @rx.event
-    def move_widget_left(self, widget_id: str):
+    async def move_widget_left(self, widget_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         store.move_widget(widget_id, -1)
         self._reload()
 
     @rx.event
-    def move_widget_right(self, widget_id: str):
+    async def move_widget_right(self, widget_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         store.move_widget(widget_id, 1)
         self._reload()

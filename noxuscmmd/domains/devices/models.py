@@ -73,6 +73,7 @@ class BinarySensorEntity(Entity):
     floor_icon: str | None = None  # None = icono por defecto según kind
     floor_subtle: bool = False     # marcador pequeño y atenuado en el plano
     floor_color: str | None = None # color en reposo del marcador ("" = por defecto)
+    floor_color_on: str | None = None  # color cuando está activo (abierto/disparado)
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class CameraEntity(Entity):
     floor_icon: str | None = None   # None = icono por defecto (mismo que `icon`)
     floor_subtle: bool = False      # marcador pequeño y atenuado en el plano
     floor_color: str | None = None  # color en reposo del marcador ("" = por defecto)
+    floor_color_on: str | None = None  # color cuando está activo (encendida/abierta)
 
 
 @dataclass(frozen=True)

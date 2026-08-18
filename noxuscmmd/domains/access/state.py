@@ -6,9 +6,12 @@ vean los cambios de las demás.
 import asyncio
 import reflex as rx
 
+from ..auth import permisos
+
 from . import store
 from ..nodes.state import NodesState
 from ..security import audit, logs
+from ...core import sesiones
 
 
 class AccessControlState(rx.State):
@@ -27,6 +30,7 @@ class AccessControlState(rx.State):
 
     @rx.event(background=True)
     async def sync_loop(self):
+        guardia = await sesiones.guardia(self)
         while True:
             try:
                 real = await asyncio.to_thread(store.read_all)
@@ -35,10 +39,12 @@ class AccessControlState(rx.State):
                         self.levels = real["levels"]
                     if real["credentials"] != self.credentials:
                         self.credentials = real["credentials"]
-                await asyncio.sleep(1)
+                if not await sesiones.espera(guardia, 1):
+                    return
             except Exception as e:
                 print(f"⚠️ Error en AccessControlState.sync_loop: {e}")
-                await asyncio.sleep(1)
+                if not await sesiones.espera(guardia, 1):
+                    return
 
     async def _log(self, accion: str, detalle: str = "") -> None:
         await audit.registrar(self, logs.ACCESOS, accion, detalle)
@@ -56,6 +62,10 @@ class AccessControlState(rx.State):
     # ── Niveles de acceso ─────────────────────────────────────────────────
     @rx.event
     async def submit_add_level(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         name = form_data.get("name", "").strip()
         if not name:
             return
@@ -65,6 +75,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def submit_edit_level(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         level_id = form_data.get("entity_id", "")
         name = form_data.get("name", "").strip()
         if not level_id or not name:
@@ -76,6 +90,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def delete_level(self, level_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._level_name(level_id)
         store.delete_level(level_id)
         self._reload()
@@ -83,6 +101,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def add_door_to_level(self, level_id: str, door_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         if not door_id:
             return
         nodes_state = await self.get_state(NodesState)
@@ -95,6 +117,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def remove_door_from_level(self, level_id: str, door_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nivel = self._level_name(level_id)
         puerta = next(
             (d["name"] for l in self.levels if l["id"] == level_id for d in l.get("doors", [])
@@ -108,6 +134,10 @@ class AccessControlState(rx.State):
     # ── Credenciales (tarjetas / tags) ──────────────────────────────────────
     @rx.event
     async def submit_add_credential(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         holder_name = form_data.get("holder_name", "").strip()
         tag_id = form_data.get("tag_id", "").strip()
         level_id = form_data.get("level_id", "")
@@ -120,6 +150,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def submit_edit_credential(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         cred_id = form_data.get("entity_id", "")
         holder_name = form_data.get("holder_name", "").strip()
         tag_id = form_data.get("tag_id", "").strip()
@@ -135,6 +169,10 @@ class AccessControlState(rx.State):
 
     @rx.event
     async def delete_credential(self, cred_id: str):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         nombre = self._nombre(self.credentials, cred_id, "holder_name")
         store.delete_credential(cred_id)
         self._reload()

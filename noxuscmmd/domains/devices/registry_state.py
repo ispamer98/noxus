@@ -6,6 +6,8 @@ campos manda según el tipo, y aquí simplemente se reenvían.
 """
 import reflex as rx
 
+from ..auth import permisos
+
 from . import registry
 from ..security import groups_store
 
@@ -15,7 +17,8 @@ from ..security import groups_store
 # error, simplemente pinta mal — el color se cae al de por defecto y
 # `subtle != ""` se cumple, así que el icono se queda en modo integrado sin que
 # nadie lo haya pedido (ver _marker en ui/views/device_list.py).
-_FLOOR_POS_VACIO = {"top": "", "left": "", "icon": "", "subtle": "", "color": ""}
+_FLOOR_POS_VACIO = {"top": "", "left": "", "icon": "", "subtle": "", "color": "",
+                    "color_on": ""}
 
 
 class RegistryState(rx.State):
@@ -53,6 +56,7 @@ class RegistryState(rx.State):
             "top": e.floor_top or "", "left": e.floor_left or "",
             "icon": e.floor_icon or "", "subtle": "1" if e.floor_subtle else "",
             "color": e.floor_color or "",
+            "color_on": e.floor_color_on or "",
         }
         for eid, e in registry.DEVICES.items() if hasattr(e, "floor_top")
     }
@@ -79,12 +83,17 @@ class RegistryState(rx.State):
                 "top": e.floor_top or "", "left": e.floor_left or "",
                 "icon": e.floor_icon or "", "subtle": "1" if e.floor_subtle else "",
                 "color": e.floor_color or "",
+            "color_on": e.floor_color_on or "",
             }
             for eid, e in registry.DEVICES.items() if hasattr(e, "floor_top")
         }
 
     @rx.event
-    def submit_edit_entity(self, form_data: dict):
+    async def submit_edit_entity(self, form_data: dict):
+        # Editar la instalacion es cosa de administradores: «familia»
+        # puede USAR todo y no cambiar nada (ver auth/permisos.py).
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
         entity_id = form_data.get("entity_id", "").strip()
         if not entity_id:
             return
@@ -121,6 +130,35 @@ class RegistryState(rx.State):
     # devuelve un EventSpec y el cuerpo de la función no se ejecuta nunca.
     # Con el decorador puesto, arrastrar/añadir/quitar un sensor o cámara "de
     # fábrica" en el plano no guardaba nada, en silencio.
+    def cargar_plano(self, plano_id: str) -> None:
+        """Rellena floor_pos con las posiciones que las entidades de fábrica
+        tienen EN ESE PLANO.
+
+        Hace falta porque las de fábrica no viven en ninguna colección reactiva:
+        su posición se pinta desde esta Var, que se construyó una vez al arrancar
+        con la del plano principal. Sin esto, al cambiar de plano los sensores y
+        cámaras de fábrica se quedarían clavados donde estaban en el principal —
+        y encima moverlos ahí sobrescribiría el sitio del otro plano.
+
+        Se lee del store y no de registry.DEVICES porque DEVICES solo guarda una
+        posición (la del principal, que es el espejo)."""
+        from ..nodes import store as nodes_store
+
+        datos = nodes_store.read_all()
+        nuevo = dict(self.floor_pos)
+        for coleccion in ("factory_sensors", "factory_cameras"):
+            for item in datos[coleccion]:
+                sitio = (item.get("posiciones") or {}).get(plano_id) or {}
+                actual = nuevo.get(item["id"], _FLOOR_POS_VACIO)
+                nuevo[item["id"]] = {
+                    **actual,
+                    # Vacío = no está en este plano, y el marcador no se pinta
+                    # (su rx.cond mira `top != ""`).
+                    "top": sitio.get("top", ""),
+                    "left": sitio.get("left", ""),
+                }
+        self.floor_pos = nuevo
+
     def _reflect_factory_floor_pos(self, entity_id: str, top: str, left: str):
         """Solo lo que se ve: Var reactiva + DEVICES. El disco ya lo escribió
         set_floor_positions_bulk (guardado en bloque al pulsar "Listo")."""
@@ -158,6 +196,11 @@ class RegistryState(rx.State):
         registry.set_factory_floor_color(entity_id, color)
         current = self.floor_pos.get(entity_id, _FLOOR_POS_VACIO)
         self.floor_pos[entity_id] = {**current, "color": color}
+
+    def _set_factory_floor_color_on(self, entity_id: str, color: str):
+        registry.set_factory_floor_color_on(entity_id, color)
+        current = self.floor_pos.get(entity_id, _FLOOR_POS_VACIO)
+        self.floor_pos[entity_id] = {**current, "color_on": color}
 
     def _toggle_factory_floor_subtle(self, entity_id: str):
         actual = registry.toggle_factory_floor_subtle(entity_id)

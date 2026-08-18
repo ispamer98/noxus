@@ -70,6 +70,11 @@ TRIGGER_SPECS: tuple[PredicateSpec, ...] = (
     PredicateSpec("system.armed", "Se arma el sistema", "Alarma", "shield-check", None, frase="se arma el sistema"),
     PredicateSpec("system.disarmed", "Se desarma el sistema", "Alarma", "shield-off", None, frase="se desarma el sistema"),
 
+    PredicateSpec("mode.changed", "La casa pasa a un modo", "Modos", "house", None,
+                  ({"name": "mode", "kind": "choice", "label": "Modo",
+                    "options": [], "default": ""},),
+                  frase="la casa pasa a {mode}"),
+
     PredicateSpec("time.at", "A una hora concreta", "Horarios", "clock", None,
                   ({"name": "hhmm", "kind": "time", "label": "Hora", "default": "22:00"},
                    _DIAS,
@@ -115,6 +120,10 @@ CONDITION_SPECS: tuple[PredicateSpec, ...] = (
                   frase="{objetivo}: {value}"),
     PredicateSpec("system.is_armed", "El sistema está", "Alarma", "shield", None, (_SI_NO_ARMADO,),
                   frase="el sistema: {value}"),
+    PredicateSpec("mode.is", "La casa está en modo", "Modos", "house", None,
+                  ({"name": "mode", "kind": "choice", "label": "Modo",
+                    "options": [], "default": ""},),
+                  frase="la casa está en {mode}"),
     PredicateSpec("time.between", "La hora está entre", "Horarios", "clock", None,
                   ({"name": "from", "kind": "time", "label": "Desde", "default": "08:00"},
                    {"name": "to", "kind": "time", "label": "Hasta", "default": "23:00"}),
@@ -281,7 +290,21 @@ def params_de(kind: str) -> tuple[dict, ...]:
     obligue a tocar la interfaz."""
     spec = (TRIGGERS_BY_KIND.get(kind) or CONDITIONS_BY_KIND.get(kind)
             or acciones_mod.BY_TYPE.get(kind))
-    return spec.params if spec else ()
+    if spec is None:
+        return ()
+    if kind in ("mode.changed", "mode.is"):
+        # Las opciones son los modos que hay AHORA, no los que había al
+        # importar: crear un modo tiene que hacerlo elegible en la siguiente
+        # vuelta, por lo mismo que se explica arriba con las luces.
+        from ..modes import store as modes_store
+        opciones = [[m["id"], m["nombre"]] for m in modes_store.todos()]
+        return tuple(
+            {**campo, "options": opciones,
+             "default": (opciones[0][0] if opciones else "")}
+            if campo["name"] == "mode" else campo
+            for campo in spec.params
+        )
+    return spec.params
 
 
 # ── Resumen en lenguaje llano ───────────────────────────────────────────────
@@ -329,7 +352,10 @@ def _componer(spec, target: str, params: dict, labels: dict) -> str:
     if target and not nombre:
         nombre = "⚠️ ya no existe"
     valores = {"objetivo": nombre}
-    for campo in spec.params:
+    # params_de y no spec.params: los que tienen opciones que dependen de
+    # lo que hay en la casa (los modos) solo las traen por ahí, y sin ellas
+    # la frase enseñaría el id en crudo en vez del nombre del modo.
+    for campo in params_de(clave_de(spec)):
         valores[campo["name"]] = _param_texto(
             campo, params.get(campo["name"], campo.get("default")))
     if not spec.frase:

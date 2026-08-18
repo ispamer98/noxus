@@ -1,5 +1,17 @@
 import reflex as rx
+from starlette.applications import Starlette
+
+from .domains.cameras import endpoint as fotograma_endpoint
+from .domains.cameras import fotogramas
+from .domains.devices import hue, voz
+from .domains.notifications import endpoint as aviso_endpoint
 from .domains.automations import engine as automations_engine
+from .domains.infra import backups
+from .domains.infra import metricas
+from .domains.nodes import planos
+from .domains.security import logs_store
+from .domains.security import presencia_motor
+from .domains.cameras import movimiento_motor
 from .domains.security import watcher
 from .ui.pages.index import index_page
 from .ui.pages.upload import upload_page
@@ -74,11 +86,41 @@ STYLE = {
 }
 
 
+# Rutas HTTP propias del backend, fuera del websocket de Reflex. Es lo que
+# admite Reflex 0.8 para añadir rutas propias.
+#
+#   - Los botones de los avisos: cuando alguien pulsa "Visto" en la pantalla de
+#     bloqueo no hay ninguna pestaña abierta con la que hablar.
+#   - Los fotogramas que guarda la alarma: no se sirven como estático porque son
+#     imágenes del interior de la casa y hay que comprobar la sesión (ver
+#     domains/cameras/endpoint.py).
+#
+# Las dos entran por ^/api/.*$, que es la regla que el túnel ya manda al :8000.
+_api = Starlette(routes=[*aviso_endpoint.RUTAS, *fotograma_endpoint.RUTAS,
+                         *planos.RUTAS,
+                         *voz.RUTAS])
+
 app = rx.App(
+    api_transformer=_api,
     theme=rx.theme(appearance="dark", accent_color="blue"),
     style=STYLE,   # <--- Aquí inyectamos la animación
     head_components=[
         rx.el.link(rel="manifest", href="/manifest.json"),
+        # iOS no lee los iconos del manifest: para el acceso directo de la
+        # pantalla de inicio mira SOLO esto. Sin ello, el iPhone se inventa el
+        # icono con una captura de la página.
+        rx.el.link(rel="apple-touch-icon", href="/icono-192.png"),
+        # Color de la barra del navegador y de la de estado en la aplicación
+        # instalada. Es BG_APP (ui/dashboard/theme.py): sin esto el móvil pinta
+        # una franja blanca encima del panel, que es oscuro entero.
+        rx.el.meta(name="theme-color", content="#05070a"),
+        rx.el.meta(name="mobile-web-app-capable", content="yes"),
+        rx.el.meta(name="apple-mobile-web-app-capable", content="yes"),
+        rx.el.meta(name="apple-mobile-web-app-status-bar-style", content="black"),
+        # A propósito NO se pone apple-mobile-web-app-title: iOS usaría ese
+        # texto fijo y dejaría de hacer caso al short_name del manifest, que es
+        # justo lo que se puede cambiar desde Ajustes (ver
+        # domains/notifications/branding.py).
     ],
     admin_dash=False,
 )
@@ -88,8 +130,51 @@ app = rx.App(
 # de que alguien entre en la web — hasta ahora el vigilante de la alarma se
 # arrancaba desde un on_load, así que tras reiniciar el proceso la casa podía
 # quedarse armada sin nadie mirando.
+
+# El histórico de eventos, antes de nada: la copia de seguridad de arranque va
+# unas líneas más abajo y no puede copiar un fichero que todavía no existe.
+logs_store.preparar()
+
+# Y de paso se tira lo caducado. Al arrancar y no con un temporizador porque no
+# hay ninguna prisa: los fotogramas se guardan un año y el registro no se poda
+# (LOGS_MAX_DIAS=0), así que con que esto pase de vez en cuando sobra, y el
+# servicio se reinicia a menudo. Si algún día el panel se queda meses sin
+# reiniciar, esto es lo que habrá que colgar de la tarea diaria de las copias.
+try:
+    _fotos = fotogramas.purgar()
+    _eventos = logs_store.purgar()
+    _muestras = logs_store.purgar_metricas(metricas.MAX_DIAS)
+    if _fotos or _eventos or _muestras:
+        print(f"🧹 Purga: {_fotos} fotograma(s), {_eventos} evento(s) y "
+              f"{_muestras} muestra(s) caducados")
+except Exception as e:
+    print(f"⚠️ No se pudo purgar lo caducado: {e}")
+
 app.register_lifespan_task(watcher.run_forever)
 app.register_lifespan_task(automations_engine.run_forever)
+# Copia de seguridad de los JSON de la casa: una al arrancar (si hoy no hay) y
+# una diaria de madrugada. Va aquí por lo mismo que las dos de arriba — una
+# copia que dependiera de que alguien tenga el panel abierto a las 4:00 no
+# serviría de nada.
+app.register_lifespan_task(backups.run_forever)
+# Muestreo de temperatura y equipos en línea para el histórico. Aquí y no en una
+# sesión por el mismo motivo que las tres de arriba: un histórico que solo se
+# rellena cuando alguien tiene la web abierta tendría un agujero cada noche.
+app.register_lifespan_task(metricas.run_forever)
+# El puente Hue falso con el que los Echo descubren los comandos de voz sin
+# skill, sin cuenta de Amazon y sin nube (ver domains/devices/hue.py). Si no
+# puede abrir el puerto 80 lo dice en el log y se apaga: es un extra, y que
+# Alexa no funcione no puede impedir que la casa arranque con su alarma.
+app.register_lifespan_task(hue.run_forever)
+# La simulación de presencia. De proceso y no por sesión porque tiene que
+# funcionar con todos los navegadores cerrados: es justo entonces cuando hace
+# falta. Solo mueve algo si está encendida en Ajustes Y el sistema está armado
+# (ver domains/security/presencia_motor.py).
+app.register_lifespan_task(presencia_motor.run_forever)
+# La detección de movimiento por comparación de fotogramas. También de proceso:
+# vigilar solo mientras alguien tiene el panel abierto no vigila nada. Arranca
+# apagada y solo mira las cámaras que se marquen (ver cameras/movimiento_motor).
+app.register_lifespan_task(movimiento_motor.run_forever)
 
 # IMPORTANTE: on_load se gestiona vía on_mount en index_page (uno por domain
 # state: SecurityState, InfraState) para evitar que Reflex arranque los
