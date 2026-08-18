@@ -9,7 +9,7 @@ líneas, se acaba olvidando en la mitad, y un registro con agujeros es peor
 que no tenerlo — te hace creer que algo no pasó.
 
 Quién es "el dispositivo" sale de la suscripción push de esa pestaña (el
-nombre que se puso al registrarla: "iPhone Ruben", "Mac Gaby"...). Una pestaña
+nombre que se puso al registrarla: "iPhone Ana", "Mac Bea"...). Una pestaña
 sin notificaciones registradas no tiene nombre, y entonces la acción queda como
 "desconocido" — no como "sistema", que se reserva para lo que dispara el propio
 panel sin que nadie pulse nada (un sensor por MQTT, una ronda de ping).

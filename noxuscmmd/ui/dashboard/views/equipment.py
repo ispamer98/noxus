@@ -298,7 +298,7 @@ def _host_form_fields(host=None) -> list[rx.Component]:
         ),
         field(
             "Usuario de escritorio remoto (RDP)", styled_input(
-                name="rdp_user", placeholder="Gaby",
+                name="rdp_user", placeholder="usuario",
                 **({"default_value": host["rdp_user"]} if editando else {}),
             ),
             hint="Vacío = este equipo no ofrece escritorio remoto. No tiene por qué ser "

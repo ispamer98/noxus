@@ -23,7 +23,7 @@ los grupos de armado y los accesos de una casa real.
 
 El caso concreto que lo volvió urgente: `PushState.current_user` es la identidad
 del dispositivo, la que queda escrita en cada línea del registro. Con los setters
-abiertos, `set_current_user("PC Ruben")` era invocable desde cualquier navegador
+abiertos, `set_current_user("PC Salon")` era invocable desde cualquier navegador
 — es decir, **cualquiera podía firmar sus acciones con el nombre de otro**.
 
 ## Decisión

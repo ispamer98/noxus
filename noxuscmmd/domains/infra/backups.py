@@ -32,6 +32,7 @@ control_accesos.json con nombres y tarjetas RFID reales.
 import asyncio
 import json
 import os
+import re
 import shutil
 import time
 from datetime import datetime, timedelta
@@ -268,6 +269,10 @@ def hay_copia_de_hoy() -> bool:
     return any(c["id"].startswith(hoy) for c in listar())
 
 
+# Cómo se llama una copia: la fecha y la hora que le pone `crear`, y nada más.
+_ID_COPIA = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}(_[0-9]{1,6})?$")
+
+
 # ── Restaurar ───────────────────────────────────────────────────────────────
 def restaurar(copia_id: str) -> dict:
     """Devuelve la casa al estado de esa copia. Ver la decisión 2 de la
@@ -276,6 +281,12 @@ def restaurar(copia_id: str) -> dict:
     Ojo con lo que esto significa de verdad: si la copia se hizo con el sistema
     armado, al terminar el sistema queda armado. El sync_loop de SecurityState
     lo recoge del disco en medio segundo, sin reiniciar el servicio."""
+    # El id viene del cliente, así que se valida ANTES de componer la ruta:
+    # mismo criterio que planos.py y fotogramas.py. El destino de cada fichero
+    # está en lista blanca, así que el daño sería limitado, pero un id con ".."
+    # no tiene por qué llegar a construir un Path.
+    if not _ID_COPIA.match(copia_id or ""):
+        raise ValueError(f"Identificador de copia no válido: {copia_id!r}")
     origen = CARPETA / copia_id
     if not (origen / MANIFIESTO).exists():
         raise BackupError("Esa copia no existe o está incompleta.")

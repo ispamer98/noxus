@@ -184,7 +184,7 @@ def hay_tailscale() -> bool:
 def _palabras(nombre: str) -> frozenset[str]:
     """Las palabras de un nombre, en minúsculas y sin separadores.
 
-    Sirve para que «RUBEN-PC» (como se llama en Tailscale) y «PC Ruben» (como
+    Sirve para que «SALON-PC» (como se llama en Tailscale) y «PC Salon» (como
     se llama en el panel) se reconozcan como el mismo equipo. Comparar las
     cadenas enteras no valdría: nadie pone el mismo nombre en los dos sitios.
     """

@@ -354,7 +354,7 @@ def _add_credential_dialog() -> rx.Component:
             accent=theme.ACCENT,
             form=rx.form.root(
                 rx.vstack(
-                    field("Nombre del titular", styled_input(name="holder_name", placeholder="Ruben")),
+                    field("Nombre del titular", styled_input(name="holder_name", placeholder="Nombre")),
                     field("ID de tarjeta/tag", styled_input(name="tag_id", placeholder="04A3F2B1")),
                     field("Nivel de acceso", _level_select()),
                     dialog_footer(confirm_label="Añadir"),

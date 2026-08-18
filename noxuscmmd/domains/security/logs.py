@@ -14,7 +14,7 @@ importarlas, deduciéndola de la acción (ver _categoria_heredada), así que el
 histórico que ya había sigue apareciendo y encajado en su sitio.
 
 Quién hizo cada cosa sale de la identidad push de la pestaña (el nombre del
-dispositivo suscrito: "iPhone Ruben", "Mac Gaby"...). Lo resuelve
+dispositivo suscrito: "iPhone Ana", "Mac Bea"...). Lo resuelve
 security/audit.py, que es por dónde deberían pasar los States: aquí no se
 puede, porque para saberlo hace falta el State de la sesión.
 """

@@ -38,18 +38,31 @@ NOMBRES_DE_ROL = {
     BLOQUEADO: "Bloqueado",
 }
 
-# Los dos aparatos que mandan, por su nombre de suscripción push. Se comparan
-# normalizados (sin tildes ni mayúsculas) porque en suscriptores.json conviven
-# "PC Ruben" y "PC Rubén": son el mismo equipo dado de alta dos veces, y con
-# una comparación literal una de las dos grafías se quedaría sin ser
-# administrador sin que se entendiera por qué.
-_ADMINS_POR_NOMBRE = ("pc ruben", "iphone ruben")
-
-
 def normalizar(nombre: str) -> str:
     sin_tildes = unicodedata.normalize("NFKD", nombre or "")
     sin_tildes = "".join(c for c in sin_tildes if not unicodedata.combining(c))
     return sin_tildes.strip().lower()
+
+
+# Qué aparatos arrancan siendo administradores, por su nombre de suscripción
+# push. Se comparan normalizados (sin tildes ni mayúsculas) porque en
+# suscriptores.json pueden convivir "PC Salon" y "PC Salón": el mismo equipo
+# dado de alta dos veces, y con una comparación literal una de las dos grafías
+# se quedaría sin ser administrador sin que se entendiera por qué.
+#
+# Sale del entorno y no del código porque este repositorio es PÚBLICO: los
+# nombres de los aparatos de una casa dicen quién vive en ella. Se pone en .env
+# como ADMINS_INICIALES="pc fulano,iphone fulano".
+#
+# Vacío es seguro: esto solo se usa para SEMBRAR dispositivos.json la primera
+# vez (ver rol_de_partida). Con el fichero ya creado —que es el caso de
+# cualquier instalación en marcha— manda lo que diga el fichero y esto no se
+# vuelve a mirar.
+_ADMINS_POR_NOMBRE = tuple(
+    normalizar(nombre)
+    for nombre in os.getenv("ADMINS_INICIALES", "").split(",")
+    if nombre.strip()
+)
 
 
 def rol_de_partida(nombre: str) -> str:
