@@ -55,6 +55,14 @@ def _clave() -> rx.Component:
             "invitado enciende luces y no abre la puerta.",
             size="1", color=theme.MUTED,
         ),
+        # Las claves anteriores eran, literalmente, una sesión del panel: quien
+        # la viera entraba como este dispositivo. Ya no, pero las viejas siguen
+        # ahí fuera y hay que rehacerlas a mano — nadie se entera si no se dice.
+        rx.text(
+            "Si generaste una clave antes de hoy, vuelve a generarla: las de "
+            "antes servían además para entrar al panel, y esta ya no.",
+            size="1", color=theme.WARNING,
+        ),
         rx.cond(
             VozState.hay_clave,
             rx.vstack(

@@ -49,7 +49,9 @@ def _quien(request, cuerpo: dict) -> tuple[str, str]:
              or cuerpo.get("clave")
              or request.query_params.get("clave")
              or "")
-    id_dispositivo = sessions.verificar(clave.strip())
+    # verificar_voz y no verificar: una clave de voz es un testigo aparte,
+    # no una sesión (ver auth/sessions.emitir_voz).
+    id_dispositivo = sessions.verificar_voz(clave.strip())
     if not id_dispositivo:
         return "", ""
     ficha = auth_store.dispositivo(id_dispositivo)

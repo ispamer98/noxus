@@ -80,6 +80,57 @@ def emitir(id_dispositivo: str, duracion: int = DURACION) -> str:
     return f"{id_dispositivo}.{caduca}.{_firma(id_dispositivo, caduca)}"
 
 
+# ── Claves de voz ────────────────────────────────────────────────────────────
+# Una clave de voz NO puede ser una sesión. Lo era: se emitía con emitir() y
+# duraba un año, así que quien la viera —en un log de Cloudflare, en el
+# historial de Atajos del móvil, en la barra de direcciones— la pegaba como
+# cookie noxus_sesion y entraba al panel como ese dispositivo, con sus permisos
+# y sin caducar en meses.
+#
+# Ahora lleva su propio prefijo Y su propia firma (el literal va DENTRO del
+# mensaje firmado, así que no se puede convertir una en otra quitando el
+# prefijo). Como verificar() exige exactamente tres partes, una clave de voz
+# rebota ahí; y verificar_voz() rechaza una cookie de sesión por lo mismo.
+#
+# Las cookies ya emitidas siguen valiendo: no se toca su formato, así que nadie
+# se queda fuera del panel por esto. Las claves de voz que se generaron antes,
+# en cambio, hay que rehacerlas — y conviene, porque son justamente las que
+# valen como cookie.
+PREFIJO_VOZ = "voz"
+
+
+def _firma_voz(id_dispositivo: str, caduca: int) -> str:
+    mensaje = f"{PREFIJO_VOZ}.{id_dispositivo}.{caduca}".encode()
+    return hmac.new(_secreto(), mensaje, sha256).hexdigest()
+
+
+def emitir_voz(id_dispositivo: str, duracion: int) -> str:
+    caduca = int(time.time()) + duracion
+    return (f"{PREFIJO_VOZ}.{id_dispositivo}.{caduca}."
+            f"{_firma_voz(id_dispositivo, caduca)}")
+
+
+def verificar_voz(clave: str) -> str | None:
+    """El id del dispositivo de una clave de voz, o None.
+
+    Solo acepta el formato de voz: una cookie de sesión pegada aquí no vale."""
+    if not clave:
+        return None
+    partes = clave.split(".")
+    if len(partes) != 4 or partes[0] != PREFIJO_VOZ:
+        return None
+    _, id_dispositivo, caduca_txt, firma = partes
+    try:
+        caduca = int(caduca_txt)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(firma, _firma_voz(id_dispositivo, caduca)):
+        return None
+    if caduca < int(time.time()):
+        return None
+    return id_dispositivo
+
+
 def verificar(testigo: str) -> str | None:
     """Devuelve el id del dispositivo, o None si la cookie no vale.
 

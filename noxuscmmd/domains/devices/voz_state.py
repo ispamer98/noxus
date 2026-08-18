@@ -131,7 +131,7 @@ class VozState(rx.State):
         if not auth._id:
             return rx.toast.error("Este dispositivo no está identificado.",
                                   position="top-center")
-        self.clave = sessions.emitir(auth._id, duracion=DIAS_CLAVE * 86400)
+        self.clave = sessions.emitir_voz(auth._id, duracion=DIAS_CLAVE * 86400)
         await audit.registrar(self, logs.ACCESOS, "CLAVE_VOZ_CREADA",
                               f"válida {DIAS_CLAVE} días")
 

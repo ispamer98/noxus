@@ -28,6 +28,7 @@ PRUEBAS = (
     "tests.test_presencia",    # patrón aprendido y plan del día
     "tests.test_accesorios",     # luces y aparatos que se encienden por mando
     "tests.test_movimiento",   # comparación de fotogramas de cámara
+    "tests.test_claves",       # que una clave de voz no sea una sesión
 )
 
 
