@@ -21,6 +21,7 @@ from ..devices import mqtt_bus, registry, ir_bus
 from ..devices.registry_state import RegistryState
 from ..security import audit, groups_store, logs
 from ..infra.state import InfraState
+from ...core import bus
 from ...core import sesiones
 
 _STARTED = False
@@ -981,9 +982,15 @@ class NodesState(rx.State):
             bus.subscribe_dynamic(topic, entity_id)
 
     # ── Sync loop (por sesión): refleja nodos_dinamicos.json en la UI ──────
+    # Espera el aviso de quien escribe (core/bus.py) en vez de releer el JSON
+    # cada medio segundo: _read() no es barato —cerrojo, json.loads y
+    # _apply_defaults entero, planos incluidos— y esto corría dos veces por
+    # segundo POR SESIÓN. El tope de 3 s cubre que el fichero lo toque algo de
+    # fuera de este proceso.
     @rx.event(background=True)
     async def sync_loop(self):
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.SENSORES, bus.EQUIPOS)
         while True:
             try:
                 real_sensors = await asyncio.to_thread(store.get_all_sensor_states)
@@ -993,7 +1000,7 @@ class NodesState(rx.State):
                         self.sensor_state = real_sensors
                     if real_hosts != self.host_online:
                         self.host_online = real_hosts
-                if not await sesiones.espera(guardia, 0.5):
+                if not await aviso.espera(guardia, 3.0):
                     return
             except Exception as e:
                 print(f"⚠️ Error en NodesState.sync_loop: {e}")

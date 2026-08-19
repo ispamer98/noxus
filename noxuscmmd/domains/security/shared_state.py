@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from ..nodes import store as nodes_store
+from ...core import bus
 
 ESTADO_FILE = Path(os.getenv("ESTADO_FILE", "estado_seguridad.json"))
 _lock = threading.Lock()
@@ -116,6 +117,8 @@ def set_sistema_armado(value: bool):
     data = _read()
     data["sistema_armado"] = value
     _write(data)
+    # Después de escribir, nunca antes: quien despierte relee el fichero.
+    bus.publicar(bus.ARMADO)
 
 
 def toggle_sistema_armado() -> bool:
@@ -123,6 +126,7 @@ def toggle_sistema_armado() -> bool:
     nuevo = not data.get("sistema_armado", False)
     data["sistema_armado"] = nuevo
     _write(data)
+    bus.publicar(bus.ARMADO)
     return nuevo
 
 

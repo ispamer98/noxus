@@ -24,6 +24,7 @@ from tests.comun import CasaDePruebas  # noqa: E402
 PRUEBAS = (
     "tests.test_nucleo",       # escritura atómica, permisos y retardos
     "tests.test_sesiones",     # que los bucles de fondo mueran con su sesión
+    "tests.test_bus",         # que despierten por aviso y no por sondeo
     "tests.test_instalador",   # descubrimiento MQTT y la salvaguarda del topic
     "tests.test_presencia",    # patrón aprendido y plan del día
     "tests.test_accesorios",     # luces y aparatos que se encienden por mando

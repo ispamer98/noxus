@@ -24,6 +24,8 @@ import unicodedata
 import uuid
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("NODOS_FILE", "nodos_dinamicos.json"))
 
 _COLLECTIONS = (
@@ -981,7 +983,7 @@ def host_fields(name: str, ip: str, user: str = "", sistema: str = "linux",
         "ip": ip.strip(),
         "user": user.strip(),
         # Cuenta con la que entra el escritorio remoto. Es OTRA cosa que el
-        # usuario SSH: en el PC de casa el SSH va con "ruben" y el RDP puede
+        # usuario SSH: en un PC el SSH puede ir con una cuenta y el RDP
         # ser la sesión de otra persona.
         "rdp_user": rdp_user.strip(),
         # Desde QUÉ equipo se abre la sesión remota. Vacío = desde el navegador
@@ -1088,6 +1090,9 @@ def set_sensor_state(entity_id: str, value: bool) -> None:
         data["sensor_states"][entity_id] = value
 
     _mutate(_apply)
+    # El aviso va DESPUÉS de escribir: quien despierte va a releer el fichero
+    # y tiene que encontrarse ya el valor nuevo (ver core/bus.py).
+    bus.publicar(bus.SENSORES)
 
 
 def get_all_sensor_states() -> dict:
@@ -1107,6 +1112,7 @@ def set_host_online_bulk(updates: dict) -> None:
         data["host_online"] = dict(updates)
 
     _mutate(_apply)
+    bus.publicar(bus.EQUIPOS)
 
 
 def get_all_host_online() -> dict:

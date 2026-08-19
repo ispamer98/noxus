@@ -2,10 +2,9 @@
 fondo se apaguen con ella.
 
 Existe por un fallo concreto. Las pantallas de este panel se refrescan con
-bucles `@rx.event(background=True)` que giran en un `while True` (el sondeo de
-medio segundo de la alarma, la vigilancia de permisos cada tres, los registros,
-las alertas...). Hay UNO POR SESIÓN, y nadie los para cuando el navegador se
-cierra: Reflex se entera al ir a mandarles la actualización —avisa con
+bucles `@rx.event(background=True)` que giran en un `while True` (la alarma, la
+vigilancia de permisos cada tres segundos, los registros, las alertas...). Hay
+UNO POR SESIÓN, y nadie los para cuando el navegador se cierra: Reflex se entera al ir a mandarles la actualización —avisa con
 «Attempting to send delta to disconnected client»— pero el bucle sigue girando
 para siempre.
 
@@ -26,8 +25,12 @@ Uso, sustituyendo el `sleep` del bucle:
         guardia = await sesiones.guardia(self)
         while True:
             ...
-            if not await guardia.espera(0.5):
+            if not await guardia.espera(3):
                 return          # el navegador se fue: el bucle se va con él
+
+Los bucles que reflejan el estado en vivo de la casa ya no esperan un tiempo
+fijo: esperan a que quien escribe avise (ver core/bus.py), y el guardia se
+consulta igual — `bus.Aviso.espera` devuelve lo mismo que esta.
 """
 import asyncio
 

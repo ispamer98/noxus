@@ -27,6 +27,7 @@ from ..notifications.state import PushState
 from . import shared_state
 from . import abiertos
 from . import arming
+from ...core import bus
 from ...core import sesiones
 
 _MQTT_STARTED = False
@@ -140,9 +141,14 @@ class SecurityState(rx.State):
     #
     # La alerta push la decide GroupsState.watch_loop mirando de qué grupo(s)
     # armado(s) es miembro el sensor, igual para todos.
+    #
+    # Ya no relee el disco cada medio segundo: espera a que alguien avise de
+    # que el armado o un sensor cambiaron (core/bus.py). El tope de 3 s es el
+    # respaldo por si el fichero lo escribiera algo de fuera de este proceso.
     @rx.event(background=True)
     async def sync_loop(self):
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.ARMADO, bus.SENSORES)
         while True:
             try:
                 real_armado = await asyncio.to_thread(shared_state.get_sistema_armado)
@@ -157,7 +163,7 @@ class SecurityState(rx.State):
                         self.sensor_abierto = real_abierto
                         self.refresh_logs()
 
-                if not await sesiones.espera(guardia, 0.5):
+                if not await aviso.espera(guardia, 3.0):
                     return
             except Exception as e:
                 print(f"⚠️ Error en bucle de sincronización: {e}")

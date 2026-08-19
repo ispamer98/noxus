@@ -224,7 +224,7 @@ def emparejar(nombre: str, ip: str = "") -> dict | None:
         return candidatos[0]
 
     # Sin coincidencia exacta: uno que contenga a todas las palabras del otro
-    # («ruben pc» dentro de «ruben pc portatil»). También tiene que ser único.
+    # («pc casa» dentro de «pc casa portatil»). También tiene que ser único.
     candidatos = [
         n for n in nodos
         if mias and (mias <= _palabras(n["nombre"]) or _palabras(n["nombre"]) <= mias)
