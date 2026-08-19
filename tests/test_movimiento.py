@@ -73,7 +73,7 @@ def ejecutar() -> list[Caso]:
 
     c.cierto("comparar una imagen consigo misma da casi cero",
              mov.diferencia(quieta_1, quieta_1) == 0.0)
-    return [c, _ajustes(), _ritmo()]
+    return [c, _ajustes(), _ritmo(), _persona_o_luz()]
 
 
 def _ajustes() -> Caso:
@@ -158,4 +158,93 @@ def _ritmo() -> Caso:
     # La caducidad se mide contra el periodo: si se cambia uno, el otro le sigue.
     c.cierto("la foto anterior caduca después de varias vueltas",
              motor.CADUCIDAD_ANTERIOR > motor.PERIODO)
+    return c
+
+
+def _persona_o_luz() -> Caso:
+    """Lo que de verdad importa: una persona sí, la luz no.
+
+    Estas son las cuatro formas en que esto avisaba sin motivo, y por las que se
+    reescribió el comparador:
+
+      · se enciende una lámpara            -> sube el brillo de todo
+      · la cámara salta a infrarrojos      -> cambia el CONTRASTE de todo, no el
+                                              brillo, así que igualar la media
+                                              no lo cancelaba
+      · grano del sensor con poca luz      -> muchas celdas sueltas repartidas
+      · la escena entera cambia            -> nadie ocupa la imagen entera
+
+    Y la que NO puede fallar en el otro sentido: alguien que aparece.
+    """
+    from PIL import Image
+    import io as _io
+
+    c = Caso("Movimiento: una persona sí, un cambio de luz no")
+
+    quieta = _escena(semilla=11)
+
+    def _ir(datos: bytes) -> bytes:
+        """La misma escena como la ve la cámara en modo noche: se aplasta el
+        contraste y se levanta el negro, dejando la media parecida."""
+        im = Image.open(_io.BytesIO(datos)).convert("L")
+        im = im.point(lambda v: int(v * 0.45 + 55))
+        buf = _io.BytesIO()
+        im.save(buf, format="JPEG", quality=75)
+        return buf.getvalue()
+
+    def _puntos_sueltos(datos: bytes, cuantos: int, semilla: int) -> bytes:
+        """La misma escena salpicada de puntitos separados unos de otros.
+
+        Suman bastante imagen cambiada, pero ninguno tiene cuerpo: es la forma
+        del ruido nocturno y de la compresión, y lo que NO puede disparar. Van
+        bien separados a propósito, que es lo que los distingue de una persona.
+        """
+        azar = random.Random(semilla)
+        im = Image.open(_io.BytesIO(datos)).convert("L")
+        pintor = ImageDraw.Draw(im)
+        for _ in range(cuantos):
+            x = azar.randrange(10, 300)
+            y = azar.randrange(10, 220)
+            pintor.rectangle([x, y, x + 7, y + 7], fill=azar.choice((5, 250)))
+        buf = _io.BytesIO()
+        im.save(buf, format="JPEG", quality=75)
+        return buf.getvalue()
+
+    # 1) El infrarrojo. Antes de igualar la ganancia, esto disparaba siempre.
+    noche = mov.analizar(quieta, _ir(quieta), umbral=0.8)
+    c.revisar("el salto a infrarrojos NO dispara", noche.hay, False)
+
+    # 2) La lámpara.
+    luz = mov.analizar(quieta, _escena(brillo=140, semilla=12), umbral=0.8)
+    c.revisar("encender una luz NO dispara", luz.hay, False)
+
+    # 3) Puntos sueltos repartidos: cambian celdas de sobra para superar el
+    #    umbral SUMADAS, pero ninguna zona tiene cuerpo. Antes esto disparaba,
+    #    porque lo que se miraba era el total.
+    grano = mov.analizar(quieta, _puntos_sueltos(quieta, 30, 13), umbral=0.8)
+    c.revisar("el ruido repartido NO dispara", grano.hay, False)
+    c.cierto("y eso que sumado pasaría del umbral", grano.total >= 0.8)
+    c.cierto("lo que lo salva es que ninguna mancha tiene cuerpo",
+             grano.mancha < grano.total)
+    c.revisar("con su motivo", grano.motivo, "solo ruido")
+
+    # 4) La escena entera cambiada: nadie ocupa el cuadro completo.
+    negro = _escena(brillo=10, ruido=2, semilla=14)
+    entera = mov.analizar(quieta, negro, umbral=0.8)
+    c.revisar("un cambio de escena entera NO dispara", entera.hay, False)
+
+    # 5) Y lo que SÍ tiene que saltar: alguien de pie en el salón.
+    persona = mov.analizar(quieta, _escena(figuras=[(150, 90, 205, 225)],
+                                           semilla=15), umbral=0.8)
+    c.revisar("una persona SÍ dispara", persona.hay, True)
+    c.cierto("y se ve como una mancha con cuerpo", persona.mancha >= 0.8)
+    c.revisar("con el motivo puesto", persona.motivo, "algo se ha movido")
+
+    # 6) Alguien pequeño al fondo, que es el caso justo: tiene que seguir
+    #    saltando con la sensibilidad alta.
+    lejos = mov.analizar(quieta, _escena(figuras=[(250, 120, 275, 175)],
+                                         semilla=16), umbral=0.8)
+    c.revisar("alguien más lejos también dispara", lejos.hay, True)
+    c.cierto("y deja una mancha menor que el de cerca",
+             lejos.mancha < persona.mancha)
     return c
