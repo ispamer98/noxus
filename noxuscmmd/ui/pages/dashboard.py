@@ -36,7 +36,7 @@ from ..dashboard.components.paleta import paleta_comandos
 from ..dashboard.components.pulsacion_larga import pulsacion_larga
 from ..dashboard.topbar import topbar
 from ..dashboard.state import DashboardState
-from ..dashboard.windows import floating_windows_layer
+from ..dashboard.windows import floating_windows_layer, equipo_windows_layer
 from ..dashboard.views.overview import overview_view
 from ..dashboard.views.settings_hub import settings_hub_view
 from ..dashboard.views.cctv import cctv_view
@@ -394,6 +394,7 @@ def _panel() -> rx.Component:
         ),
         floating_windows_layer(),
         ir_remote_windows_layer(),
+        equipo_windows_layer(),
         paleta_comandos(),
         pulsacion_larga(),
     )

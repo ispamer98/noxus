@@ -448,6 +448,36 @@ def _dynamic_ir_remote_marker(r: dict) -> rx.Component:
     )
 
 
+def _host_marker(entity_id, name, icon, online, top, left, on_click,
+                 subtle=None, color=None, color_on=None) -> rx.Component:
+    """Equipo: al pulsarlo se abre su botonera (encender, apagar, y lo que
+    tenga dado de alta). Verde cuando está en línea, apagado en reposo.
+
+    CUADRADO, por el mismo motivo que el mando IR: en el plano, redondo es
+    «interruptor, un toque y cambia» y cuadrado es «esto abre una botonera».
+    Un ordenador no se apaga de un roce sin querer — de ahí que abra un panel
+    en vez de conmutar al tocarlo."""
+    return _marker(
+        entity_id, icon,
+        rx.cond(online, _active_color(color_on, _GREEN), _resting_color(color)),
+        rx.cond(online, name + ": en línea — pulsa para sus acciones",
+                name + ": sin respuesta — pulsa para sus acciones"),
+        top, left, on_click=on_click, subtle=_quiet(subtle, online), forma="7px",
+    )
+
+
+def _dynamic_host_marker(h: dict) -> rx.Component:
+    """Equipo colocado en el plano (ver NodesState.hosts_on_floor)."""
+    icon = rx.cond(h["floor_icon"], h["floor_icon"].to(str), h["icon"].to(str))
+    return _host_marker(
+        h["id"].to(str), h["name"].to(str), icon, h["online"],
+        h["floor_top"].to(str), h["floor_left"].to(str),
+        DashboardState.open_window_compact(h["id"]),
+        subtle=h["floor_subtle"], color=h["floor_color"].to(str),
+        color_on=h["floor_color_on"].to(str),
+    )
+
+
 def _dynamic_light_marker(l: dict) -> rx.Component:
     """Luz del sistema — al pulsarla se enciende/apaga, igual que desde la
     pestaña Luces."""
@@ -548,6 +578,14 @@ def floor_plan_content():
         rx.foreach(NodesState.doors_on_floor, _dynamic_door_marker),
         rx.foreach(NodesState.lights_on_floor, _dynamic_light_marker),
         rx.foreach(NodesState.ir_remotes_on_floor, _dynamic_ir_remote_marker),
+        # Los equipos solo se le pintan a quien puede accionarlos: enseñar el
+        # icono de un ordenador a un invitado, que al pulsarlo solo recibiría
+        # un «no puedes», es prometer algo que no va a pasar. Mismo criterio
+        # que las cámaras aquí arriba.
+        rx.cond(
+            AuthState.puede_equipos,
+            rx.foreach(NodesState.hosts_on_floor, _dynamic_host_marker),
+        ),
         # nx-plan-editing solo está presente con el modo edición activo: es lo
         # que habilita el arrastre (ver _PLAN_DRAG_SCRIPT).
         class_name=rx.cond(

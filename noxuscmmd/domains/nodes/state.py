@@ -92,6 +92,11 @@ def _build_floor_catalog(data: dict, plano_actual: str = "",
         else:
             add("lights", l, "Accesorio",
                 store.ICONO_ASPECTO.get(l.get("aspecto"), "toggle-right"))
+    for h in data["hosts"]:
+        # El icono por defecto es el del propio equipo (un portátil, una torre,
+        # una Raspberry), no uno fijo de familia: igual que los mandos IR, cada
+        # equipo ya trae el suyo elegido en su ficha.
+        add("hosts", h, "Equipo", h.get("icon") or "server")
     for r in data["ir_remotes"]:
         # El icono por defecto es el propio del mando (TV, ventilador...), no
         # uno fijo por familia como puertas/luces — cada mando IR es de un
@@ -2252,6 +2257,31 @@ class NodesState(rx.State):
         return [
             {**l, "is_on": self.sensor_state.get(l["id"], False)}
             for l in self._en_plano(self.lights)
+        ]
+
+    @rx.var
+    def hosts_on_floor(self) -> list[dict]:
+        """Los equipos colocados en el plano, cada uno con su "online" ya
+        resuelto — mismo criterio que lights_on_floor: el marcador se pinta
+        encendido o apagado sin cruzar nada en el navegador.
+
+        Quién lo actualiza: el bucle de ping (infra/state.py) escribe
+        host_online, y desde ahí llega aquí por el mismo camino que el resto
+        del estado en vivo (core/bus.py)."""
+        # Los botones propios de cada equipo van AQUÍ DENTRO, ya resueltos y
+        # con lista vacía si no tiene ninguno. Se podría indexar en la vista un
+        # diccionario {equipo: botones}, pero entonces un equipo sin botones no
+        # tendría clave, y en el navegador eso no es una lista vacía: es
+        # `undefined`, y recorrerlo revienta el plano ENTERO. Resolviéndolo
+        # aquí, la vista siempre recibe una lista.
+        botones: dict[str, list[dict]] = {}
+        for b in store.read_all().get("host_buttons", []):
+            botones.setdefault(b["host_id"], []).append(b)
+        return [
+            {**h,
+             "online": self.host_online.get(h["id"], False),
+             "botones": botones.get(h["id"], [])}
+            for h in self._en_plano(self.hosts)
         ]
 
     # ── Equipos (todos, sin distinción de origen) ────────────────────────

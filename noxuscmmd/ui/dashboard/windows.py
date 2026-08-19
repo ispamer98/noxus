@@ -8,6 +8,8 @@ import reflex as rx
 
 from ..views.camera_view import video_embed_safe, ptz_control_buttons, open_in_browser_button
 from ...domains.cameras.state import CameraState
+from ...domains.auth.state import AuthState
+from ...domains.nodes.host_actions_state import HostActionsState
 from ...domains.nodes.state import NodesState
 from . import theme
 from .components.floating_window import floating_window
@@ -181,4 +183,96 @@ def floating_windows_layer() -> rx.Component:
         _cam_fija_window(),
         _cam_ptz_window(),
         rx.foreach(NodesState.cameras, _dynamic_camera_window),
+    )
+
+
+# ── Equipos en el plano ──────────────────────────────────────────────────────
+# Un ordenador colocado en el plano abre SU BOTONERA al pulsarlo, en vez de
+# encenderse o apagarse de un toque como hace una luz. El motivo es que apagar
+# un equipo por un roce en la pantalla del móvil es un destrozo que no se
+# deshace: lo que estuviera abierto sin guardar, se pierde. Un panel con sus
+# botones cuesta un toque más y no se dispara sin querer.
+#
+# Lo que sale aquí es lo mismo que ya vive en la pestaña Equipos, no una copia:
+# los eventos son los de HostActionsState, con sus permisos y su registro. Aquí
+# solo se presentan al lado del sitio de la casa donde está el aparato.
+def _accion(icono: str, texto: str, al_pulsar, color: str = "gray") -> rx.Component:
+    return rx.button(
+        rx.icon(icono, size=14), texto,
+        on_click=al_pulsar, size="2", variant="soft", color_scheme=color,
+        width="100%", justify="start",
+    )
+
+
+def _boton_propio(boton: rx.Var) -> rx.Component:
+    """Uno de los botones que el equipo tenga dados de alta (un comando SSH,
+    poner un pin, leer un pin). El icono es fijo porque lo que cambia es lo que
+    hace, no de qué tipo es: el nombre que le puso el usuario ya lo dice."""
+    return _accion("play", boton["label"].to(str),
+                   HostActionsState.run_button(boton["id"].to(str)))
+
+
+def _equipo_window(host: rx.Var) -> rx.Component:
+    hid = host["id"].to(str)
+    content = rx.vstack(
+        rx.hstack(
+            rx.icon(rx.cond(host["online"], "wifi", "wifi-off"), size=14,
+                    color=rx.cond(host["online"], "#22c55e", theme.MUTED)),
+            rx.text(rx.cond(host["online"], "En línea", "Sin respuesta"),
+                    size="2", color=theme.TEXT),
+            spacing="2", align="center",
+        ),
+        rx.divider(border_color=theme.BORDER),
+        # Encender solo si hay MAC: sin ella no hay Wake-on-LAN que mandar, y
+        # un botón que siempre contesta «este equipo no tiene MAC» es ruido.
+        rx.cond(
+            host["mac"],
+            _accion("power", "Encender por red",
+                    HostActionsState.encender_wol(hid), "green"),
+        ),
+        # Apagar y reiniciar van por SSH: sin usuario configurado no hay por
+        # dónde entrar (lo comprueba igualmente accion_rapida antes de tocar
+        # nada, esto solo evita enseñar el botón).
+        rx.cond(
+            host["user"],
+            rx.fragment(
+                _accion("power-off", "Apagar",
+                        HostActionsState.accion_rapida(hid, "apagar"), "red"),
+                _accion("rotate-ccw", "Reiniciar",
+                        HostActionsState.accion_rapida(hid, "reiniciar"), "amber"),
+            ),
+        ),
+        # `.to(list[dict])` no es adorno: dentro de un foreach los campos del
+        # diccionario son `Any`, y recorrer un Any no compila —«Could not
+        # foreach over var of type Any»—. Es la misma razón por la que aquí
+        # arriba todo lleva `.to(str)`.
+        rx.foreach(host["botones"].to(list[dict]), _boton_propio),
+        spacing="2", width="100%",
+    )
+    return floating_window(
+        content,
+        window_id=host["id"],
+        title=host["name"],
+        icon=rx.cond(host["floor_icon"], host["floor_icon"].to(str),
+                     host["icon"].to(str)),
+        is_open=DashboardState.open_windows.contains(hid),
+        on_close=DashboardState.close_window(host["id"]),
+        accent=theme.ACCENT,
+        top="12%",
+        left="22%",
+        width="280px",
+        fullscreen_on_mobile=False,
+        # Se cierra tocando fuera: es algo que se saca un momento desde el
+        # plano, igual que el mando IR en modo compacto.
+        dismiss_on_outside="1",
+    )
+
+
+def equipo_windows_layer() -> rx.Component:
+    """Una ventana por equipo COLOCADO EN EL PLANO. Solo para quien puede
+    accionarlos: los eventos lo comprueban igual (permisos.EQUIPOS), pero
+    tampoco hay por qué montarle la botonera a quien no va a poder usarla."""
+    return rx.cond(
+        AuthState.puede_equipos,
+        rx.foreach(NodesState.hosts_on_floor, _equipo_window),
     )

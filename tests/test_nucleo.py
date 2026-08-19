@@ -94,7 +94,8 @@ def _retardos() -> Caso:
 
 
 def ejecutar() -> list[Caso]:
-    return [_escritura_atomica(), _permisos(), _retardos(), _avisos()]
+    return [_escritura_atomica(), _permisos(), _retardos(), _avisos(),
+            _equipos_en_plano()]
 
 
 def _avisos() -> Caso:
@@ -117,4 +118,65 @@ def _avisos() -> Caso:
     # Y que la negativa tenga texto propio: un "no" sin explicación es un fallo
     # que nadie sabe interpretar.
     c.cierto("la negativa tiene mensaje", bool(permisos.motivo(permisos.AVISAR)))
+    return c
+
+
+def _equipos_en_plano() -> Caso:
+    """Que un equipo colocado en el plano se QUEDE colocado.
+
+    Esto no es un detalle: `_normalizar_equipos` reconstruye cada equipo desde
+    cero con las claves de CLAVES_EQUIPO —en cada lectura Y en cada escritura—,
+    así que cualquier campo que no esté en esa lista desaparece solo, en
+    silencio, a la primera relectura del fichero. Colocar equipos en el plano
+    sin tocar esa lista habría «funcionado» hasta recargar la página.
+
+    El segundo caso es el que se ve venir menos: editar el equipo desde su
+    ficha pasa por `host_fields`, que devuelve un diccionario CERRADO sin
+    campos de plano. Si la actualización pisara la ficha entera en vez de
+    fusionarla, cambiarle el nombre a un equipo lo borraría del plano.
+    """
+    from noxuscmmd.domains.nodes import store
+
+    c = Caso("Equipos colocados en el plano")
+
+    equipo = store.add_host(**store.host_fields(
+        name="Equipo de prueba", ip="10.0.0.254", user="alguien", mac="aa:bb:cc:dd:ee:ff"))
+    try:
+        c.cierto("un equipo nuevo nace sin sitio en el plano",
+                 not equipo.get("posiciones") and not equipo.get("floor_top"))
+
+        planos = store.read_all().get("planos") or []
+        plano = planos[0]["id"] if planos else ""
+        store.set_floor_position("hosts", equipo["id"], "40%", "60%", plano)
+        store.set_floor_icon("hosts", equipo["id"], "monitor")
+
+        def leer():
+            return next(h for h in store.read_all()["hosts"] if h["id"] == equipo["id"])
+
+        puesto = leer()
+        c.revisar("se guarda dónde está", puesto["posiciones"].get(plano),
+                  {"top": "40%", "left": "60%"})
+        c.revisar("y con qué icono", puesto["floor_icon"], "monitor")
+
+        # La normalización corre en cada lectura: si borrara los campos, esto
+        # ya habría fallado arriba. Se relee otra vez por si acaso.
+        c.revisar("sigue ahí al releer el fichero",
+                  leer()["posiciones"].get(plano), {"top": "40%", "left": "60%"})
+
+        # Y la trampa de verdad: editarlo por su ficha.
+        store.update_host(equipo["id"], **store.host_fields(
+            name="Equipo renombrado", ip="10.0.0.254", user="alguien"))
+        tras_editar = leer()
+        c.revisar("renombrarlo no lo saca del plano",
+                  tras_editar["posiciones"].get(plano), {"top": "40%", "left": "60%"})
+        c.revisar("ni le quita el icono", tras_editar["floor_icon"], "monitor")
+        c.revisar("y el nombre sí cambia", tras_editar["name"], "Equipo renombrado")
+
+        # Quitarlo del plano deja el equipo, no lo borra.
+        store.set_floor_position("hosts", equipo["id"], None, None, plano)
+        c.cierto("quitarlo del plano no borra el equipo",
+                 leer()["name"] == "Equipo renombrado")
+        c.revisar("y ya no tiene sitio", leer()["posiciones"].get(plano), None)
+    finally:
+        store.delete_host(equipo["id"])
     return c

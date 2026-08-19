@@ -43,9 +43,16 @@ SISTEMAS = ("linux", "windows")
 # venía de fábrica y el que se añadió hace un minuto son el mismo objeto, con
 # la misma forma, y así se ven también al abrir nodos_dinamicos.json a mano.
 # "acciones_extra" va al final porque es la única lista, y suele estar vacía.
+# Los campos del plano van AQUÍ DENTRO por obligación, no por gusto: esta
+# función reconstruye cada equipo desde cero con estas claves y solo estas, en
+# cada lectura y en cada escritura. Un campo que no esté en la lista se borra
+# solo, en silencio y a la primera — así que colocar un equipo en el plano sin
+# pasar por aquí habría durado hasta la siguiente lectura del fichero.
 CLAVES_EQUIPO = (
     "id", "created_at", "name", "ip", "user", "rdp_user", "rdp_launch_host",
     "os", "mac", "ping_retries", "icon", "order", "en_metricas", "acciones_extra",
+    "floor_icon", "floor_top", "floor_left", "floor_subtle", "floor_color",
+    "floor_color_on", "posiciones",
 )
 
 
@@ -117,6 +124,17 @@ def _normalizar_equipos(data: dict) -> None:
             # Métricas). El recuento total sí se guarda siempre.
             "en_metricas": bool(host.get("en_metricas", False)),
             "acciones_extra": host.get("acciones_extra") or [],
+            # Plano. Se copian tal cual y sin inventar nada: un equipo que no
+            # se ha colocado nunca los tiene a None y no sale pintado en
+            # ninguna parte. `posiciones` es {plano_id: {top, left}} — el mismo
+            # formato que luces, puertas y cámaras (ver _poner_posicion).
+            "floor_icon": host.get("floor_icon") or None,
+            "floor_top": host.get("floor_top") or None,
+            "floor_left": host.get("floor_left") or None,
+            "floor_subtle": bool(host.get("floor_subtle", False)),
+            "floor_color": host.get("floor_color") or None,
+            "floor_color_on": host.get("floor_color_on") or None,
+            "posiciones": host.get("posiciones") or {},
         }
         normalizados.append(limpio)
     normalizados.sort(key=lambda h: h["order"])
