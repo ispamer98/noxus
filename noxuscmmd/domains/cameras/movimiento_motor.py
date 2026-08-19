@@ -19,18 +19,22 @@ from . import fotogramas, movimiento, movimiento_store
 from ..security import audit, logs, logs_store, shared_state
 from ..notifications import push
 
-# Cada cuánto se mira. Dos segundos, y el número tiene medida detrás: pedirle un
-# fotograma al salón tarda 1,5 s de mediana (1,13 el mejor, 1,77 el peor), y en
-# una prueba de 60 s a este ritmo salieron 30 capturas y NINGUNA fallida.
+# Cada cuánto se LANZA una captura, sin esperar a que vuelva la anterior.
 #
-# Estuvo en doce segundos y era demasiado: con dos capturas separadas doce
-# segundos —diecisiete en la práctica, porque la cámara caída se comía el
-# temporizador— alguien que cruza el salón pasa entera la ventana sin aparecer
-# en ninguna de las dos fotos, y para el vigilante no ha ocurrido nada. Mirar
-# cada dos segundos es lo que convierte esto en algo que sirve.
+# Pedirle un fotograma a esta cámara cuesta 1,4 s casi fijos, y ese tiempo es
+# abrir la sesión con la nube de Tuya, no traer la imagen: pedirla pequeña
+# (31 KB en vez de 168) tarda exactamente lo mismo. Así que encadenando —pedir,
+# esperar, pedir— no se puede bajar de un fotograma cada segundo y medio, y
+# alguien que cruza deprisa cabe entero en ese hueco.
 #
-# Si una captura tarda más que esto, la siguiente sale en cuanto termina: el
-# ritmo lo marca la cámara y nunca se acumulan peticiones encima de ella.
+# Lo que sí se puede: SOLAPARLAS. Dos peticiones a la vez tardan lo mismo que
+# una sola (1,29 s las dos, medido), o sea que la espera se paraleliza. Lanzando
+# una cada medio segundo hay fotograma nuevo cada medio segundo, con tres
+# peticiones en vuelo. Medido sostenido: 90 capturas en 45 s, NINGUNA fallida.
+DISPARO = 0.5
+
+# Cada cuánto se releen los ajustes y se decide si toca vigilar. No hace falta
+# más fino: es un JSON pequeño y la decisión no cambia entre dos disparos.
 PERIODO = 2.0
 
 # Cuánto se calla tras avisar de una cámara, en segundos. Con el ritmo de dos
@@ -82,6 +86,14 @@ class _Ojo:
         self.ultimo_aviso = 0.0
         self.fallos = 0
         self.ultimo_intento = 0.0
+        # Con las capturas solapadas, la que se pidió antes puede volver
+        # después. Cada una lleva su número y solo se queda la más nueva: sin
+        # esto se compararía hacia atrás y saldrían diferencias inventadas.
+        self.orden_anterior = -1
+        # Serializa la parte de comparar y avisar. Las capturas van en
+        # paralelo, que es lo que da el ritmo; decidir, de una en una, o dos
+        # que vuelven juntas mandarían dos avisos del mismo movimiento.
+        self.cerrojo = asyncio.Lock()
 
     def en_enfriamiento(self, ahora: float) -> bool:
         return (ahora - self.ultimo_aviso) < ENFRIAMIENTO
@@ -89,20 +101,36 @@ class _Ojo:
     def caida(self) -> bool:
         return self.fallos >= FALLOS_PARA_RENDIRSE
 
+    def llega_tarde(self, orden: int) -> bool:
+        """¿Este fotograma es más viejo que el último que ya se miró?
+
+        Con los disparos solapados pasa de verdad: se piden cada medio segundo
+        y cada uno tarda 1,4 s, así que el número 7 puede volver antes que el 6.
+        Comparar el 6 contra el 7 mediría el movimiento AL REVÉS y daría una
+        diferencia que no ha ocurrido.
+        """
+        return orden <= self.orden_anterior
+
     def toca_reintentar(self, ahora: float) -> bool:
         """Una caída solo se prueba una vez por minuto. Las demás vueltas se la
         salta entera, que es lo que devuelve el ritmo a las que sí funcionan."""
         return (ahora - self.ultimo_intento) >= REINTENTO_CAIDA
 
 
-async def _mirar(ojo: _Ojo, umbral: float, nombre: str) -> None:
+async def _mirar(ojo: _Ojo, umbral: float, nombre: str, orden: int) -> None:
+    """Pide un fotograma y, si toca, decide y avisa.
+
+    `orden` es el número del disparo. Como van solapados, el que se pidió antes
+    puede volver después: comparar entonces contra un fotograma MÁS NUEVO daría
+    una diferencia que no ha ocurrido, así que el que llega tarde se descarta.
+    """
     src = _src_de(ojo.id)
     if not src:
         return
 
-    # Una cámara caída no se pide en cada vuelta: solo se prueba si ha vuelto
+    # Una cámara caída no se pide en cada disparo: solo se prueba si ha vuelto
     # una vez por minuto. Mientras tanto ni se la espera, así que no le quita
-    # tiempo a las que sí están dando imagen.
+    # ritmo a las que sí están dando imagen.
     principio = time.time()
     if ojo.caida() and not ojo.toca_reintentar(principio):
         return
@@ -115,63 +143,79 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str) -> None:
             print(f"⚠️ Movimiento: «{nombre}» no da fotograma; se prueba solo "
                   f"una vez por minuto hasta que vuelva.")
         return
-    if ojo.caida():
-        print(f"✅ Movimiento: «{nombre}» vuelve a dar imagen.")
-        # La foto guardada es de hace un buen rato: compararla con la de ahora
-        # daría un cambio enorme que no es movimiento, sino el tiempo que ha
-        # pasado. Se empieza de cero.
-        ojo.anterior = None
-        ojo.momento_anterior = 0.0
+    volvio = ojo.caida()
     ojo.fallos = 0
 
-    ahora = time.time()
-    anterior, ojo.anterior = ojo.anterior, datos
-    rancia = anterior is not None and (ahora - ojo.momento_anterior) > CADUCIDAD_ANTERIOR
-    ojo.momento_anterior = ahora
-    if anterior is None:
-        return  # primera vuelta: no hay con qué comparar
-    if rancia:
-        # Se queda la de ahora como referencia para la vuelta siguiente, pero
-        # con esta no se compara: ver CADUCIDAD_ANTERIOR.
-        return
+    async with ojo.cerrojo:
+        if volvio:
+            print(f"✅ Movimiento: «{nombre}» vuelve a dar imagen.")
+            # La foto guardada es de hace un buen rato: compararla con la de
+            # ahora daría un cambio enorme que no es movimiento, sino el tiempo
+            # que ha pasado. Se empieza de cero.
+            ojo.anterior = None
+            ojo.momento_anterior = 0.0
 
-    if ojo.en_enfriamiento(ahora):
-        return
-    try:
-        visto = await asyncio.to_thread(
-            movimiento.analizar, anterior, datos, umbral)
-    except movimiento.NoSePuedeComparar:
-        return
-    if not visto.hay:
-        return
+        if ojo.llega_tarde(orden):
+            return  # ya hay uno más nuevo: este no dice nada
 
-    ojo.ultimo_aviso = ahora
-    # Se apuntan las dos cifras: la MANCHA es la que decide (la zona con cuerpo
-    # que ha cambiado) y el total va detrás para poder entender después por qué
-    # saltó, sobre todo si algún día salta cuando no debía.
+        ahora = time.time()
+        anterior = ojo.anterior
+        rancia = anterior is not None and (ahora - ojo.momento_anterior) > CADUCIDAD_ANTERIOR
+        ojo.anterior = datos
+        ojo.momento_anterior = ahora
+        ojo.orden_anterior = orden
+
+        if anterior is None:
+            return  # el primero: no hay con qué comparar
+        if rancia:
+            # Se queda el de ahora como referencia, pero con este no se
+            # compara: ver CADUCIDAD_ANTERIOR.
+            return
+        if ojo.en_enfriamiento(ahora):
+            return
+        try:
+            visto = await asyncio.to_thread(
+                movimiento.analizar, anterior, datos, umbral)
+        except movimiento.NoSePuedeComparar:
+            return
+        if not visto.hay:
+            return
+        ojo.ultimo_aviso = ahora
+
+    # Fuera del cerrojo: avisar y guardar la foto no pueden frenar el ritmo de
+    # las capturas siguientes.
+    #
+    # Y el AVISO VA PRIMERO. Guardar la foto y colgarla del evento toca disco, y
+    # quien recibe «algo se ha movido en el salón» quiere el aviso cuanto antes;
+    # la imagen puede llegar al registro medio segundo después, que es
+    # exactamente lo que ya hace el vigilante de la alarma (ver
+    # cameras/fotogramas.py: el evento se guarda antes de tener la foto).
     evento = await asyncio.to_thread(
         audit.registrar_sistema, logs.ALARMA, "MOVIMIENTO_DETECTADO",
         f"{nombre} · {visto.mancha}% de la imagen (cambio total {visto.total}%)",
         entidad=ojo.id)
-    # El fotograma se guarda igual que los de la alarma, así que se ve desde el
-    # registro con la misma ruta que ya comprueba la sesión. Guardarlo NO basta:
-    # hay que colgárselo al evento (adjuntar_foto), que es lo que hace que el
-    # registro sepa que esa entrada tiene imagen. Sin eso el fichero quedaba en
-    # la carpeta sin que nada apuntara a él.
-    try:
-        if isinstance(evento, int) and evento:
-            nombre = await asyncio.to_thread(fotogramas.guardar, datos, evento)
-            if nombre:
-                await asyncio.to_thread(logs_store.adjuntar_foto, evento, nombre)
-                print(f"📸 Movimiento: fotograma {nombre} en el evento {evento}")
-    except Exception as e:
-        print(f"⚠️ Movimiento: no se pudo guardar el fotograma: {e}")
-    await asyncio.to_thread(
+    aviso = asyncio.create_task(asyncio.to_thread(
         push.enviar_notificacion,
         "Movimiento detectado",
         f"{nombre}: algo se ha movido.",
         tag=f"movimiento:{ojo.id}",
-    )
+        # Lleva al Registro, que es donde está el evento CON SU FOTO. Antes
+        # abría el panel por donde estuviera y había que buscar el evento a
+        # mano. Verla pide la misma capacidad que el mural (CAMARAS), así que
+        # administrador y familia entran y un invitado no.
+        url="/panel?vista=logs",
+    ))
+    _avisos.add(aviso)
+    aviso.add_done_callback(_avisos.discard)
+
+    try:
+        if isinstance(evento, int) and evento:
+            nombre_foto = await asyncio.to_thread(fotogramas.guardar, datos, evento)
+            if nombre_foto:
+                await asyncio.to_thread(logs_store.adjuntar_foto, evento, nombre_foto)
+                print(f"📸 Movimiento: fotograma {nombre_foto} en el evento {evento}")
+    except Exception as e:
+        print(f"⚠️ Movimiento: no se pudo guardar el fotograma: {e}")
 
 
 # Cada cuánto se vuelven a leer los nombres de las cámaras. Van aparte del
@@ -180,56 +224,79 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str) -> None:
 # trabajo tirado (ver nodes/store._read, que normaliza el fichero entero).
 REFRESCO_NOMBRES = 30.0
 
+# Los avisos en vuelo. Sin guardar la referencia, el recolector de basura
+# puede llevarse una tarea a medio enviar (lo dice la documentación de
+# asyncio.create_task); mismo patrón que security/watcher.py con sus fotos.
+_avisos: set = set()
 
-async def _mirar_sin_levantar(ojo: _Ojo, umbral: float, nombre: str) -> None:
+
+async def _mirar_sin_levantar(ojo: _Ojo, umbral: float, nombre: str,
+                              orden: int) -> None:
     """`_mirar` envuelto: un fallo con UNA cámara no puede llevarse por delante
-    la vuelta de las demás, que es lo que pasaría al mirarlas en paralelo."""
+    el disparo de las demás ni parar el bucle."""
     try:
-        await _mirar(ojo, umbral, nombre)
+        await _mirar(ojo, umbral, nombre, orden)
     except Exception as e:
         print(f"⚠️ Movimiento: fallo mirando {ojo.id}: {e}")
 
 
 async def run_forever() -> None:
     ojos: dict[str, _Ojo] = {}
+    en_vuelo: set = set()
     nombres: dict[str, str] = {}
     nombres_vistos = 0.0
+    ajustes_vistos = 0.0
+    config = None
+    orden = 0
+
     while True:
-        principio = time.monotonic()
         try:
-            config = movimiento_store.leer()
+            # Los ajustes no se releen en cada disparo: dos por segundo para
+            # mirar un JSON que casi nunca cambia es trabajo tirado.
+            if config is None or (time.monotonic() - ajustes_vistos) > PERIODO:
+                config = movimiento_store.leer()
+                ajustes_vistos = time.monotonic()
+
             mirando = bool(config["activada"] and config["camaras"])
             if mirando and config["solo_armado"]:
                 mirando = await asyncio.to_thread(shared_state.get_sistema_armado)
+
             if not mirando:
                 # Se olvida lo visto: al volver se empieza con una foto nueva en
-                # vez de comparar contra una de antes de apagarlo.
+                # vez de comparar contra una de antes de apagarlo. Y no se le
+                # pide NADA a las cámaras mientras tanto.
                 ojos.clear()
-            else:
-                if (time.monotonic() - nombres_vistos) > REFRESCO_NOMBRES or not nombres:
-                    from ..nodes import store as nodes_store
-                    datos = await asyncio.to_thread(nodes_store.read_all)
-                    nombres = {c["id"]: c.get("name", c["id"])
-                               for c in datos.get("cameras", []) + datos.get("factory_cameras", [])}
-                    nombres_vistos = time.monotonic()
+                await asyncio.sleep(PERIODO)
+                continue
 
-                # En paralelo, no una detrás de otra: encadenarlas hacía que el
-                # ritmo fuera la SUMA de lo que tarda cada cámara, así que con
-                # dos ya no se podía mirar cada dos segundos.
-                await asyncio.gather(*[
-                    _mirar_sin_levantar(
-                        ojos.setdefault(cam, _Ojo(cam)),
-                        config["umbral"],
-                        nombres.get(cam, cam))
-                    for cam in config["camaras"]
-                ])
+            if (time.monotonic() - nombres_vistos) > REFRESCO_NOMBRES or not nombres:
+                from ..nodes import store as nodes_store
+                datos = await asyncio.to_thread(nodes_store.read_all)
+                nombres = {c["id"]: c.get("name", c["id"])
+                           for c in datos.get("cameras", []) + datos.get("factory_cameras", [])}
+                nombres_vistos = time.monotonic()
+
+            # Se DISPARAN y no se esperan: aquí está el ritmo. Cada captura
+            # tarda 1,4 s, pero solapadas llegan cada medio segundo, y por eso
+            # se caza a alguien que solo cruza.
+            orden += 1
+            for cam in config["camaras"]:
+                ojo = ojos.setdefault(cam, _Ojo(cam))
+                tarea = asyncio.create_task(_mirar_sin_levantar(
+                    ojo, config["umbral"], nombres.get(cam, cam), orden))
+                en_vuelo.add(tarea)
+                tarea.add_done_callback(en_vuelo.discard)
+
+            # Freno de mano: si las capturas empiezan a tardar mucho más de la
+            # cuenta, se dejan de lanzar hasta que bajen. Sin esto, una cámara
+            # que se atasca acumularía peticiones sin fin encima de ella.
+            if len(en_vuelo) >= len(config["camaras"]) * 6:
+                print(f"⚠️ Movimiento: {len(en_vuelo)} capturas en vuelo, "
+                      f"se espera a que bajen")
+                while len(en_vuelo) > len(config["camaras"]) * 2:
+                    await asyncio.sleep(DISPARO)
+
+            await asyncio.sleep(DISPARO)
         except Exception as e:
             print(f"⚠️ Movimiento: error en el bucle: {e}")
             await asyncio.sleep(5)
-
-        # Lo que falte para completar el periodo. Si la cámara ha tardado más
-        # que eso, la siguiente vuelta sale ya: nunca se le encima una petición
-        # a otra, que es de donde salían los «0 bytes».
-        resto = PERIODO - (time.monotonic() - principio)
-        if resto > 0:
-            await asyncio.sleep(resto)

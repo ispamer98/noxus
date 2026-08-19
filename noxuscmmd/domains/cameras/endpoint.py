@@ -39,10 +39,15 @@ async def ver_fotograma(request):
     if not id_dispositivo:
         return JSONResponse({"ok": False, "mensaje": "No identificado."},
                             status_code=401)
-    # VER, el mismo permiso que hace falta para entrar al panel y mirar las
-    # cámaras en directo. Una foto de hace un rato no puede pedir menos que el
-    # directo ni más: quien puede ver el mural, puede ver esto.
-    if not permisos.puede(id_dispositivo, permisos.VER):
+    # CAMARAS, el mismo permiso que el directo. Una foto de hace un rato no
+    # puede pedir menos que el mural: es la misma imagen del interior de la
+    # casa, solo que de antes.
+    #
+    # Estuvo pidiendo VER, que es únicamente «puede entrar al panel», y eso
+    # dejaba a un INVITADO pedir fotogramas del salón —justo lo que dice
+    # auth/permisos.py que no puede hacer: «Mirar ya es acceso»—. Las URL
+    # llevan fecha y número de evento, así que son de adivinar.
+    if not permisos.puede(id_dispositivo, permisos.CAMARAS):
         return JSONResponse({"ok": False, "mensaje": "Sin acceso."},
                             status_code=403)
 

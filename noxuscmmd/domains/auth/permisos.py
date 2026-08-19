@@ -76,6 +76,29 @@ def motivo(capacidad: str) -> str:
     return _NEGATIVA.get(capacidad, "Este dispositivo no puede hacer eso.")
 
 
+def _quien_lo_pidio() -> str:
+    """Qué manejador pidió el permiso, para que el registro lo diga.
+
+    Sin esto, la entrada era «intentó ajustes siendo Familia» y no había forma
+    de saber QUÉ había intentado: pasó de verdad —una persona de la familia
+    recibió un «acceso no autorizado» que no entendía, y averiguar de dónde
+    salía costó leer todos los manejadores que piden ajustes—. Con el nombre
+    delante se lee solo.
+
+    Nunca levanta: esto solo adorna un registro y no puede tumbar la
+    comprobación de permisos, que es lo que gobierna las cerraduras.
+    """
+    import sys
+    try:
+        marco = sys._getframe(2)          # 0 esta función, 1 denegar, 2 quien llama
+        funcion = marco.f_code.co_name
+        duenno = marco.f_locals.get("self")
+        clase = type(duenno).__name__ if duenno is not None else ""
+        return f" · en {clase}.{funcion}" if clase else f" · en {funcion}"
+    except Exception:
+        return ""
+
+
 async def denegar(state, capacidad: str):
     """Comprobación para usar al principio de un manejador crítico.
 
@@ -104,6 +127,7 @@ async def denegar(state, capacidad: str):
 
     quien = auth.nombre_dispositivo or audit.DESCONOCIDO
     su_rol = store.NOMBRES_DE_ROL.get(auth.rol_actual, auth.rol_actual)
+    donde = _quien_lo_pidio()
 
     # Rodaje: se apunta lo que se habría impedido, pero se deja pasar. Sirve
     # para ver durante unos días quién haría qué antes de cerrar la puerta, y
@@ -111,13 +135,13 @@ async def denegar(state, capacidad: str):
     if not store.estricto():
         logs.registrar(
             logs.ACCESOS, "ACCESO_DENEGADO", quien,
-            f"«{capacidad}» siendo {su_rol} — PERMITIDO: los permisos aún no "
-            "están en vigor",
+            f"«{capacidad}» siendo {su_rol}{donde} — PERMITIDO: los permisos aún "
+            "no están en vigor",
         )
         return None
 
     logs.registrar(
         logs.ACCESOS, "ACCESO_DENEGADO", quien,
-        f"intentó «{capacidad}» siendo {su_rol}",
+        f"intentó «{capacidad}» siendo {su_rol}{donde}",
     )
     return rx.toast.error(motivo(capacidad), position="top-center")

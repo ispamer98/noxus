@@ -20,7 +20,7 @@ TODOS = "todos"
 
 def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
                         tag: str = "", silencioso: bool = False,
-                        acciones: tuple | list = ()) -> None:
+                        acciones: tuple | list = (), url: str = "") -> None:
     """`destino`: "todos", el nombre de un dispositivo, o una lista de nombres.
 
     Acepta las tres formas porque las llamadas automáticas (una alarma que
@@ -41,7 +41,12 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
     manda el aviso, no el comportamiento por defecto.
 
     `silencioso` llega sin sonido ni vibración: para lo informativo (un equipo
-    que vuelve a estar en línea). Lo que es de alarma nunca lo usa."""
+    que vuelve a estar en línea). Lo que es de alarma nunca lo usa.
+
+    `url` es a dónde lleva el aviso al pulsarlo, dentro del panel
+    ("/panel?vista=logs"). Sin ella se abre el panel por donde estuviera, que
+    para un aviso de movimiento obligaba a buscar el evento a mano. Un móvil con
+    el service worker viejo la ignora y abre el panel, como hasta ahora."""
     from pywebpush import webpush
 
     if not os.path.exists(SUSCRIPTORES_FILE):
@@ -65,6 +70,9 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
             # dispositivo con el service worker viejo los ignora y sigue viendo
             # el aviso normal, así que añadirlos no rompe nada.
             "acciones": list(acciones or ()),
+            # A dónde lleva al pulsarla. Se valida en el sw contra su propio
+            # origen: aquí solo se ponen rutas del panel.
+            "url": url or "",
         })
         for sub in subs:
             if not a_todos and sub.get("nombre_usuario") not in elegidos:

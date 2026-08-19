@@ -114,8 +114,9 @@ self.addEventListener('push', function(event) {
         actions: SOPORTA_BOTONES ? acciones : [],
         // El tag viaja también aquí dentro porque en notificationclick hay que
         // decirle al servidor DE QUÉ aviso se está hablando, y event.notification
-        // solo conserva lo que se guardó al mostrarla.
-        data: { tag: tag },
+        // solo conserva lo que se guardó al mostrarla. La url es a dónde lleva
+        // el aviso al pulsarlo; sin ella se abre el panel por donde estuviera.
+        data: { tag: tag, url: data.url || '' },
     };
 
     event.waitUntil(mostrar(data.title, options));
@@ -203,6 +204,15 @@ self.addEventListener('notificationclick', function(event) {
     // todavía, y sin esto no las vería — justo las que hay abiertas ahora
     // mismo, que son las que hay que enfocar.
     event.waitUntil((async () => {
+        // A dónde lleva este aviso. Lo dice quien lo manda (push.py): el de
+        // movimiento apunta al Registro, que es donde está el evento CON SU
+        // FOTO — antes caías en el panel por donde estuviera y había que ir a
+        // buscarlo. Se comprueba que sea una ruta de AQUÍ y no una dirección
+        // completa: el destino lo trae un mensaje, y un mensaje no manda a este
+        // navegador a otro sitio.
+        const pedida = (event.notification.data && event.notification.data.url) || '';
+        const destino = /^\/[^/]/.test(pedida) ? pedida : '/panel';
+
         const ventanas = await clients.matchAll({
             type: 'window',
             includeUncontrolled: true,
@@ -212,12 +222,19 @@ self.addEventListener('notificationclick', function(event) {
             // Mismo origen: no se enfoca una pestaña de otra web que el
             // navegador nos pueda listar.
             if (new URL(ventana.url).origin !== self.location.origin) continue;
+            // Llevarla al destino antes de enfocarla. Si el navegador no deja
+            // navegar una pestaña ajena, al menos se enfoca: más vale el panel
+            // por donde estuviera que no abrir nada.
+            if ('navigate' in ventana) {
+                try {
+                    const llevada = await ventana.navigate(destino);
+                    if (llevada && 'focus' in llevada) return llevada.focus();
+                } catch (e) { /* pestaña que no se deja llevar */ }
+            }
             if ('focus' in ventana) return ventana.focus();
         }
 
-        // No había ninguna abierta: entonces sí, se abre. Sin parámetros de
-        // seguimiento — el aviso no lleva a ninguna vista concreta, solo al
-        // panel.
-        if (clients.openWindow) return clients.openWindow('/panel');
+        // No había ninguna abierta: entonces sí, se abre.
+        if (clients.openWindow) return clients.openWindow(destino);
     })());
 });

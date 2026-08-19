@@ -155,9 +155,24 @@ def _ritmo() -> Caso:
     c.revisar("pasado el enfriamiento, vuelve a avisar",
               ojo2.en_enfriamiento(ahora + motor.ENFRIAMIENTO), False)
 
-    # La caducidad se mide contra el periodo: si se cambia uno, el otro le sigue.
-    c.cierto("la foto anterior caduca después de varias vueltas",
-             motor.CADUCIDAD_ANTERIOR > motor.PERIODO)
+    # La caducidad tiene que dar margen a varios disparos fallidos seguidos.
+    c.cierto("la foto anterior caduca después de varios disparos",
+             motor.CADUCIDAD_ANTERIOR > motor.DISPARO * 4)
+
+    # Los disparos van solapados, así que el número 7 puede volver antes que el
+    # 6. Comparar el 6 contra el 7 mediría el movimiento al revés.
+    ojo3 = motor._Ojo("cam_prueba")
+    c.revisar("el primer fotograma no llega tarde", ojo3.llega_tarde(1), False)
+    ojo3.orden_anterior = 7
+    c.revisar("el 6, que vuelve después del 7, se descarta",
+              ojo3.llega_tarde(6), True)
+    c.revisar("y el 7 repetido también", ojo3.llega_tarde(7), True)
+    c.revisar("el 8 sí se mira", ojo3.llega_tarde(8), False)
+
+    # Y que solapar sirva de algo: hay que disparar más a menudo de lo que
+    # tarda una captura (1,4 s en esta casa), o no se gana nada.
+    c.cierto("se dispara más a menudo de lo que tarda una captura",
+             motor.DISPARO < 1.4)
     return c
 
 
