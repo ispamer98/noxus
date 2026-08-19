@@ -9,6 +9,8 @@ lo que evita tener que volver a presentar uno por uno los que ya funcionaban.
 """
 import asyncio
 
+import os
+
 import reflex as rx
 
 from . import permisos, sessions, store
@@ -25,11 +27,23 @@ class AuthState(rx.State):
     # La cookie. Es pública porque Reflex tiene que poder sincronizarla con el
     # navegador; su contenido no es secreto y va firmado, así que tocarla desde
     # el cliente solo consigue invalidarla.
+    # `secure` sale del entorno y no va puesto a fuego. Marcarla significa que
+    # el navegador solo la manda por HTTPS, que es lo correcto... salvo que esta
+    # casa entra al panel TAMBIEN por HTTP dentro de la LAN
+    # (http://192.168.1.x:3000): con secure fijo, esas sesiones dejarian de
+    # funcionar y solo se podria entrar por el dominio de fuera. Asi que se deja
+    # preparado y se enciende poniendo COOKIE_SECURE=1 en .env el dia que todo
+    # el acceso sea por HTTPS.
+    #
+    # rx.Cookie declara sus flags al arrancar, no por peticion, asi que no se
+    # puede decidir "secure si esta conexion es HTTPS": o para todas o para
+    # ninguna.
     testigo: str = rx.Cookie(
         name=sessions.NOMBRE_COOKIE,
         max_age=sessions.DURACION,
         path="/",
         same_site="lax",
+        secure=os.getenv("COOKIE_SECURE", "") == "1",
     )
 
     # Lo verificado en el servidor. Con guion bajo delante a propósito: así
@@ -282,6 +296,19 @@ class AuthState(rx.State):
             self._id = id_conocido
             self.testigo = sessions.emitir(id_conocido)
             store.visto(id_conocido)
+            # Queda apuntado. Adoptar una ficha por su endpoint es el mecanismo
+            # que reconoce a los aparatos de siempre, pero también es la única
+            # via por la que una sesión toma la identidad —y el rol— de otra sin
+            # que nadie lo autorice: si algún día pasa sin motivo, tiene que
+            # poder verse en el registro en vez de no haber ocurrido nunca.
+            rol_adoptado = store.rol_de(id_conocido)
+            ficha_conocida = store.dispositivo(id_conocido) or {}
+            logs.registrar(
+                logs.ACCESOS, "DISPOSITIVO_RECONOCIDO",
+                ficha_conocida.get("nombre", "") or nombre or "sin nombre",
+                f"reconocido por su suscripción de avisos · rol {rol_adoptado}",
+                entidad=id_conocido,
+            )
             self._refrescar()
             return
 

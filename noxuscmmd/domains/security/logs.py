@@ -127,6 +127,7 @@ _ETIQUETAS = {
     # mano como el resto: el nombre de la acción viaja sin ellas.
     "ACCESO_DENEGADO": "Acceso denegado",
     "DISPOSITIVO_IDENTIFICADO": "Dispositivo identificado",
+    "DISPOSITIVO_RECONOCIDO": "Dispositivo reconocido por sus avisos",
     "DISPOSITIVO_NUEVO": "Dispositivo nuevo sin acceso",
     "DISPOSITIVO_ELIMINADO": "Dispositivo eliminado",
     "ROL_CAMBIADO": "Permisos cambiados",
