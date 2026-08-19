@@ -201,7 +201,7 @@ async def _armados_en_espera(todos: list[dict], sensores: dict,
         try:
             await arming.set_group_armed(group_id, True,
                                          ficha.get("por") or "sistema")
-            logs.registrar(logs.GRUPOS, "ARMADO_EN_ESPERA",
+            logs.registrar(logs.ALARMA, "ARMADO_EN_ESPERA",
                            ficha.get("por") or "sistema", motivo,
                            grupo=g["name"])
         except arming.ArmingError:

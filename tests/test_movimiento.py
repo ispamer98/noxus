@@ -73,7 +73,7 @@ def ejecutar() -> list[Caso]:
 
     c.cierto("comparar una imagen consigo misma da casi cero",
              mov.diferencia(quieta_1, quieta_1) == 0.0)
-    return [c, _ajustes()]
+    return [c, _ajustes(), _ritmo()]
 
 
 def _ajustes() -> Caso:
@@ -103,4 +103,59 @@ def _ajustes() -> Caso:
     st.ARCHIVO.write_text("{roto")
     c.revisar("con el fichero roto queda apagada", st.leer()["activada"], False)
     st.ARCHIVO.unlink(missing_ok=True)
+    return c
+
+
+def _ritmo() -> Caso:
+    """Cuándo mira el motor y con qué compara.
+
+    Las dos reglas de aquí salieron de una noche de pruebas con la cámara de la
+    habitación desconectada y la del salón contestando «0 bytes» a ratos:
+
+      · una cámara caída no puede seguir pidiéndose en cada vuelta. Se comía los
+        4 s enteros del temporizador y convertía una vuelta de 12 s en una de
+        17-19, o sea que la cámara ROTA retrasaba la vigilancia de la BUENA.
+      · no se compara contra un fotograma rancio. Si una cámara se salta varias
+        vueltas, la foto guardada acaba siendo de hace minutos y lo que se mide
+        ya no es movimiento, es que ha cambiado la luz. De ahí salió un aviso
+        sin nada detrás.
+
+    Se prueba la decisión, no la cámara: aquí no se pide ni una imagen.
+    """
+    from noxuscmmd.domains.cameras import movimiento_motor as motor
+
+    c = Caso("Movimiento: a quién se le pide y con qué se compara")
+
+    ojo = motor._Ojo("cam_prueba")
+    c.revisar("una cámara sana no está caída", ojo.caida(), False)
+
+    for _ in range(motor.FALLOS_PARA_RENDIRSE - 1):
+        ojo.fallos += 1
+    c.revisar("con fallos pero sin llegar al tope, sigue sana", ojo.caida(), False)
+    ojo.fallos += 1
+    c.revisar("al llegar al tope se da por caída", ojo.caida(), True)
+
+    ahora = 10_000.0
+    ojo.ultimo_intento = ahora
+    c.revisar("recién intentada, no toca insistir",
+              ojo.toca_reintentar(ahora + 1), False)
+    c.revisar("a la mitad del minuto, tampoco",
+              ojo.toca_reintentar(ahora + motor.REINTENTO_CAIDA / 2), False)
+    c.revisar("pasado el minuto, se prueba otra vez",
+              ojo.toca_reintentar(ahora + motor.REINTENTO_CAIDA), True)
+
+    # El enfriamiento: tras avisar se calla un rato, para no mandar un aviso por
+    # vuelta mientras alguien pasea por el salón.
+    ojo2 = motor._Ojo("cam_prueba")
+    c.revisar("sin haber avisado nunca, no está en enfriamiento",
+              ojo2.en_enfriamiento(ahora), False)
+    ojo2.ultimo_aviso = ahora
+    c.revisar("justo después de avisar, se calla",
+              ojo2.en_enfriamiento(ahora + 1), True)
+    c.revisar("pasado el enfriamiento, vuelve a avisar",
+              ojo2.en_enfriamiento(ahora + motor.ENFRIAMIENTO), False)
+
+    # La caducidad se mide contra el periodo: si se cambia uno, el otro le sigue.
+    c.cierto("la foto anterior caduca después de varias vueltas",
+             motor.CADUCIDAD_ANTERIOR > motor.PERIODO)
     return c

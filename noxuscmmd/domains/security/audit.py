@@ -39,7 +39,12 @@ async def registrar(state, categoria: str, accion: str, detalle: str = "",
 
 
 def registrar_sistema(categoria: str, accion: str, detalle: str = "",
-                      grupo: str = "", entidad: str = "") -> None:
+                      grupo: str = "", entidad: str = "") -> int:
     """Registra algo que no ha pulsado nadie: rondas de ping, eventos MQTT,
-    automatismos. Sin State porque no hay sesión detrás."""
-    logs.registrar(categoria, accion, SISTEMA, detalle, grupo, entidad)
+    automatismos. Sin State porque no hay sesión detrás.
+
+    DEVUELVE EL ID del evento, que es lo que permite colgarle algo después —el
+    fotograma de la cámara, sin ir más lejos—. Estuvo devolviendo None y por eso
+    la detección de movimiento registraba el evento pero se quedaba sin foto:
+    quien la guardaba comprobaba antes que el id fuera un número."""
+    return logs.registrar(categoria, accion, SISTEMA, detalle, grupo, entidad)

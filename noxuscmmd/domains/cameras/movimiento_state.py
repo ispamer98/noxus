@@ -79,7 +79,7 @@ class MovimientoState(rx.State):
         await asyncio.to_thread(movimiento_store.poner, "activada", bool(valor))
         self.activada = bool(valor)
         await audit.registrar(
-            self, logs.CCTV,
+            self, logs.ALARMA,
             "MOVIMIENTO_ACTIVADO" if valor else "MOVIMIENTO_DESACTIVADO",
             "detección de movimiento")
 

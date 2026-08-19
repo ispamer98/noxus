@@ -49,8 +49,8 @@ IDS_CATEGORIAS = tuple(c[0] for c in CATEGORIAS)
 # se haya mandado abrir. Por eso caen en Alarma como todo lo demás y no en
 # Puertas, que es solo el reflejo del control de accesos.
 _HEREDADAS = (
-    ("ARMADO_GRUPO", GRUPOS),
-    ("DESARMADO_GRUPO", GRUPOS),
+    ("ARMADO_GRUPO", ALARMA),
+    ("DESARMADO_GRUPO", ALARMA),
     ("TAMPER", ALARMA),
 )
 
@@ -134,6 +134,9 @@ _ETIQUETAS = {
     "INVITACION_CREADA": "Invitación creada",
     "INVITACION_USADA": "Invitación usada",
     "INVITACION_REVOCADA": "Invitación revocada",
+    # Ya no se emite: el evento de armado dice él mismo qué quedó excluido
+    # (ver arming.set_group_armed). Se conserva la etiqueta porque en el
+    # histórico siguen estando los que se registraron en su día.
     "ARMADO_CON_EXCLUSIONES": "Armado dejando algo fuera",
     "ARMADO_AL_CERRAR": "Se armará al cerrar",
     "ARMADO_EN_ESPERA": "Armado que estaba en espera",

@@ -98,7 +98,7 @@ async def set_group_armed(group_id: str, armado: bool, usuario: str = SISTEMA) -
         if excluidos:
             nombres = abiertos.nombres_de(excluidos)
             detalle = f"Estuvo armado excluyendo: {', '.join(nombres)}"
-    logs.registrar(logs.GRUPOS, "ARMADO_GRUPO" if armado else "DESARMADO_GRUPO",
+    logs.registrar(logs.ALARMA, "ARMADO_GRUPO" if armado else "DESARMADO_GRUPO",
                    usuario, detalle, grupo=etiqueta)
     return group
 

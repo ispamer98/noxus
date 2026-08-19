@@ -66,7 +66,7 @@ class ArmingState(rx.State):
         if retardos.pendiente(grupo["id"]):
             retardos.cancelar(grupo["id"])
             self.contando = ""
-            logs.registrar(logs.GRUPOS, "ARMADO_CANCELADO", quien, "",
+            logs.registrar(logs.ALARMA, "ARMADO_CANCELADO", quien, "",
                            grupo=grupo["name"])
             return rx.toast.success("Armado cancelado.", position="top-center")
 
@@ -87,7 +87,7 @@ class ArmingState(rx.State):
                                bypass)
             self.contando = grupo["id"]
             self.restantes = salida
-            logs.registrar(logs.GRUPOS, "SALIDA_EN_CURSO", quien,
+            logs.registrar(logs.ALARMA, "SALIDA_EN_CURSO", quien,
                            f"{salida} s para salir", grupo=grupo["name"])
             # Dos eventos: el aviso y el bucle que va bajando el número. El
             # bucle tiene que salir de aquí — poner una bandera y esperar a que
@@ -117,10 +117,12 @@ class ArmingState(rx.State):
             return
         quien = await audit.usuario_de(self)
         excluidos = [a["id"] for a in self.abiertos]
-        nombres = [a["nombre"] for a in self.abiertos]
         self.grupo_id = ""
-        logs.registrar(logs.GRUPOS, "ARMADO_CON_EXCLUSIONES", quien,
-                       f"quedan fuera: {', '.join(nombres)}", grupo=grupo["name"])
+        # Aquí NO se registra nada. El armado ya deja su propio evento con los
+        # excluidos por su nombre («EXCLUIDOS del armado: ...», ver
+        # arming.set_group_armed), y además los resuelve leyendo del disco, así
+        # que sobrevive a que se renombre un sensor. Un segundo evento con la
+        # misma información solo duplicaba la línea en el registro.
         return await self._armar_ya(grupo, quien, excluidos)
 
     @rx.event
@@ -137,7 +139,7 @@ class ArmingState(rx.State):
         nombre = grupo["name"]
         self.grupo_id = ""
         retardos.programar(grupo["id"], retardos.AL_CERRAR, 0, quien, [])
-        logs.registrar(logs.GRUPOS, "ARMADO_AL_CERRAR", quien,
+        logs.registrar(logs.ALARMA, "ARMADO_AL_CERRAR", quien,
                        "se armará solo cuando cierre todo", grupo=nombre)
         return rx.toast.success(
             f"{nombre} se armará en cuanto cierre todo.",
@@ -194,5 +196,5 @@ class ArmingState(rx.State):
         self.contando = ""
         self.restantes = 0
         quien = await audit.usuario_de(self)
-        logs.registrar(logs.GRUPOS, "ARMADO_CANCELADO", quien, "")
+        logs.registrar(logs.ALARMA, "ARMADO_CANCELADO", quien, "")
         return rx.toast.success("Armado cancelado.", position="top-center")
