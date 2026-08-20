@@ -95,7 +95,7 @@ def _retardos() -> Caso:
 
 def ejecutar() -> list[Caso]:
     return [_escritura_atomica(), _permisos(), _retardos(), _avisos(),
-            _equipos_en_plano()]
+            _equipos_en_plano(), _quien_esta_en_linea()]
 
 
 def _avisos() -> Caso:
@@ -179,4 +179,107 @@ def _equipos_en_plano() -> Caso:
         c.revisar("y ya no tiene sitio", leer()["posiciones"].get(plano), None)
     finally:
         store.delete_host(equipo["id"])
+    return c
+
+
+def _quien_esta_en_linea() -> Caso:
+    """Cuándo se apunta que un equipo se ha ido o ha vuelto.
+
+    El fallo que hubo detrás: quién está en línea se comprobaba desde un bucle
+    POR SESIÓN, con un global para que solo pingara el primero. Cuando los
+    bucles de sesión pasaron a morir con su navegador, el global se quedaba
+    puesto sin nadie detrás y NADIE volvía a pingar: el estado se congelaba
+    hasta reiniciar el servicio, y un PC apagado seguía figurando en línea.
+    Ahora pinga una tarea de proceso (infra/ping_motor.py) y aquí se comprueba
+    su decisión, que es la parte con criterio.
+
+    No se pinga nada: se le da el resultado a la función y se mira qué apunta.
+    """
+    import time as _time
+    from noxuscmmd.domains.infra import ping_motor
+
+    c = Caso("Quién está en línea")
+
+    apuntados = []
+
+    class _FalsoHost:
+        name = "PC"
+        class ssh:
+            host = "100.98.98.2"
+
+    original = ping_motor.audit.registrar_sistema
+    reloj = {"t": 1000.0}
+    original_reloj = _time.monotonic
+
+    def _apuntar(categoria, accion, detalle="", grupo="", entidad=""):
+        apuntados.append(accion)
+        return 1
+
+    ping_motor.audit.registrar_sistema = _apuntar
+    ping_motor._PENDIENTE.clear()
+    ping_motor._REGISTRADO.clear()
+    _time.monotonic = lambda: reloj["t"]
+    # El módulo importó `time` entero, así que basta con cambiarlo aquí.
+    ping_motor.time.monotonic = lambda: reloj["t"]
+    try:
+        hosts = {"pc": _FalsoHost()}
+
+        # La primera vuelta solo toma nota de por dónde anda cada equipo: si
+        # apuntara, al arrancar el panel se registraría de golpe el estado de
+        # todos como si acabase de cambiar.
+        ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        c.revisar("la primera vuelta no apunta nada", apuntados, [])
+
+        # Un ping perdido suelto NO es una desconexión: un equipo por wifi o al
+        # otro lado de la VPN los pierde constantemente.
+        ping_motor._registrar_cambios_de_conexion({"pc": False}, hosts)
+        c.revisar("un ping perdido no se apunta", apuntados, [])
+
+        reloj["t"] += 60
+        ping_motor._registrar_cambios_de_conexion({"pc": False}, hosts)
+        c.revisar("ni al minuto de estar sin responder", apuntados, [])
+
+        # A los cinco minutos ya no es un parpadeo.
+        reloj["t"] += 260
+        ping_motor._registrar_cambios_de_conexion({"pc": False}, hosts)
+        c.revisar("a los cinco minutos sí se apunta la desconexión",
+                  apuntados, ["EQUIPO_DESCONECTADO"])
+
+        # Y cuando vuelve basta un minuto: ahí no hay falsa alarma que evitar y
+        # no interesa que un equipo ya de vuelta tarde cinco minutos en constar.
+        reloj["t"] += 30
+        ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        c.revisar("volver no se apunta a los 30 s", apuntados,
+                  ["EQUIPO_DESCONECTADO"])
+        # +70 sobre el instante en que VOLVIÓ (no sobre el de la
+        # desconexión): la cuenta de estabilización arranca cuando cambia el
+        # estado crudo, así que van 30+70 = 100 s de equipo respondiendo.
+        reloj["t"] += 70
+        ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        c.revisar("pasado el minuto sí", apuntados,
+                  ["EQUIPO_DESCONECTADO", "EQUIPO_CONECTADO"])
+
+        # Nunca dos seguidas del mismo signo, por mucho que se repita la vuelta.
+        for _ in range(5):
+            reloj["t"] += 400
+            ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        c.revisar("no se repite lo ya apuntado", apuntados,
+                  ["EQUIPO_DESCONECTADO", "EQUIPO_CONECTADO"])
+
+        # Un parpadeo entero (se va y vuelve antes de los cinco minutos) no deja
+        # rastro: es exactamente el ruido que llenaba el registro.
+        reloj["t"] += 10
+        ping_motor._registrar_cambios_de_conexion({"pc": False}, hosts)
+        reloj["t"] += 120
+        ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        reloj["t"] += 400
+        ping_motor._registrar_cambios_de_conexion({"pc": True}, hosts)
+        c.revisar("un parpadeo de dos minutos no deja rastro", apuntados,
+                  ["EQUIPO_DESCONECTADO", "EQUIPO_CONECTADO"])
+    finally:
+        ping_motor.audit.registrar_sistema = original
+        ping_motor.time.monotonic = original_reloj
+        _time.monotonic = original_reloj
+        ping_motor._PENDIENTE.clear()
+        ping_motor._REGISTRADO.clear()
     return c

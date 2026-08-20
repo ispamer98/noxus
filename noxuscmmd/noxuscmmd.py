@@ -8,6 +8,8 @@ from .domains.notifications import endpoint as aviso_endpoint
 from .domains.automations import engine as automations_engine
 from .domains.infra import backups
 from .domains.infra import metricas
+from .domains.infra import ping_motor
+from .core.ssh_manager import SSHManager
 from .domains.nodes import planos
 from .domains.security import logs_store
 from .domains.security import presencia_motor
@@ -160,6 +162,16 @@ app.register_lifespan_task(backups.run_forever)
 # sesión por el mismo motivo que las tres de arriba: un histórico que solo se
 # rellena cuando alguien tiene la web abierta tendría un agujero cada noche.
 app.register_lifespan_task(metricas.run_forever)
+
+# Quién está en línea. De proceso y no por sesión: dependía de que hubiera un
+# navegador abierto y, cuando ese navegador se cerraba, el estado de los
+# equipos se quedaba congelado hasta reiniciar el servicio (ver la cabecera de
+# infra/ping_motor.py).
+app.register_lifespan_task(ping_motor.run_forever)
+
+# La conexión SSH persistente (y su keepalive, que la reconecta si se cae).
+# Misma razón que el ping: no puede depender de que haya un navegador abierto.
+app.register_lifespan_task(SSHManager.run_forever)
 # El puente Hue falso con el que los Echo descubren los comandos de voz sin
 # skill, sin cuenta de Amazon y sin nube (ver domains/devices/hue.py). Si no
 # puede abrir el puerto 80 lo dice en el log y se apaga: es un extra, y que

@@ -7,7 +7,6 @@ clase, solo el registry.
 import asyncio
 import base64
 import os
-import time
 from pathlib import Path
 import reflex as rx
 
@@ -15,82 +14,9 @@ from ..auth import permisos
 from ..devices import registry, ssh_bus, gpio_bus
 from ..devices import actions as device_actions
 from ..nodes import store as nodes_store, rdp
-from ..security import audit, logs
-from ...core.connectivity import NetUtils
 from ...core.sensors import Sensors
-from ...core.ssh_manager import SSHManager
+from ...core import bus
 from ...core import sesiones
-
-_SSH_STARTED = False
-
-# Ya hay un bucle en este proceso pingando y persistiendo el estado de los
-# equipos. Es de proceso (no por sesión) a propósito: ver actualizar_estados.
-_PING_STARTED = False
-
-# Cuánto tiene que aguantar un equipo en su estado nuevo antes de que se
-# apunte. Un ping perdido suelto no es una desconexión: sin esta espera, un
-# equipo por wifi o al otro lado de la VPN llenaba el registro de pares
-# desconectado/conectado cada pocos minutos, y con ese ruido el histórico de
-# equipos no servía para nada.
-#
-# Asimétrico a propósito: con un minuto seguían colándose desconexiones falsas
-# de equipos que solo habían perdido la VPN un rato, así que para apuntar que
-# uno se ha ido se le dan cinco minutos. La vuelta se mantiene en un minuto —
-# ahí no hay falsa alarma que evitar y no interesa que un equipo que ya está
-# de vuelta tarde cinco minutos en constar como conectado.
-_ESTABILIZACION_DESCONEXION = 300.0  # segundos
-_ESTABILIZACION_CONEXION = 60.0  # segundos
-
-# Estado CRUDO en curso de cada equipo y desde cuándo lo está: (online, t).
-_PENDIENTE: dict[str, tuple[bool, float]] = {}
-
-# Último estado que se llegó a APUNTAR de cada equipo. Es lo que garantiza que
-# los eventos alternen: nunca dos conexiones ni dos desconexiones seguidas del
-# mismo equipo, porque solo se apunta lo que difiere de esto.
-_REGISTRADO: dict[str, bool] = {}
-
-
-def _registrar_cambios_de_conexion(estados: dict[str, bool], hosts: dict) -> None:
-    """Apunta los equipos que se conectan o se desconectan, una vez confirmado.
-
-    Confirmado = el estado nuevo lleva ya su espera de estabilización seguida
-    (cinco minutos para irse, uno para volver). Y solo si difiere del último
-    apuntado, así que la secuencia de un equipo siempre alterna
-    conectado/desconectado.
-
-    De proceso y no por sesión (igual que _PING_STARTED, y por lo mismo): solo
-    lo ejecuta el bucle que de verdad pinga, así que da igual cuántas pestañas
-    haya abiertas — cada cambio se apunta una vez, no una por sesión."""
-    ahora = time.monotonic()
-    for host_id, online in estados.items():
-        crudo, desde = _PENDIENTE.get(host_id, (online, ahora))
-        if crudo != online:
-            crudo, desde = online, ahora  # acaba de cambiar: empieza la cuenta
-        _PENDIENTE[host_id] = (crudo, desde)
-
-        if host_id not in _REGISTRADO:
-            # Primera vuelta con este equipo: se toma como punto de partida.
-            # Si no, al arrancar el panel se apuntaría de golpe el estado de
-            # todos como si acabase de cambiar.
-            _REGISTRADO[host_id] = online
-            continue
-        if _REGISTRADO[host_id] == online:
-            continue
-        espera = _ESTABILIZACION_CONEXION if online else _ESTABILIZACION_DESCONEXION
-        if (ahora - desde) < espera:
-            continue
-
-        _REGISTRADO[host_id] = online
-        host = hosts.get(host_id)
-        nombre = getattr(host, "name", host_id)
-        ip = getattr(getattr(host, "ssh", None), "host", "")
-        audit.registrar_sistema(
-            logs.EQUIPOS,
-            "EQUIPO_CONECTADO" if online else "EQUIPO_DESCONECTADO",
-            f"{nombre} · {ip}" if ip else nombre,
-            entidad=host_id,
-        )
-
 
 class InfraState(rx.State):
     status: str = "Esperando..."
@@ -119,16 +45,9 @@ class InfraState(rx.State):
     # ── Carga inicial ────────────────────────────────────────────────────
     @rx.event
     async def on_load(self):
-        global _SSH_STARTED
-        if not _SSH_STARTED:
-            _SSH_STARTED = True
-            asyncio.create_task(SSHManager.connect_async())
-            yield InfraState.keepalive_ssh_task
+        # La conexión SSH persistente y su keepalive los arranca el proceso
+        # (ver core/ssh_manager.run_forever), no esta pantalla.
         yield InfraState.actualizar_estados
-
-    @rx.event(background=True)
-    async def keepalive_ssh_task(self):
-        await SSHManager.keep_alive_loop()
 
     # ── Ping de TODOS los equipos ────────────────────────────────────────
     # Desde que los equipos añadidos desde la web y los de siempre viven en la
@@ -147,25 +66,24 @@ class InfraState(rx.State):
     # a nadie. Todos acaban viendo el mismo estado igualmente.
     @rx.event(background=True)
     async def actualizar_estados(self):
-        global _PING_STARTED
-        soy_el_que_pinga = not _PING_STARTED
-        if soy_el_que_pinga:
-            _PING_STARTED = True
+        """Refleja en la pantalla quién está en línea. SOLO LEE.
+
+        Quien pinga es infra/ping_motor.py, una tarea de proceso. Antes pingaba
+        desde aquí el primer bucle que arrancara, con un global para que los
+        demás no repitieran el trabajo; el día que los bucles de sesión
+        empezaron a morirse con su navegador, ese global se quedó puesto sin
+        nadie detrás y el estado de los equipos dejó de actualizarse hasta
+        reiniciar el servicio — un PC apagado seguía figurando en línea. La
+        explicación larga está en la cabecera de ping_motor.py."""
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.EQUIPOS)
         while True:
-            if soy_el_que_pinga:
-                host_items = list(registry.hosts().items())
-                results = await NetUtils.ping_all(
-                    [(h.ssh.host, h.ping_retries) for _, h in host_items]
-                )
-                estados = {hid: online for (hid, _), online in zip(host_items, results)}
-                _registrar_cambios_de_conexion(estados, dict(host_items))
-                await asyncio.to_thread(nodes_store.set_host_online_bulk, estados)
-            else:
-                estados = await asyncio.to_thread(nodes_store.get_all_host_online)
+            estados = await asyncio.to_thread(nodes_store.get_all_host_online)
             async with self:
                 self.host_online.update(estados)
-            if not await sesiones.espera(guardia, 8 if soy_el_que_pinga else 3):
+            # Espera a que el motor avise de que ha pingado (core/bus.py), con
+            # su tope por si el fichero lo tocara algo de fuera del proceso.
+            if not await aviso.espera(guardia, 8.0):
                 return
 
     # ── Acciones genéricas por host ──────────────────────────────────────

@@ -110,6 +110,19 @@ class SSHManager:
             return f"ERROR: {e}"
 
     @classmethod
+    async def run_forever(cls):
+        """Conexión persistente y su keepalive, para el lifespan.
+
+        Antes esto lo arrancaba la primera sesión que cargaba el panel, con un
+        global (`_SSH_STARTED`) para no repetirlo. Cuando los bucles de sesión
+        pasaron a morir con su navegador, el keepalive se moría con ellos y el
+        global impedía que nadie lo relanzara: la conexión se quedaba sin quien
+        la vigilara ni la reconectara. Mantener viva una conexión SSH no es
+        cosa de una pantalla."""
+        await cls.connect_async()
+        await cls.keep_alive_loop()
+
+    @classmethod
     async def keep_alive_loop(cls):
         """Keepalive loop — lanzar UNA sola vez como background task."""
         while True:
