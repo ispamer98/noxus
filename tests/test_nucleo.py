@@ -95,7 +95,7 @@ def _retardos() -> Caso:
 
 def ejecutar() -> list[Caso]:
     return [_escritura_atomica(), _permisos(), _retardos(), _avisos(),
-            _equipos_en_plano(), _quien_esta_en_linea()]
+            _equipos_en_plano(), _quien_esta_en_linea(), _medidas_del_servidor()]
 
 
 def _avisos() -> Caso:
@@ -282,4 +282,84 @@ def _quien_esta_en_linea() -> Caso:
         _time.monotonic = original_reloj
         ping_motor._PENDIENTE.clear()
         ping_motor._REGISTRADO.clear()
+    return c
+
+
+def _medidas_del_servidor() -> Caso:
+    """Lo que se puede medir de la máquina donde corre todo esto.
+
+    Dos criterios que no son evidentes y por eso se prueban:
+
+      · NUNCA un cero cuando no se puede medir. Un hueco en la gráfica dice la
+        verdad («esto no se leyó»); un cero dice que el servidor se enfrió de
+        golpe o que se quedó sin usar la CPU, y encima arrastra la media.
+      · La zona térmica tiene que ser la de la CPU. Esta máquina expone también
+        la de la tarjeta wifi, y guardar esa creyendo que es el procesador daría
+        una gráfica que sube con el tráfico de red en vez de con el trabajo.
+
+    Se lee de /proc y /sys, así que no toca nada de la casa.
+    """
+    from pathlib import Path as _Path
+    from time import sleep as _time_sleep
+    import tempfile as _tempfile
+    from noxuscmmd.core import maquina
+
+    c = Caso("Medidas del servidor")
+
+    # Con las de verdad de esta máquina: o un número con sentido, o None.
+    temp = maquina.temperatura_cpu()
+    c.cierto("la temperatura es creíble o no hay",
+             temp is None or 0 < temp < 150)
+    ram = maquina.uso_ram()
+    c.cierto("la memoria va de 0 a 100", ram is None or 0 <= ram <= 100)
+    disco = maquina.uso_disco()
+    c.cierto("el disco va de 0 a 100", disco is None or 0 <= disco <= 100)
+
+    # El uso de CPU necesita DOS lecturas para poder restar: la primera no
+    # puede inventarse un cero.
+    maquina._reiniciar_para_pruebas()
+    c.revisar("la primera lectura de CPU no inventa un valor",
+              maquina.uso_cpu(), None)
+    # Con una pausa de por medio: sin tiempo transcurrido no hay nada que
+    # restar y devolver None es lo correcto (en producción van cada 5 minutos).
+    _time_sleep(0.15)
+    segunda = maquina.uso_cpu()
+    c.cierto("la segunda, con tiempo de por medio, ya da un porcentaje",
+             segunda is not None and 0 <= segunda <= 100)
+
+    # Zonas térmicas de mentira: la wifi primero, la CPU después. Tiene que
+    # elegir la CPU aunque la otra vaya delante.
+    carpeta = _Path(_tempfile.mkdtemp(prefix="noxus_termica_"))
+    original = maquina._TERMICAS
+    try:
+        for i, (tipo, milesimas) in enumerate((("iwlwifi_1", "70000"),
+                                               ("x86_pkg_temp", "41000"))):
+            zona = carpeta / f"thermal_zone{i}"
+            zona.mkdir()
+            (zona / "type").write_text(tipo + "\n")
+            (zona / "temp").write_text(milesimas + "\n")
+        maquina._TERMICAS = carpeta
+        c.revisar("coge la CPU y no la wifi", maquina.temperatura_cpu(), 41.0)
+
+        # Y sin ninguna zona válida: hueco, no cero.
+        vacia = _Path(_tempfile.mkdtemp(prefix="noxus_termica_vacia_"))
+        maquina._TERMICAS = vacia
+        c.revisar("sin sensor no devuelve cero", maquina.temperatura_cpu(), None)
+
+        # Una lectura absurda tampoco vale: un sensor mal leído no es un dato.
+        rara = _Path(_tempfile.mkdtemp(prefix="noxus_termica_rara_"))
+        zona = rara / "thermal_zone0"
+        zona.mkdir()
+        (zona / "type").write_text("x86_pkg_temp\n")
+        (zona / "temp").write_text("999000\n")   # 999 grados
+        maquina._TERMICAS = rara
+        c.revisar("una temperatura imposible se descarta",
+                  maquina.temperatura_cpu(), None)
+    finally:
+        maquina._TERMICAS = original
+        maquina._reiniciar_para_pruebas()
+
+    # Un punto de montaje que no existe: None, no cero.
+    c.revisar("un disco que no existe no da cero",
+              maquina.uso_disco("/esto/no/existe/de/ninguna/manera"), None)
     return c

@@ -31,9 +31,10 @@ import os
 import time
 
 from ..devices import registry
-from ..nodes import store as nodes_store
+from ..nodes import operations, store as nodes_store
 from ..security import logs_store
 from ...core.connectivity import NetUtils
+from ...core import maquina
 from ...core.sensors import Sensors
 
 # Cada cuánto se toma una muestra. Cinco minutos dan 288 al día por serie: de
@@ -56,9 +57,92 @@ EQUIPOS_TOTAL = "equipos.total"
 # nada. Se marcan desde la pestaña Métricas.
 PREFIJO_EQUIPO = "equipo."
 
+# El propio servidor. Es la máquina donde corre todo esto —el panel, la alarma,
+# las automatizaciones—, así que si se queda sin disco o se calienta, no falla
+# una cosa: fallan todas. Se lee de /proc y /sys, sin SSH y sin coste (ver
+# core/maquina.py).
+SERVIDOR_TEMP = "servidor.temp"
+SERVIDOR_CPU = "servidor.cpu"
+SERVIDOR_RAM = "servidor.ram"
+SERVIDOR_DISCO = "servidor.disco"
+
+# Temperatura de UN equipo por SSH: `temp.<host_id>`. Igual que la serie de
+# arriba, solo de los marcados en métricas, y solo si están respondiendo — a un
+# equipo apagado no se le abre una sesión SSH cada cinco minutos para nada.
+PREFIJO_TEMP_EQUIPO = "temp."
+
+# Equipos que YA tienen su propia serie de temperatura y a los que por tanto no
+# se les pregunta otra vez por SSH — dos series de lo mismo saldrían en el
+# catálogo como dos cosas distintas:
+#
+#   raspberry  la tiene desde antes de que esto midiera temperaturas de
+#              cualquier equipo (TEMP_CPU), y con meses de histórico detrás.
+#   server     es ESTA máquina. Se lee de /sys directamente y sin coste
+#              (SERVIDOR_TEMP); abrirse una sesión SSH a uno mismo para
+#              preguntarse la temperatura no tiene ningún sentido.
+EQUIPOS_CON_SERIE_PROPIA = ("raspberry", "server")
+
 
 def clave_de_equipo(host_id: str) -> str:
     return f"{PREFIJO_EQUIPO}{host_id}"
+
+
+def clave_de_temperatura(host_id: str) -> str:
+    return f"{PREFIJO_TEMP_EQUIPO}{host_id}"
+
+
+async def _servidor() -> None:
+    """Las cuatro del propio servidor. Cada una por su lado: que no se pueda
+    leer la temperatura no puede dejarnos sin el disco, que es la que avisa con
+    tiempo de que esto se va a parar."""
+    for clave, medir in (
+        (SERVIDOR_TEMP, maquina.temperatura_cpu),
+        (SERVIDOR_CPU, maquina.uso_cpu),
+        (SERVIDOR_RAM, maquina.uso_ram),
+        (SERVIDOR_DISCO, maquina.uso_disco),
+    ):
+        try:
+            valor = await asyncio.to_thread(medir)
+        except Exception as e:
+            print(f"⚠️ Métrica {clave}: {e}")
+            continue
+        # None es «no se pudo medir»: se deja el hueco. Ver core/maquina.py.
+        if valor is not None:
+            await asyncio.to_thread(logs_store.anotar, clave, float(valor))
+
+
+async def _temperaturas_de_equipos() -> None:
+    """Temperatura por SSH de los equipos marcados en métricas.
+
+    Solo a los que están respondiendo, y eso se sabe sin pingar otra vez: lo
+    acaba de dejar escrito el ping del proceso (infra/ping_motor.py). Abrirle
+    una sesión SSH a un equipo apagado es esperar a que expire el temporizador
+    para nada, cinco minutos después otra vez.
+    """
+    marcados = await asyncio.to_thread(nodes_store.equipos_en_metricas)
+    if not marcados:
+        return
+    en_linea = await asyncio.to_thread(nodes_store.get_all_host_online)
+    fichas = registry.hosts()
+    for equipo in marcados:
+        host_id = equipo["id"]
+        if host_id in EQUIPOS_CON_SERIE_PROPIA or not en_linea.get(host_id):
+            continue
+        # Solo a quien PUEDE contestar. En esta casa están marcados en métricas
+        # todos los equipos —también los iPhones y la tablet, porque interesa
+        # ver cuándo están en casa—, y a un móvil no se le abre una sesión SSH
+        # cada cinco minutos para preguntarle la temperatura: no la tiene, no
+        # hay usuario con el que entrar, y la espera se paga igual.
+        ssh = getattr(fichas.get(host_id), "ssh", None)
+        if not getattr(ssh, "user", ""):
+            continue
+        try:
+            grados = await operations.read_host_temperature(host_id)
+        except Exception:
+            continue  # ese equipo no sabe darla; no es un fallo del muestreo
+        if grados is not None and 0 < grados < 150:
+            await asyncio.to_thread(logs_store.anotar,
+                                    clave_de_temperatura(host_id), float(grados))
 
 
 async def _temperatura() -> None:
@@ -103,7 +187,9 @@ async def _equipos() -> None:
 async def muestrear() -> None:
     """Una ronda. Cada serie va en su propio try: que el SSH de la temperatura
     esté caído no puede dejarnos sin el recuento de equipos."""
-    for nombre, tarea in (("temperatura", _temperatura), ("equipos", _equipos)):
+    for nombre, tarea in (("temperatura", _temperatura), ("equipos", _equipos),
+                          ("servidor", _servidor),
+                          ("temperaturas de equipos", _temperaturas_de_equipos)):
         try:
             await tarea()
         except Exception as e:

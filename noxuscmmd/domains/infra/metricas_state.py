@@ -76,12 +76,22 @@ def _hora_bonita(clave: str) -> str:
 def _nombre_de_serie(clave: str, equipos: dict[str, str]) -> str:
     """Cómo se lee una clave de serie. Los equipos con su nombre de verdad, no
     con su id: «equipo.host_3f2a» no le dice nada a nadie."""
-    if clave == metricas.TEMP_CPU:
-        return "Temperatura de la Raspberry"
-    if clave == metricas.EQUIPOS_EN_LINEA:
-        return "Equipos en línea"
-    if clave == metricas.EQUIPOS_TOTAL:
-        return "Equipos dados de alta"
+    fijos = {
+        metricas.TEMP_CPU: "Temperatura de la Raspberry",
+        metricas.EQUIPOS_EN_LINEA: "Equipos en línea",
+        metricas.EQUIPOS_TOTAL: "Equipos dados de alta",
+        metricas.SERVIDOR_TEMP: "Servidor: temperatura",
+        metricas.SERVIDOR_CPU: "Servidor: uso de CPU (%)",
+        metricas.SERVIDOR_RAM: "Servidor: memoria usada (%)",
+        metricas.SERVIDOR_DISCO: "Servidor: disco ocupado (%)",
+    }
+    if clave in fijos:
+        return fijos[clave]
+    # Los equipos, con su nombre de verdad: «equipo.host_3f2a» o
+    # «temp.host_3f2a» no le dicen nada a nadie.
+    if clave.startswith(metricas.PREFIJO_TEMP_EQUIPO):
+        host_id = clave[len(metricas.PREFIJO_TEMP_EQUIPO):]
+        return f"Temperatura: {equipos.get(host_id, host_id)}"
     if clave.startswith(metricas.PREFIJO_EQUIPO):
         host_id = clave[len(metricas.PREFIJO_EQUIPO):]
         return f"Equipo: {equipos.get(host_id, host_id)}"
