@@ -328,16 +328,33 @@ def _sin_acceso() -> rx.Component:
             rx.icon("shield-off", size=34, color=theme.MUTED),
             rx.text("Este dispositivo no tiene acceso", size="4", weight="bold",
                     color=theme.TEXT),
-            rx.text("Pídele a un administrador que le dé acceso desde "
-                    "Ajustes → Dispositivos, o usa un enlace de invitación.",
+            rx.text("Di quién eres y por qué quieres entrar: le llegará el "
+                    "aviso a un administrador para que decida.",
                     size="2", color=theme.MUTED, text_align="center",
                     max_width="420px"),
-            # El nombre sale para que quien lo autorice sepa cuál de la lista es
-            # este accesorio. Si no tiene nombre todavía, no se inventa nada.
-            rx.cond(
-                AuthState.nombre_dispositivo != "",
-                rx.badge(AuthState.nombre_dispositivo, size="2",
-                         variant="surface"),
+            # Nombre y mensaje son lo que ve el administrador en Ajustes y en
+            # el propio aviso que le llega — sin esto no tiene forma de saber
+            # cuál de la lista es este accesorio ni por qué está pidiendo
+            # entrar. El nombre precarga el que ya tuviera (de la suscripción
+            # push, si la tiene); si no tiene ninguno, no se inventa nada.
+            rx.vstack(
+                rx.input(
+                    value=AuthState.nombre_acceso,
+                    on_change=AuthState.set_nombre_acceso,
+                    placeholder="Tu nombre",
+                    size="3", width="100%", max_length=40,
+                ),
+                rx.input(
+                    value=AuthState.nota_acceso,
+                    on_change=AuthState.set_nota_acceso,
+                    placeholder="Por qué quieres entrar",
+                    size="3", width="100%", max_length=200,
+                    on_key_down=lambda k: rx.cond(
+                        k == "Enter", AuthState.enviar_nota_acceso, rx.noop()),
+                ),
+                rx.button("Pedir acceso", on_click=AuthState.enviar_nota_acceso,
+                          size="2", width="100%", variant="soft"),
+                spacing="2", width="min(360px, 90vw)", padding_top="6px",
             ),
             spacing="3", align="center",
         ),
@@ -400,15 +417,53 @@ def _panel() -> rx.Component:
     )
 
 
+# Lo que hay que hacer al ENTRAR en el panel. Va como `on_load` de la pagina
+# (ver noxuscmmd.py) y no como `on_mount` de este componente, y la diferencia
+# importa: Reflex reenvia los on_load en CADA (re)conexion del websocket, asi
+# que una pestana que vuelve de segundo plano —el movil, sin ir mas lejos—
+# recupera sus bucles de refresco sola. Con on_mount solo corrian al montar el
+# componente: tras una reconexion la pantalla se quedaba viva pero sorda, sin
+# enterarse de nada, y habia que cerrar la aplicacion y abrirla.
+#
+# Que se repitan no duplica nada: cada bucle de sesion releva al anterior en
+# vez de sumarse a el (ver core/sesiones.py), y los de proceso siguen con su
+# propio flag _STARTED.
+EVENTOS_DE_ENTRADA = [
+    # El PRIMERO de todos: hasta que no se sabe qué dispositivo es
+    # este, no se sabe qué puede hacer ni qué se le debe enseñar.
+    AuthState.identificar,
+    AuthState.canjear_de_la_url,
+    # Vigila en vivo si a este accesorio le cambian el acceso: quitarle el
+    # permiso tiene que echarlo en el momento, no al recargar.
+    AuthState.vigilar_acceso,
+    # Para que el aviso de «dispositivo desconocido» tenga datos en
+    # cualquier vista, no solo dentro de Ajustes → Dispositivos.
+    AuthAdminState.on_load,
+    SecurityState.on_load,
+    InfraState.on_load,
+    RegistryState.on_load,
+    NodesState.on_load,
+    GroupsState.on_load,
+    HostActionsState.on_load,
+    AccessControlState.on_load,
+    LogsState.on_load,
+    AlertasState.on_load,
+    AutomationsState.on_load,
+    VideoWallState.on_load,
+    BackupsState.on_load,
+    check_existing_subscription_event(),
+    # El último a propósito: abre la vista que pida ?vista= en la URL y
+    # tiene que poder pisar el "overview" de partida. Es lo que hace que
+    # los atajos del icono de la aplicación (manifest.json → shortcuts)
+    # lleguen a donde dicen.
+    DashboardState.aplicar_url,
+    # Engancharse a una cuenta atras de salida que ya estuviera corriendo.
+    ArmingState.recuperar_cuenta,
+]
+
+
 def dashboard_page() -> rx.Component:
     return rx.box(
-        rx.script(
-            """
-            window.addEventListener('pagehide', () => {
-                if (window.socket) { window.socket.close(); }
-            });
-            """
-        ),
         # LA PUERTA. Sin permiso de entrada no se monta el panel: no es que se
         # esconda con CSS, es que no se pinta. Lo que no está en la página no se
         # puede sacar con las herramientas del navegador.
@@ -442,38 +497,6 @@ def dashboard_page() -> rx.Component:
             appearance="dark",
             accent_color=AuthState.acento,
         ),
-        on_mount=[
-            # El PRIMERO de todos: hasta que no se sabe qué dispositivo es
-            # este, no se sabe qué puede hacer ni qué se le debe enseñar.
-            AuthState.identificar,
-            AuthState.canjear_de_la_url,
-            # Vigila en vivo si a este accesorio le cambian el acceso: quitarle el
-            # permiso tiene que echarlo en el momento, no al recargar.
-            AuthState.vigilar_acceso,
-            # Para que el aviso de «dispositivo desconocido» tenga datos en
-            # cualquier vista, no solo dentro de Ajustes → Dispositivos.
-            AuthAdminState.on_load,
-            SecurityState.on_load,
-            InfraState.on_load,
-            RegistryState.on_load,
-            NodesState.on_load,
-            GroupsState.on_load,
-            HostActionsState.on_load,
-            AccessControlState.on_load,
-            LogsState.on_load,
-            AlertasState.on_load,
-            AutomationsState.on_load,
-            VideoWallState.on_load,
-            BackupsState.on_load,
-            check_existing_subscription_event(),
-            # El último a propósito: abre la vista que pida ?vista= en la URL y
-            # tiene que poder pisar el "overview" de partida. Es lo que hace que
-            # los atajos del icono de la aplicación (manifest.json → shortcuts)
-            # lleguen a donde dicen.
-            DashboardState.aplicar_url,
-            # Engancharse a una cuenta atras de salida que ya estuviera corriendo.
-            ArmingState.recuperar_cuenta,
-        ],
         min_height="100vh",
         width="100%",
         background=f"radial-gradient(circle at top, {theme.BG_TOPBAR} 0%, {theme.BG_APP} 55%)",

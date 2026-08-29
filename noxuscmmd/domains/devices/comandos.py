@@ -23,6 +23,7 @@ import unicodedata
 from ..auth import permisos
 from ..nodes import store as nodes_store
 from ..modes import store as modes_store
+from ..automations import store as automations_store
 from ..security import groups_store
 
 # Cuántos se pintan. Con la lista entera de una casa grande, el diálogo se
@@ -60,6 +61,68 @@ _VISTAS = (
 )
 
 
+# Acciones que Amazon admite como control doméstico sin abrir una vía lateral
+# hacia accesos o seguridad. Esta política se usa tanto al construir el
+# catálogo oficial como al guardar una secuencia creada desde el editor Alexa:
+# una sola lista, una sola decisión.
+_TIPOS_ALEXA_SEGUROS = {
+    "light.set", "ir_button.press", "host_button.run", "host.action",
+    "host.wol", "notify", "log", "wait",
+}
+
+
+def paso_permitido_alexa(
+        paso: dict, *, reglas: list[dict] | None = None,
+        modos: list[dict] | None = None,
+        visitadas: set[str] | None = None) -> bool:
+    """Si un paso puede publicarse en la Skill oficial de Alexa.
+
+    Las referencias a reglas y modos se revisan recursivamente. Así no basta
+    con esconder una apertura de puerta dentro de «Rutina noche» para saltarse
+    la exclusión de accesos y alarma. ``rule.enable`` tampoco se permite: una
+    orden de voz que habilitase una regla insegura sería el mismo bypass, solo
+    que diferido hasta su siguiente disparo.
+    """
+    tipo = str(paso.get("type") or "")
+    visitadas = set() if visitadas is None else set(visitadas)
+
+    if reglas is None:
+        try:
+            reglas = automations_store.read_all()
+        except automations_store.ArchivoCorrupto:
+            reglas = []
+    if modos is None:
+        modos = modes_store.leer().get("modos", [])
+
+    reglas_por_id = {regla["id"]: regla for regla in reglas}
+    modos_por_id = {modo["id"]: modo for modo in modos}
+
+    if tipo == "rule.run":
+        regla_id = str(paso.get("target", "")).removeprefix("rule:")
+        if not regla_id or regla_id in visitadas:
+            return False
+        regla = reglas_por_id.get(regla_id)
+        if regla is None:
+            return False
+        visitadas.add(regla_id)
+        return all(
+            paso_permitido_alexa(
+                accion, reglas=reglas, modos=modos, visitadas=visitadas)
+            for accion in regla.get("actions", [])
+        )
+
+    if tipo == "modo":
+        modo = modos_por_id.get(str(paso.get("target", "")))
+        return bool(modo is not None and all(
+            paso_permitido_alexa(
+                {"type": "rule.run", "target": f"rule:{regla_id}"},
+                reglas=reglas, modos=modos, visitadas=visitadas)
+            for regla_id in modo.get("reglas", [])
+        ))
+
+    return tipo in _TIPOS_ALEXA_SEGUROS
+
+
 def comandos() -> list[dict]:
     """Todo lo que se puede hacer, ya concreto.
 
@@ -77,7 +140,8 @@ def comandos() -> list[dict]:
         add(f"vista:{vista}", f"Ir a {nombre}", "Ir a", icono,
             {"type": "vista", "target": vista})
 
-    for modo in sorted(modes_store.leer()["modos"], key=lambda m: m.get("orden", 0)):
+    modos = modes_store.leer()["modos"]
+    for modo in sorted(modos, key=lambda m: m.get("orden", 0)):
         add(f"modo:{modo['id']}", f"Poner la casa en «{modo['nombre']}»", "Modos",
             modo.get("icono") or "house", {"type": "modo", "target": modo["id"]})
 
@@ -111,6 +175,27 @@ def comandos() -> list[dict]:
                 {"type": "host.action", "target": f"host:{equipo['id']}",
                  "params": {"accion": accion}})
 
+    nombres_equipos = {equipo["id"]: equipo["name"] for equipo in datos["hosts"]}
+    for boton in datos.get("host_buttons", []):
+        equipo = nombres_equipos.get(boton.get("host_id"), boton.get("host_id", ""))
+        add(f"host_button:{boton['id']}",
+            f"{equipo}: {boton.get('label') or boton['id']}", "Equipos",
+            "square-mouse-pointer",
+            {"type": "host_button.run", "target": f"host_button:{boton['id']}"})
+
+    try:
+        reglas = automations_store.read_all()
+    except automations_store.ArchivoCorrupto as error:
+        # La paleta y la voz siguen ofreciendo el resto; una regla corrupta no
+        # puede convertir en inutilizables luces, mandos y equipos.
+        print(f"⚠️ Catálogo de comandos sin automatizaciones: {error}")
+        reglas = []
+    for regla in reglas:
+        add(f"regla:{regla['id']}",
+            f"Ejecutar la automatización «{regla.get('name') or regla['id']}»",
+            "Automatizaciones", regla.get("icon") or "workflow",
+            {"type": "rule.run", "target": f"rule:{regla['id']}"})
+
     for valor, verbo in (("on", "Armar"), ("off", "Desarmar")):
         add(f"sistema:{valor}", f"{verbo} el sistema", "Alarma", "shield",
             {"type": "system.arm", "target": "", "params": {"armed": valor}})
@@ -127,6 +212,9 @@ def comandos() -> list[dict]:
                 {"type": "group.arm", "target": f"group:{grupo['id']}",
                  "params": {"armed": valor}})
 
+    for comando in salida:
+        comando["alexa_allowed"] = paso_permitido_alexa(
+            comando["paso"], reglas=reglas, modos=modos)
     return salida
 
 
@@ -141,6 +229,7 @@ CAPACIDAD = {
     "ir_button.press": permisos.EQUIPOS,
     "host.wol": permisos.EQUIPOS,
     "host.action": permisos.EQUIPOS,
+    "host_button.run": permisos.EQUIPOS,
     "system.arm": permisos.ARMAR,
     "group.arm": permisos.ARMAR,
     # Poner un modo puede armar la casa de un toque: mismo permiso que armar.

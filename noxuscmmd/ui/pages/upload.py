@@ -1,3 +1,9 @@
+"""
+Página suelta de subida de archivos (`/upload`), separada del panel principal
+porque es un flujo de un solo paso que no necesita ni sidebar ni topbar. El
+manejador real (qué se hace con el archivo subido) vive en
+domains/infra/state.py; aquí solo está el formulario.
+"""
 import reflex as rx
 from ...domains.infra.state import InfraState
 

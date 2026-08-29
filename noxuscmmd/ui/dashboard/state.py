@@ -78,6 +78,64 @@ class DashboardState(rx.State):
         self.active_view = view
 
     @rx.event
+    async def iniciar_secuencia_alexa(self, slot: str = "action"):
+        """Conserva la ficha Alexa y abre Auto como editor de pasos.
+
+        Vive en el estado de navegación porque coordina dos dominios y una
+        vista; ni Alexa ni Automatizaciones deben conocer la presentación del
+        dashboard.
+        """
+        from ...domains.automations.state import AutomationsState
+        from ...domains.devices.voz_state import VozState
+
+        voz = await self.get_state(VozState)
+        auto = await self.get_state(AutomationsState)
+        if not voz.alexa_editando:
+            return
+        slot = slot if slot in {"on", "off", "action"} else "action"
+        base = voz.alexa_nombre.strip() or "Alexa"
+        nombre = {
+            "on": f"Encender {base}",
+            "off": f"Apagar {base}",
+            "action": f"Secuencia {base}",
+        }[slot]
+        voz.suspender_editor_alexa(slot)
+        auto.preparar_secuencia_alexa(nombre)
+        self.active_view = "automations"
+
+    @rx.event
+    async def cancelar_editor_automatizacion(self):
+        """Cancela el editor normal o vuelve a Alexa conservando su ficha."""
+        from ...domains.automations.state import AutomationsState
+        from ...domains.devices.voz_state import VozState
+
+        auto = await self.get_state(AutomationsState)
+        desde_alexa = auto.desde_alexa
+        auto._cancelar_edicion()
+        if desde_alexa:
+            voz = await self.get_state(VozState)
+            voz.reanudar_editor_alexa()
+            self.active_view = "voz"
+
+    @rx.event
+    async def guardar_editor_automatizacion(self):
+        """Guarda una regla y, si era una secuencia, la coloca en su ranura
+        ON/OFF/acción de Alexa antes de volver al diálogo original."""
+        from ...domains.automations.state import AutomationsState
+        from ...domains.devices.voz_state import VozState
+
+        auto = await self.get_state(AutomationsState)
+        desde_alexa = auto.desde_alexa
+        rule_id = await auto._guardar_regla()
+        if not rule_id:
+            return
+        auto.desde_alexa = False
+        if desde_alexa:
+            voz = await self.get_state(VozState)
+            voz.reanudar_con_secuencia(rule_id)
+            self.active_view = "voz"
+
+    @rx.event
     def aplicar_url(self):
         """Abre directamente la vista que pida la URL: /panel?vista=video_wall.
 

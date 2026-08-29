@@ -11,6 +11,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("DISPOSITIVOS_FILE", "dispositivos.json"))
 
 # ── Roles ────────────────────────────────────────────────────────────────
@@ -106,6 +108,11 @@ def escribir(datos: dict) -> None:
     tmp = ARCHIVO.with_suffix(".tmp")
     tmp.write_text(json.dumps(datos, indent=2, ensure_ascii=False) + "\n")
     os.replace(tmp, ARCHIVO)
+    # Único punto por el que pasa cualquier alta, cambio de rol, baja,
+    # invitación o bloqueo: publicar aquí basta para que todas las pestañas
+    # abiertas (la del propio afectado incluida) se enteren al instante en vez
+    # de esperar a su próxima relectura por sondeo (ver core/bus.py).
+    bus.publicar(bus.DISPOSITIVOS)
 
 
 # ── Rodaje y bloqueo ─────────────────────────────────────────────────────
@@ -156,6 +163,20 @@ def preferencias(id_dispositivo: str) -> dict:
         "densidad": densidad if densidad in DENSIDADES else DENSIDAD_POR_DEFECTO,
         "acento": acento if acento in ACENTOS else ACENTO_POR_DEFECTO,
     }
+
+
+def categorias_desactivadas(id_dispositivo: str) -> list[str]:
+    """Qué avisos "de sistema" tiene silenciados este aparato — ver
+    notifications/categorias.py. Vacío = recibe todo, que es el mismo
+    comportamiento de siempre: un dispositivo ya vinculado antes de que esto
+    existiera no pierde ningún aviso de golpe.
+
+    Filtra contra el catálogo actual: una categoría que ya no existe no puede
+    dejar un aviso bloqueado para siempre sin que se vea por qué en ningún
+    sitio de la interfaz."""
+    from ..notifications import categorias
+    ficha = dispositivo(id_dispositivo) or {}
+    return [c for c in ficha.get("categorias_desactivadas", []) if c in categorias.CATEGORIAS]
 
 
 def dispositivo(id_dispositivo: str) -> dict | None:

@@ -43,11 +43,19 @@ import threading
 SENSORES = "nodes.sensor_states"   # sensores, puertas y luces por MQTT
 EQUIPOS = "nodes.host_online"      # el ping a los equipos extra
 ARMADO = "security.armado"         # el sistema de alarma, armado o no
+ENTIDADES = "entities.changed"     # altas, ediciones y bajas de configuración
+DISPOSITIVOS = "auth.dispositivos"  # roles, altas, bajas e invitaciones
 
 # Cuánto se agrupa una ráfaga. Un aluvión de mensajes MQTT no debe convertirse
 # en un aluvión de relecturas del JSON: si el aviso anterior fue hace menos de
 # esto, se espera a que se cumpla y se atiende todo de una vez.
 MINIMO = 0.3
+
+# Algunos selectores no interrumpen una espera larga de forma fiable cuando el
+# aviso llega desde un hilo externo (MQTT, pings). Este margen es el respaldo:
+# el contador sigue siendo la fuente de verdad y evita que una pantalla tarde
+# todo su `respaldo` en reflejar un cambio.
+RESPALDO_HILO = 0.5
 
 _cerrojo = threading.Lock()
 _versiones: dict[str, int] = {}
@@ -120,9 +128,12 @@ async def esperar(temas: tuple[str, ...], vistas: tuple[int, ...],
         if resto <= 0:
             return ahora
         try:
-            await asyncio.wait_for(evento.wait(), resto)
+            await asyncio.wait_for(evento.wait(), min(resto, RESPALDO_HILO))
         except (asyncio.TimeoutError, TimeoutError):
-            return ahora
+            # También mira el contador cada medio segundo. Normalmente el
+            # evento despierta antes; esto cubre callbacks externos que el
+            # selector haya dejado encolados sin despertar su poll interno.
+            continue
         # Si despertó por un tema que no es el nuestro, la vuelta del bucle
         # vuelve a dormir con lo que quede de plazo.
 

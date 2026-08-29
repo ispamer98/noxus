@@ -17,7 +17,7 @@ import time
 
 from . import fotogramas, movimiento, movimiento_store
 from ..security import audit, logs, logs_store, shared_state
-from ..notifications import push
+from ..notifications import categorias, push
 
 # Cada cuánto se LANZA una captura, sin esperar a que vuelva la anterior.
 #
@@ -180,6 +180,11 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str, orden: int) -> None:
             return
         if not visto.hay:
             return
+        # La mancha dice «algo con cuerpo se ha movido», pero eso también lo
+        # deja una lámpara que ilumina solo un rincón. Antes de avisar, se
+        # confirma con el detector de personas sobre el fotograma de verdad.
+        if not await asyncio.to_thread(movimiento.hay_persona, datos):
+            return
         ojo.ultimo_aviso = ahora
 
     # Fuera del cerrojo: avisar y guardar la foto no pueden frenar el ritmo de
@@ -204,6 +209,7 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str, orden: int) -> None:
         # mano. Verla pide la misma capacidad que el mural (CAMARAS), así que
         # administrador y familia entran y un invitado no.
         url="/panel?vista=logs",
+        categoria=categorias.MOVIMIENTO,
     ))
     _avisos.add(aviso)
     aviso.add_done_callback(_avisos.discard)

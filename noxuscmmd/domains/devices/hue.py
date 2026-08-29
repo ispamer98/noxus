@@ -45,7 +45,7 @@ from ..automations import actions
 from ..modes import state as modes_state
 from ..nodes import store as nodes_store
 from ..security import logs
-from . import comandos
+from . import alexa_cloud_sync, comandos
 
 # Obligatorio el 80: ver la nota 2 de la cabecera. Se deja en variable solo para
 # poder probar en otro puerto sin permisos.
@@ -177,6 +177,20 @@ async def _ejecutar(luz: dict) -> None:
                        f"{comando['etiqueta']} — FALLÓ: {e}")
 
 
+async def _pulsar(luz: dict) -> None:
+    """Ejecuta una acción de Alexa y la devuelve a reposo.
+
+    Hue solo ofrece interruptores, pero aquí representan botones: una orden
+    ``on`` es un clic y ``off`` nunca manda una segunda orden. Al volver a
+    apagado después de ejecutarla, la misma rutina de Alexa puede volver a
+    pulsarla mañana sin depender de qué estado visual haya guardado Alexa.
+    """
+    try:
+        await _ejecutar(luz)
+    finally:
+        _encendidos[luz["_voz"]] = False
+
+
 # ── El puente, por HTTP ─────────────────────────────────────────────────────
 def _descripcion(ip: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8" ?>
@@ -300,7 +314,7 @@ async def _put_estado(request):
         _encendidos[luz["_voz"]] = encendida
         respuesta.append({"success": {f"/lights/{lid}/state/on": encendida}})
         if encendida:
-            tarea = asyncio.create_task(_ejecutar(luz))
+            tarea = asyncio.create_task(_pulsar(luz))
             _tareas.add(tarea)
             tarea.add_done_callback(_tareas.discard)
     if "bri" in cuerpo:
@@ -396,6 +410,16 @@ async def run_forever() -> None:
 
     No reventar el arranque es deliberado: esto es un extra. Que Alexa no
     funcione no puede impedir que la casa arranque con su alarma."""
+    # La vía local era el plan anterior. Mantener dos proveedores activos crea
+    # duplicados con nombres parecidos en Alexa. Cuando la integración oficial
+    # ya tiene credenciales, solo se reactiva el puente si el administrador lo
+    # pide expresamente para diagnóstico.
+    forzado = os.getenv("ALEXA_HUE_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "si", "sí",
+    }
+    if alexa_cloud_sync.eventos_configurados() and not forzado:
+        print("🔊 Alexa: puente Hue local desactivado; se usa la Skill oficial.")
+        return
     ip = _ip_local()
     try:
         runner = web.AppRunner(_app(), access_log=None)

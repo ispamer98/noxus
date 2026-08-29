@@ -76,6 +76,12 @@ MAX_DIAS = int(os.getenv("LOGS_MAX_DIAS", "0"))
 # problema es otro y es mejor que se vea.
 ESPERA = 10.0
 
+# Solo los automatismos pueden rebotar. Dos pulsaciones humanas (también dos
+# órdenes distintas de Alexa) son dos hechos y deben conservarse aunque sean
+# idénticas. La ventana evita que un sensor que repite el mismo mensaje en una
+# ráfaga llene el histórico sin borrar sucesos legítimos separados en el tiempo.
+VENTANA_REPETIDO = 2
+
 VERSION_ESQUEMA = 3
 
 _ESQUEMA = """
@@ -391,24 +397,27 @@ def registrar(categoria: str, accion: str, usuario: str = "sistema",
     ya —eso no puede esperar a nada— y el fotograma se le engancha cuando
     llegue, segundos más tarde (ver adjuntar_foto y cameras/fotogramas.py).
 
-    Repetido exacto e inmediato = ruido (un sensor que rebota, un botón pulsado
-    dos veces). No se filtra nada más antiguo: dos eventos iguales separados en
-    el tiempo son dos hechos distintos, y un registro que se los come deja de
-    servir para lo que sirve.
+    Repetido exacto e inmediato DEL SISTEMA = ruido (un sensor que rebota).
+    Las actuaciones atribuibles a una persona, Siri o Alexa nunca se deduplican:
+    dos órdenes iguales son dos hechos. Tampoco se filtra nada antiguo.
     """
     ahora = time.time()
+    autor = usuario or "sistema"
     fila = (
         int(ahora), time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ahora)),
-        categoria, accion, usuario or "sistema", detalle, grupo, entidad,
+        categoria, accion, autor, detalle, grupo, entidad,
     )
     cx = _conectar()
     try:
         cx.execute("BEGIN IMMEDIATE")
         try:
             ultimo = cx.execute(
-                "SELECT accion, detalle, grupo FROM eventos "
+                "SELECT ts, accion, usuario, detalle, grupo FROM eventos "
                 "ORDER BY id DESC LIMIT 1").fetchone()
-            if (ultimo and ultimo["accion"] == accion
+            if (autor == "sistema" and ultimo
+                    and ultimo["usuario"] == autor
+                    and abs(int(ahora) - int(ultimo["ts"])) <= VENTANA_REPETIDO
+                    and ultimo["accion"] == accion
                     and ultimo["detalle"] == detalle
                     and ultimo["grupo"] == grupo):
                 cx.execute("ROLLBACK")

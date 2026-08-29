@@ -1,3 +1,9 @@
+"""
+El tile "icono + etiqueta + valor grande" que usa el Resumen (overview.py)
+para sus estadísticas — un solo componente para no repintar a mano el mismo
+bloque (icono con fondo de color, etiqueta en mayúsculas, valor grande) cada
+vez que hace falta mostrar un número destacado.
+"""
 import reflex as rx
 
 from .. import theme

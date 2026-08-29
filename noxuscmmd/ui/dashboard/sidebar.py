@@ -1,3 +1,15 @@
+"""
+La navegación principal del panel: el menú lateral en escritorio
+(`sidebar()`) y la barra inferior en móvil (`mobile_bottom_nav()`) — dos
+componentes distintos porque en pantallas estrechas un lateral de 232px no
+cabe, pero comparten la misma lista `NAV_ITEMS` para que nunca se desincronicen
+entre sí.
+
+`topbar.py` tiene la tabla hermana `VIEW_TITLES`: esta de aquí es solo lo que
+tiene fila propia en el menú (cinco vistas); esa otra es TODAS las vistas que
+existen, incluidas las que solo se llega por dentro de Ajustes. Buscar aquí un
+título perdido es buscar en el sitio equivocado.
+"""
 import reflex as rx
 
 from . import theme

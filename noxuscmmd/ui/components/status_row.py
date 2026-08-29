@@ -1,3 +1,10 @@
+"""
+Fila reusable "icono + nombre + estado en línea/fuera de línea + IP", con
+acceso a escritorio remoto opcional. La usa ui/views/device_list.py para
+pintar cada equipo de la lista de "Equipos" desde un `rx.foreach`, de ahí que
+todos sus parámetros (name, ip, icon, online) puedan ser Vars y no solo
+valores fijos.
+"""
 from typing import Union
 import reflex as rx
 

@@ -1,3 +1,21 @@
+"""
+La conexión SSH persistente hacia la Raspberry Pi que hace de puente VPN
+(sensores.py la usa para leer la temperatura; otros dominios pueden querer
+ejecutar comandos remotos en el futuro).
+
+UNA SOLA CONEXIÓN, REUTILIZADA. Abrir y cerrar SSH en cada consulta (era el
+diseño original) tarda demasiado para algo que se pregunta cada pocos
+segundos, así que aquí se abre una vez, se mantiene viva con un keepalive cada
+20s, y se reconecta sola si se cae (Wi-Fi de la Raspberry, reinicio, etc.).
+
+SINGLETON DE CLASE, NO INSTANCIA: no hace falta más de una conexión a la vez
+en todo el proceso, así que todo vive en atributos de clase protegidos por un
+`Lock` — dos peticiones a la vez no deben abrir dos conexiones (la segunda
+pisaría el cliente de la primera, que se quedaría huérfano y sin cerrar).
+
+Arranca con `run_forever` como lifespan task del proceso (ver noxuscmmd.py):
+depende de que la máquina esté viva, no de que haya una pestaña abierta.
+"""
 import paramiko
 import os
 import asyncio

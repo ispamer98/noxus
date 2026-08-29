@@ -334,6 +334,7 @@ def _mutate(mutator):
             os.fsync(f.fileno())
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    bus.publicar(bus.ENTIDADES)
     return result
 
 
@@ -1404,16 +1405,23 @@ def _hueco_libre(remote: dict) -> tuple[str, str]:
     return f"{y / alto * 100:.2f}%", f"{x / ancho * 100:.2f}%"
 
 
-def add_ir_button(remote_id: str, label: str, icon: str, code: str) -> dict | None:
-    """Añade un botón ya aprendido (código en hex) al mando indicado, en el
-    primer hueco libre del cuerpo — ver _hueco_libre."""
+def add_ir_button(remote_id: str, label: str, icon: str, code: str, *,
+                  kind: str = "ir") -> dict | None:
+    """Añade un botón configurado al mando, en el primer hueco libre.
+
+    ``kind="ir"`` conserva el camino de las señales IR/RF aprendidas;
+    ``kind="webos"`` permite crear desde cero una tecla de red sin fingir una
+    captura física y convertirla después en el editor.
+    """
+    via = "webos" if kind == "webos" else "ir"
+
     def _apply(data):
         for remote in data["ir_remotes"]:
             if remote["id"] == remote_id:
                 pos_top, pos_left = _hueco_libre(remote)
                 boton = {
                     "id": _new_id("btn"), "label": label, "icon": icon or "circle", "code": code,
-                    "kind": "ir", "text": "", "color": "", "icon_size": "46%",
+                    "kind": via, "text": "", "color": "", "icon_size": "46%",
                     "pos_top": pos_top, "pos_left": pos_left,
                 }
                 remote["buttons"].append(boton)
@@ -1523,6 +1531,24 @@ def delete_ir_button(remote_id: str, button_id: str) -> None:
                 remote["buttons"] = [b for b in remote["buttons"] if b["id"] != button_id]
 
     _mutate(_apply)
+
+
+def delete_ir_button_by_id(button_id: str) -> bool:
+    """Elimina una tecla con su id global, sin que el llamador conozca el mando.
+
+    El id de la tecla es único dentro del fichero; resolver su padre aquí hace
+    que el borrado desde Inventario siga el mismo contrato que el resto.
+    """
+    def _apply(data):
+        for remote in data["ir_remotes"]:
+            antes = len(remote["buttons"])
+            remote["buttons"] = [b for b in remote["buttons"]
+                                 if b.get("id") != button_id]
+            if len(remote["buttons"]) != antes:
+                return True
+        return False
+
+    return bool(_mutate(_apply))
 
 
 # ── Widgets del Resumen ("Centro de Control") ────────────────────────────────

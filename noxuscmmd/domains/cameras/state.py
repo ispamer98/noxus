@@ -1,4 +1,25 @@
-"""Streams de cámara (go2rtc), control PTZ y modo privacidad (Tuya cloud)."""
+"""
+Estado de las DOS cámaras de fábrica (Fija y PTZ): la URL del stream en vivo
+(vía go2rtc, ver ui/views/camera_view.py) y las acciones que no son "verla" —
+mover el PTZ, tapar el objetivo (privacidad) y hacer sonar la sirena.
+
+CADA ACCIÓN TIENE SU PROPIA CASCADA DE VÍAS, de la más rápida/local a la más
+lenta/remota, y se para en la primera que responde:
+
+  - Mover el PTZ:  go2rtc local -> Tuya LAN (tinytuya) -> Tuya cloud.
+  - Privacidad:    Tuya LAN -> Tuya cloud.
+  - Sirena:        solo Tuya LAN (no hay equivalente en la API cloud).
+
+Tuya LAN (tuya_local_client.py) no depende de que la cuenta Tuya esté
+disponible ni de tener internet: habla directo con la cámara por su IP local.
+Tuya cloud (tuya_client.py) es el único camino para lo que el firmware no
+expone en LAN, así que se deja como último recurso, no como el primero.
+
+Los dos MODOS de stream (`cam_mode`: "pc"/"mobile") no son solo estético:
+cambian el ORDEN en que go2rtc negocia el protocolo de vídeo (ver
+`_STREAM_MODES_PC`/`_STREAM_MODES_MOBILE` más abajo) porque WebRTC falla más a
+menudo en redes celulares/VPN que en una LAN de escritorio.
+"""
 import os
 import asyncio
 import reflex as rx

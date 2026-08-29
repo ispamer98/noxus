@@ -24,15 +24,19 @@ Y sobre lo pequeño: se reduce a 64x64 y se desenfoca, que es lo que quita el
 grano del sensor y de la compresión —los que disparaban solos de noche— y lo
 que hace que todo esto cueste microsegundos en vez de megabytes.
 
-LO QUE NO PRETENDE SER: esto no sabe qué es una persona. No la distingue de un
-gato, de una cortina que se mueve o de un coche que cruza el reflejo de una
-ventana. Sabe decir «algo con cuerpo se ha movido ahí», que es lo que hace
-falta para guardar un fotograma y avisar. Para lo otro haría falta un modelo, y
-eso es otra cosa y otro coste.
+`analizar` sigue sin saber qué es una persona: solo dice «algo con cuerpo se ha
+movido ahí», y eso también lo dice una lámpara que ilumina de forma desigual un
+rincón del salón (el filtro de arriba solo cancela un cambio de luz UNIFORME).
+Por eso `hay_persona` es una segunda fase, más cara, que solo se llama cuando
+`analizar` ya encontró una mancha candidata: mira el fotograma de verdad — no
+la resta entre dos — con el detector de peatones de OpenCV (HOG + SVM) y
+confirma que lo que se movió tiene forma de persona antes de avisar.
 """
 import io
 from collections import namedtuple
 
+import cv2
+import numpy as np
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 # Tamaño al que se reduce todo antes de comparar. 64x64 = 4096 celdas: bastante
@@ -188,3 +192,41 @@ def diferencia(antes: bytes, ahora: bytes) -> float:
     celdas = list(ImageChops.difference(a, b).getdata())
     movidas = sum(1 for v in celdas if v >= RUIDO)
     return round(100.0 * movidas / len(celdas), 2)
+
+
+# ── Confirmación: ¿de verdad hay una persona? ───────────────────────────────
+# Ancho al que se lleva el fotograma antes de buscarla. HOG necesita detalle
+# real —no los 64x64 de comparar manchas—, pero pasado esto solo cuesta más
+# CPU sin ganar acierto: 480 px de ancho deja de sobra sitio para que alguien
+# de pie quepa en la ventana de detección (64x128) con margen.
+ANCHO_HOG = 480
+
+# El detector de peatones que trae OpenCV de fábrica (HOG + SVM lineal). Se
+# crea una sola vez porque cargar el SVM no es gratis y esto se llama por
+# fotograma. opencv-python-headless fijado por debajo de 5: la serie 5.x quitó
+# HOGDescriptor de los bindings de Python.
+_hog = cv2.HOGDescriptor()
+_hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+
+
+def hay_persona(datos: bytes) -> bool:
+    """¿Hay una silueta de persona en este fotograma?
+
+    Nunca levanta: un fotograma que no se puede decodificar cuenta como «no
+    hay nadie», igual que el resto de este módulo trata lo que no puede leer.
+    """
+    if not datos:
+        return False
+    # A diferencia de PIL en _preparar, cv2.imdecode no lanza con un búfer
+    # vacío: revienta con un AssertionError de C++. Basura que sí tiene bytes
+    # (JPEG corrupto) devuelve None sin levantar, y eso ya lo cubre el `if`
+    # de abajo.
+    imagen = cv2.imdecode(np.frombuffer(datos, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if imagen is None:
+        return False
+    alto, ancho = imagen.shape
+    if ancho > ANCHO_HOG:
+        imagen = cv2.resize(imagen, (ANCHO_HOG, round(alto * ANCHO_HOG / ancho)))
+    detecciones, _ = _hog.detectMultiScale(
+        imagen, winStride=(8, 8), padding=(8, 8), scale=1.05)
+    return len(detecciones) > 0

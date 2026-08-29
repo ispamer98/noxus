@@ -18,6 +18,7 @@ from ....domains.automations.state import (
     ACCIONES, CONDICIONES, DISPARADORES, AutomationsState,
 )
 from .. import theme
+from ..state import DashboardState
 from ..components.actions_menu import actions_menu, confirm_delete
 from ..components.catalog_picker import catalog_picker
 from ..components.form_dialog import (
@@ -349,7 +350,7 @@ def _ajustes_accion(fila: rx.Var, indice: rx.Var) -> rx.Component:
             ),
         ),
         rx.vstack(
-            rx.text("Seguir si falla", size="1", color=theme.MUTED),
+            rx.text("Intentar los siguientes si falla", size="1", color=theme.MUTED),
             rx.switch(checked=fila["continue_on_error"], color_scheme="blue",
                       on_change=lambda v: AutomationsState.set_action_field(
                           indice, "continue_on_error", v)),
@@ -479,13 +480,15 @@ def _editor() -> rx.Component:
     return rx.vstack(
         rx.hstack(
             rx.icon("arrow-left", size=18, color=theme.MUTED, cursor="pointer",
-                    on_click=AutomationsState.cancel_edit, title="Volver sin guardar"),
+                    on_click=DashboardState.cancelar_editor_automatizacion,
+                    title="Volver sin guardar"),
             rx.heading(AutomationsState.titulo_editor, size="5", color=theme.TEXT),
             rx.spacer(),
-            rx.button("Cancelar", on_click=AutomationsState.cancel_edit,
+            rx.button("Cancelar", on_click=DashboardState.cancelar_editor_automatizacion,
                       size="2", variant="soft", color_scheme="gray"),
             rx.button(rx.icon("save", size=14), "Guardar",
-                      on_click=AutomationsState.save_rule, size="2", color_scheme="blue"),
+                      on_click=DashboardState.guardar_editor_automatizacion,
+                      size="2", color_scheme="blue"),
             spacing="3",
             align="center",
             width="100%",
@@ -494,6 +497,21 @@ def _editor() -> rx.Component:
         rx.cond(
             AutomationsState.status != "",
             rx.text(AutomationsState.status, size="1", color=theme.WARNING),
+        ),
+        rx.cond(
+            AutomationsState.desde_alexa,
+            rx.hstack(
+                rx.icon("sparkles", size=16, color=theme.ACCENT, flex_shrink="0"),
+                rx.text(
+                    "Añade los pasos en el orden exacto. Puedes repetirlos, "
+                    "insertar esperas y decidir si la secuencia continúa cuando "
+                    "uno falla. Al guardar volverás a Alexa con ella seleccionada.",
+                    size="1", color=theme.TEXT,
+                ),
+                spacing="2", align="start", width="100%", padding="11px 12px",
+                border_radius="10px", background=theme.alpha(theme.ACCENT, 0.10),
+                border=f"1px solid {theme.alpha(theme.ACCENT, 0.30)}",
+            ),
         ),
 
         # Ficha
@@ -505,26 +523,34 @@ def _editor() -> rx.Component:
                              placeholder="Apagar el PC de noche", width="100%"),
                 spacing="1", align="start", flex="1", min_width="220px",
             ),
-            rx.vstack(
-                rx.text("Carpeta", size="1", color=theme.MUTED),
-                rx.select.root(
-                    rx.select.trigger(placeholder="Sin carpeta", width="100%"),
-                    select_content(
-                        rx.select.item("Sin carpeta", value=""),
-                        rx.foreach(AutomationsState.folders,
-                                   lambda c: rx.select.item(c["name"], value=c["id"])),
+            rx.cond(
+                AutomationsState.desde_alexa == False,
+                rx.vstack(
+                    rx.text("Carpeta", size="1", color=theme.MUTED),
+                    rx.select.root(
+                        rx.select.trigger(placeholder="Sin carpeta", width="100%"),
+                        select_content(
+                            rx.select.item("Sin carpeta", value=""),
+                            rx.foreach(AutomationsState.folders,
+                                       lambda c: rx.select.item(c["name"], value=c["id"])),
+                        ),
+                        value=AutomationsState.draft_folder,
+                        on_change=AutomationsState.set_draft_folder,
                     ),
-                    value=AutomationsState.draft_folder,
-                    on_change=AutomationsState.set_draft_folder,
+                    spacing="1", align="start", min_width="170px",
                 ),
-                spacing="1", align="start", min_width="170px",
             ),
-            rx.vstack(
-                rx.text("Espera mínima entre disparos (s)", size="1", color=theme.MUTED),
-                rx.input(type="number", min="0", value=AutomationsState.draft_cooldown,
-                         on_change=AutomationsState.set_draft_cooldown,
-                         size="3", width="130px"),
-                spacing="1", align="start",
+            rx.cond(
+                AutomationsState.desde_alexa == False,
+                rx.vstack(
+                    rx.text("Espera mínima entre disparos (s)", size="1",
+                            color=theme.MUTED),
+                    rx.input(type="number", min="0",
+                             value=AutomationsState.draft_cooldown,
+                             on_change=AutomationsState.set_draft_cooldown,
+                             size="3", width="130px"),
+                    spacing="1", align="start",
+                ),
             ),
             spacing="4",
             align="start",
@@ -532,15 +558,24 @@ def _editor() -> rx.Component:
             wrap="wrap",
         ),
 
-        _bloque("1", "CUÁNDO", "Basta con que ocurra uno. Sin ninguno, la regla solo "
-                "se ejecuta a mano.", "zap",
-                AutomationsState.draft_triggers, DISPARADORES),
-        _bloque("2", "Y SI", "Condiciones que se comprueban en el momento de disparar. "
-                "Sin ninguna, siempre pasa.", "filter",
-                AutomationsState.draft_conditions, CONDICIONES,
-                cabecera_extra=_selector_match()),
-        _bloque("3", "ENTONCES", "Se ejecutan en orden, de arriba abajo.", "play",
-                AutomationsState.draft_actions, ACCIONES),
+        rx.cond(
+            AutomationsState.desde_alexa,
+            _bloque(
+                "1", "PASOS", "Se ejecutan en orden, de arriba abajo.", "play",
+                AutomationsState.draft_actions, ACCIONES,
+            ),
+            rx.fragment(
+                _bloque("1", "CUÁNDO", "Basta con que ocurra uno. Sin ninguno, "
+                        "la regla solo se ejecuta a mano.", "zap",
+                        AutomationsState.draft_triggers, DISPARADORES),
+                _bloque("2", "Y SI", "Condiciones que se comprueban en el "
+                        "momento de disparar. Sin ninguna, siempre pasa.", "filter",
+                        AutomationsState.draft_conditions, CONDICIONES,
+                        cabecera_extra=_selector_match()),
+                _bloque("3", "ENTONCES", "Se ejecutan en orden, de arriba abajo.",
+                        "play", AutomationsState.draft_actions, ACCIONES),
+            ),
+        ),
 
         spacing="4",
         width="100%",

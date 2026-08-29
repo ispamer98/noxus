@@ -1,3 +1,14 @@
+"""
+Diálogos de las DOS cámaras "de fábrica" (Fija y PTZ, ver domains/cameras/
+state.py): vídeo en directo embebido, control de movimiento para la PTZ, y un
+modo PC/Móvil que cambia cómo se acomoda el vídeo en pantalla.
+
+Las cámaras dadas de alta después por el usuario (domains/nodes) no pasan por
+aquí: tienen su propia ventana flotante genérica (ver
+ui/dashboard/views/cctv.py y ui/dashboard/windows.py). Estas dos son un caso
+aparte porque llevan controles propios (el PTZ) que no tiene sentido
+generalizar para una cámara cualquiera.
+"""
 import reflex as rx
 from ...domains.cameras.state import CameraState
 

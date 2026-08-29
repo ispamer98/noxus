@@ -15,11 +15,11 @@ import reflex as rx
 
 from . import permisos, sessions, store
 from ..security import logs
-from ...core import sesiones
+from ...core import bus, sesiones
 
-# Cada cuánto se comprueba si a este dispositivo le han cambiado el acceso. Tres
-# segundos: lo bastante para que quitar un permiso se sienta inmediato y lo
-# bastante poco para no leer el fichero sin parar.
+# Respaldo de `vigilar_acceso`: por si dispositivos.json lo tocara algo de
+# fuera de este proceso, igual que en los demás sync_loop (ver core/bus.py).
+# En el camino normal el aviso llega al instante, no a los tres segundos.
 _VIGILANCIA = 3.0
 
 
@@ -70,6 +70,17 @@ class AuthState(rx.State):
     # se llama. Mientras no sea "", el panel enseña el alta y nada más.
     invitacion_pendiente: str = ""
     nombre_invitado: str = ""
+
+    # Lo que un aparato SIN acceso todavía deja escrito para identificarse —
+    # ver _sin_acceso() en ui/pages/dashboard.py. El nombre es la parte que de
+    # verdad hace falta (es lo que sale en la lista de Ajustes y en el propio
+    # aviso); la nota es libre, para el contexto que ayude a decidir ("soy el
+    # fontanero", "se me ha caído el móvil nuevo"). Ninguno de los dos viene
+    # solo: sin suscripción push (o sin que el navegador la soporte, como
+    # Chrome en iOS) el aparato no tiene NINGÚN nombre hasta que la persona
+    # escribe uno.
+    nombre_acceso: str = ""
+    nota_acceso: str = ""
 
     # ── Lo que la interfaz puede leer ────────────────────────────────────
     @rx.var
@@ -191,6 +202,8 @@ class AuthState(rx.State):
         prefs = store.preferencias(self._id)
         self.densidad = prefs["densidad"]
         self.acento = prefs["acento"]
+        self.nombre_acceso = ficha.get("nombre", "")
+        self.nota_acceso = ficha.get("nota_acceso", "")
         # _refrescar es el punto por el que pasan los tres caminos de
         # identificar (cookie buena, cookie inservible y sin cookie), asi
         # que es el sitio donde marcarlo una sola vez.
@@ -199,37 +212,39 @@ class AuthState(rx.State):
     # ── Vigilancia en vivo ───────────────────────────────────────────────
     @rx.event(background=True)
     async def vigilar_acceso(self):
-        """Relee del disco el rol de ESTE dispositivo cada pocos segundos.
+        """Relee del disco el rol de ESTE dispositivo en cuanto cambia algo.
 
         Sin esto, quitarle el acceso a un aparato no surtía efecto hasta que
         alguien recargaba la página: `_rol` es una copia del momento en que se
         cargó la pestaña, y es la que decide qué se pinta. Una tablet colgada en
         la pared con el panel abierto desde ayer seguía enseñándolo todo.
 
+        Espera el aviso de quien escribe dispositivos.json (core/bus.py) en vez
+        de sondear: a quien le quitan el admin en Ajustes se le cae la pantalla
+        en el mismo instante en que se guarda el cambio, esté donde esté
+        conectado, y no hasta su próxima ronda de sondeo. `_VIGILANCIA` queda
+        como respaldo por si el fichero lo tocara algo de fuera de este proceso.
+
         Lo que se compara es el rol EFECTIVO (store.rol_de ya cuenta la
         caducidad), así que esto es también lo que hace que a un invitado con
         acceso de dos horas se le caiga la pantalla sola al cumplirse la hora, en
         vez de quedarse dentro mientras no toque nada.
-
-        Cuesta una lectura de un JSON pequeño cada tres segundos por sesión: lo
-        mismo que ya hacen las demás pantallas para refrescarse, y a cambio quitar
-        un permiso es inmediato.
         """
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.DISPOSITIVOS)
         while True:
             try:
-                if not await sesiones.espera(guardia, _VIGILANCIA):
-                    return
                 async with self:
-                    if not self._id:
-                        continue
-                    rol = await asyncio.to_thread(store.rol_de, self._id)
-                    bloqueo = await asyncio.to_thread(store.estricto)
-                    if rol != self._rol or bloqueo != self._bloqueo:
-                        # Solo se refresca cuando ha cambiado algo: reasignar en
-                        # cada vuelta repintaría el panel entero cada tres
-                        # segundos en todos los dispositivos.
-                        self._refrescar()
+                    if self._id:
+                        rol = await asyncio.to_thread(store.rol_de, self._id)
+                        bloqueo = await asyncio.to_thread(store.estricto)
+                        if rol != self._rol or bloqueo != self._bloqueo:
+                            # Solo se refresca cuando ha cambiado algo: reasignar
+                            # en cada vuelta repintaría el panel entero cada vez
+                            # que se toca cualquier dispositivo, no solo el suyo.
+                            self._refrescar()
+                if not await aviso.espera(guardia, _VIGILANCIA):
+                    return
             except Exception as e:
                 print(f"⚠️ Error vigilando el acceso: {e}")
                 if not await sesiones.espera(guardia, 10):
@@ -257,10 +272,15 @@ class AuthState(rx.State):
             self._refrescar()
             return
 
-        # Ficha nueva, sin ningún permiso. Todavía no se registra nada: hasta
-        # que no se sepa si es un aparato ya conocido por su suscripción push
-        # (vincular_push, justo después), apuntarlo llenaría el registro de
-        # "dispositivo nuevo" en cada visita de los de siempre.
+        # Ficha nueva, sin ningún permiso, y SIN avisar a nadie todavía.
+        #
+        # Abrir la página no es pedir acceso: cualquiera que teclee la
+        # dirección —o un buscador, o alguien de casa que ha perdido la
+        # cookie— crearía una ficha, y avisar aquí llenaría los móviles de la
+        # familia de «dispositivo desconocido» sin que nadie haya pedido nada.
+        # El aviso sale cuando alguien se identifica a propósito y pulsa
+        # «Enviar» (ver enviar_nota_acceso), que es la única señal inequívoca
+        # de que hay una persona al otro lado pidiendo entrar.
         nuevo = sessions.nuevo_id()
         store.alta(nuevo, nombre="", rol=store.PENDIENTE)
         self._id = nuevo
@@ -323,25 +343,23 @@ class AuthState(rx.State):
         if cambios:
             store.actualizar(self._id, **cambios)
             self._refrescar()
-            # Un aparato que aparece por primera vez y se queda esperando
-            # permiso. Se avisa AQUÍ y no en `identificar` porque es el primer
-            # punto en el que se sabe que es nuevo de verdad: en `identificar`
-            # todavía no se ha comprobado si su suscripción push pertenece a un
-            # aparato ya conocido que simplemente ha perdido la cookie, y avisar
-            # allí llenaría el móvil de falsas alarmas cada vez que alguien de
-            # casa borra los datos del navegador.
-            if self._rol == store.PENDIENTE:
-                self._avisar_de_desconocido(nombre)
+            # Aquí NO se avisa a nadie, aunque el aparato sea nuevo: tener una
+            # suscripción de avisos no es pedir acceso. Quien quiera entrar se
+            # identifica y pulsa «Enviar» (ver enviar_nota_acceso), y ese es el
+            # único punto desde el que sale el aviso a los administradores.
 
-    def _avisar_de_desconocido(self, nombre: str) -> None:
+    def _avisar_de_desconocido(self, nombre: str, nota: str = "") -> None:
         """Deja constancia y avisa a los administradores.
 
-        Se apunta en el registro y además se manda un aviso al móvil: un
-        dispositivo desconocido intentando entrar en el panel de una casa es
-        justo lo que no se puede quedar esperando a que alguien mire una lista.
+        Lo llama SOLO enviar_nota_acceso: alguien que se ha identificado y ha
+        pulsado «Enviar». Abrir la página no llega hasta aquí — ver el comentario
+        en `identificar`.
 
         El aviso va SOLO a los administradores, que son quienes pueden decidir,
         y con un tag propio para que dos intentos seguidos no apilen dos avisos.
+        Lleva dentro el nombre y el motivo que escribió la persona: la diferencia
+        entre «alguien quiere entrar» y «Marta dice que se le ha roto el móvil»
+        es justo lo que permite decidir sin tener que abrir nada.
         """
         como = nombre or "sin nombre"
         # La marca de «está llamando a la puerta», que NO es lo mismo que tener
@@ -351,17 +369,25 @@ class AuthState(rx.State):
         # La quita el administrador al decidir (ver AuthAdminState.cambiar_rol).
         store.actualizar(self._id, pide_acceso=True)
         logs.registrar(logs.ACCESOS, "DISPOSITIVO_NUEVO", como,
-                       "pide acceso al panel")
+                       "pide acceso al panel" + (f' — «{nota}»' if nota else ""))
         try:
+            from ..notifications import categorias
             from ..notifications.push import enviar_notificacion
             admins = [f.get("nombre") for f in store.leer()["dispositivos"].values()
                       if f.get("rol") == store.ADMIN and f.get("nombre")]
             if admins:
+                cuerpo = f"«{como}» pide entrar en el panel."
+                if nota:
+                    cuerpo += f' Dice: «{nota}».'
+                cuerpo += " Toca para darle acceso o bloquearlo."
                 enviar_notificacion(
-                    "🔓 Dispositivo desconocido",
-                    f"«{como}» ha intentado entrar en el panel. Dale acceso o "
-                    f"bloquéalo desde Ajustes → Dispositivos.",
+                    "🔓 Alguien pide acceso", cuerpo,
                     admins, "acceso:desconocido",
+                    categoria=categorias.DESCONOCIDO,
+                    # Lleva DIRECTO a la pantalla donde se decide, con la ficha
+                    # del que pide ya a la vista. Sin esto el aviso abría el
+                    # panel por donde estuviera y había que ir a buscarlo.
+                    url="/panel?vista=usuarios",
                 )
         except Exception as e:
             print(f"⚠️ No se pudo avisar del dispositivo desconocido: {e}")
@@ -430,6 +456,51 @@ class AuthState(rx.State):
             f"Acceso concedido hasta {_cuando(inv.get('caduca'))}.",
             position="top-center", duration=8000,
         )
+
+    # ── Identificarse mientras se espera acceso ──────────────────────────
+    @rx.event
+    def set_nombre_acceso(self, valor: str):
+        self.nombre_acceso = valor
+
+    @rx.event
+    def set_nota_acceso(self, valor: str):
+        self.nota_acceso = valor
+
+    @rx.event
+    def enviar_nota_acceso(self):
+        """Pedir acceso, de verdad: EL ÚNICO punto desde el que se avisa a los
+        administradores.
+
+        Los DOS campos son obligatorios. Un aviso que solo dice «alguien quiere
+        entrar» obliga a ir a preguntar quién es y para qué antes de poder
+        decidir nada, así que no merece la pena mandarlo: si se va a interrumpir
+        a alguien en el móvil, que sea con lo que hace falta para contestar.
+
+        Se puede mandar más de una vez —corregir lo que se escribió no debería
+        obligar a empezar de cero—, y el tag del aviso hace que el segundo
+        sustituya al primero en la pantalla del administrador en vez de apilarse.
+        """
+        if not self._id:
+            return
+        nombre = self.nombre_acceso.strip()[:40]
+        texto = self.nota_acceso.strip()[:200]
+        if len(nombre) < 2:
+            return rx.toast.error("Escribe tu nombre para identificarte.",
+                                  position="top-center")
+        if len(texto) < 3:
+            return rx.toast.error("Escribe por qué quieres entrar.",
+                                  position="top-center")
+        self.nombre_acceso = nombre
+        self.nota_acceso = texto
+        store.actualizar(self._id, nombre=nombre, nota_acceso=texto)
+        self._nombre = nombre
+        logs.registrar(logs.ACCESOS, "NOTA_ACCESO", nombre, texto)
+        if self._rol == store.PENDIENTE:
+            self._avisar_de_desconocido(nombre, texto)
+            return rx.toast.success(
+                "Enviado. Un administrador lo ha recibido y decidirá si te "
+                "da acceso.", position="top-center", duration=6000)
+        return rx.toast.success("Guardado.", position="top-center")
 
 
 def _cuando(marca: float | None) -> str:

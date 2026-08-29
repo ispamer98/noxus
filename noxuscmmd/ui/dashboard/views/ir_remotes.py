@@ -10,9 +10,9 @@ Dos piezas:
   windows.py) con la rejilla de botones — se abre desde aquí o pulsando el
   marcador del mando en el Plano.
 
-"Añadir botón" no es un formulario que guarda texto: pone el Broadlink en
-modo aprendizaje y espera a que acerques el mando real y pulses (ver
-NodesState.submit_learn_ir_button) — el botón nuevo ES la señal capturada.
+"Añadir botón" aprende una señal física por IR/RF o crea directamente una
+acción de red webOS (Home, apps, HDMI...) sin contactar con el Broadlink (ver
+NodesState.submit_learn_ir_button).
 """
 import reflex as rx
 
@@ -525,16 +525,18 @@ def _remote_body(remote: dict) -> rx.Component:
 
 def _add_button_dialog(remote: dict) -> rx.Component:
     aprendiendo = NodesState.ir_learning != ""
+    es_webos = NodesState.new_button_signal == "webos"
     return rx.dialog.root(
         rx.dialog.trigger(
             rx.button(
                 rx.icon("plus", size=13), "Añadir botón",
                 size="1", variant="soft", color_scheme="green",
+                on_click=NodesState.prepare_add_remote_button,
             ),
         ),
         form_dialog_content(
-            icon="radio-tower",
-            title=f"Aprender botón — {remote['name']}",
+            icon="circle-plus",
+            title=f"Añadir botón — {remote['name']}",
             accent=theme.SUCCESS,
             form=rx.vstack(
                 rx.form.root(
@@ -555,16 +557,37 @@ def _add_button_dialog(remote: dict) -> rx.Component:
                                 select_content(
                                     rx.select.item("Infrarrojos (IR) — TV, la mayoría de mandos", value="ir"),
                                     rx.select.item("Radiofrecuencia (RF 433MHz) — típico en ventiladores de techo", value="rf"),
+                                    rx.select.item("Por red — TV LG (webOS), sin aprendizaje", value="webos"),
                                 ),
-                                name="signal", default_value="ir", disabled=aprendiendo,
+                                name="signal", value=NodesState.new_button_signal,
+                                on_change=NodesState.set_new_button_signal,
+                                disabled=aprendiendo,
                             ),
-                            hint="Si el mando no tiene una lucecita/ventanita que se ilumine al "
-                                 "pulsarlo (verlo con la cámara del móvil), prueba con RF.",
+                            hint="IR/RF aprende una tecla del mando físico. webOS crea una acción "
+                                 "de red como Home, Netflix o cambiar directamente de HDMI.",
+                        ),
+                        rx.cond(
+                            es_webos,
+                            field(
+                                "Acción en la TV",
+                                styled_select(
+                                    "Elige la acción",
+                                    select_content(
+                                        *[rx.select.item(etiqueta, value=valor)
+                                          for valor, etiqueta in webos_bus.comandos_disponibles()],
+                                    ),
+                                    name="webos_code", default_value="HOME",
+                                ),
+                            ),
                         ),
                         rx.hstack(
                             rx.spacer(),
                             rx.button(
-                                rx.cond(aprendiendo, "Escuchando...", "Empezar a aprender"),
+                                rx.cond(
+                                    aprendiendo,
+                                    "Escuchando...",
+                                    rx.cond(es_webos, "Crear botón", "Empezar a aprender"),
+                                ),
                                 type="submit", color_scheme="green", size="2",
                                 loading=aprendiendo, disabled=aprendiendo,
                             ),

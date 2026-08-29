@@ -18,13 +18,20 @@ async def set_pin(ssh: SSHSpec, pin: str, on: bool, timeout: int = 2) -> None:
     RelayEntity del registry — lo usa domains/nodes para relés dados de alta
     en caliente sobre la Raspberry/Pi Zero."""
     val = "dh" if on else "dl"
-    await ssh_bus.ssh_execute(ssh, f"raspi-gpio set {pin} op {val}", timeout=timeout)
+    salida = await ssh_bus.ssh_execute(
+        ssh, f"raspi-gpio set {pin} op {val}", timeout=timeout)
+    if salida.lstrip().upper().startswith("ERROR:"):
+        raise RuntimeError(salida)
 
 
 async def read_pin(ssh: SSHSpec, pin: str, timeout: int = 2) -> str:
     """Lectura cruda del estado de un pin (salida de raspi-gpio tal cual) —
     para el botón "leer pin" del panel de acciones de un host."""
-    return await ssh_bus.ssh_execute(ssh, f"raspi-gpio get {pin}", timeout=timeout)
+    salida = await ssh_bus.ssh_execute(
+        ssh, f"raspi-gpio get {pin}", timeout=timeout)
+    if salida.lstrip().upper().startswith("ERROR:"):
+        raise RuntimeError(salida)
+    return salida
 
 
 async def set_relay(relay: RelayEntity, on: bool, timeout: int = 2) -> None:

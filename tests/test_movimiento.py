@@ -73,7 +73,7 @@ def ejecutar() -> list[Caso]:
 
     c.cierto("comparar una imagen consigo misma da casi cero",
              mov.diferencia(quieta_1, quieta_1) == 0.0)
-    return [c, _ajustes(), _ritmo(), _persona_o_luz()]
+    return [c, _ajustes(), _ritmo(), _persona_o_luz(), _confirmacion_hog()]
 
 
 def _ajustes() -> Caso:
@@ -262,4 +262,23 @@ def _persona_o_luz() -> Caso:
     c.revisar("alguien más lejos también dispara", lejos.hay, True)
     c.cierto("y deja una mancha menor que el de cerca",
              lejos.mancha < persona.mancha)
+    return c
+
+
+def _confirmacion_hog() -> Caso:
+    """La segunda fase: confirmar con el detector de personas de OpenCV.
+
+    No se prueba aquí que HOG reconozca una persona de verdad — los rectángulos
+    de estas escenas no tienen la silueta ni la textura de un cuerpo, así que un
+    detector entrenado con gente real no los reconoce, y fingir que sí sería una
+    prueba falsa. Lo que sí se comprueba es el contrato: nunca revienta, y una
+    escena sin nadie no la confunde con una persona."""
+    c = Caso("Movimiento: confirmación con el detector de personas")
+
+    vacia = _escena(semilla=20)
+    c.revisar("una escena vacía no tiene persona", mov.hay_persona(vacia), False)
+
+    for caso, datos in (("vacío", b""), ("basura", b"esto no es un jpeg")):
+        c.revisar(f"un fotograma {caso} no revienta ni cuenta como persona",
+                  mov.hay_persona(datos), False)
     return c

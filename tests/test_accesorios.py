@@ -95,8 +95,91 @@ def _envio() -> Caso:
 
 def ejecutar() -> list[Caso]:
     return [_almacen(), _envio(), _una_sola_tecla(), _separacion(), _widgets(),
-            _estado_compartido(), _sin_doble_contabilidad(), _familias(),
-            _familia_mandos()]
+            _estado_compartido(), _orden_idempotente(),
+            _secuencia_apagar_habitacion(), _sin_doble_contabilidad(), _familias(),
+            _familia_mandos(), _webos_directo(), _alta_boton_webos()]
+
+
+def _webos_directo() -> Caso:
+    """Entradas, navegación y apps se despachan por rutas distintas."""
+    from noxuscmmd.domains.devices import webos_bus
+
+    c = Caso("Acciones directas de la TV por webOS")
+
+    class TeleFalsa:
+        def __init__(self):
+            self.llamadas = []
+
+        async def set_input(self, input_id):
+            self.llamadas.append(("input", input_id))
+
+        async def button(self, nombre):
+            self.llamadas.append(("button", nombre))
+
+        async def launch_app(self, app_id):
+            self.llamadas.append(("app", app_id))
+
+    tele = TeleFalsa()
+
+    async def cliente_falso():
+        return tele
+
+    original = webos_bus._get_client
+    webos_bus._get_client = cliente_falso
+    try:
+        asyncio.run(webos_bus.send_command("input:HDMI_2"))
+        # El prefijo conserva ids opacos: el bus entrega el sufijo intacto a
+        # set_input en vez de reinterpretarlo como nombre de aplicación.
+        asyncio.run(webos_bus.send_command("input:com.webos.app.hdmi1"))
+        asyncio.run(webos_bus.send_command("HOME"))
+        asyncio.run(webos_bus.send_command("netflix"))
+        c.revisar(
+            "cada orden usa el método específico",
+            tele.llamadas,
+            [("input", "HDMI_2"),
+             ("input", "com.webos.app.hdmi1"),
+             ("button", "HOME"), ("app", "netflix")],
+        )
+        opciones = dict(webos_bus.comandos_disponibles())
+        for numero in range(1, 5):
+            c.cierto(
+                f"ofrece HDMI {numero} en el selector",
+                f"input:HDMI_{numero}" in opciones,
+            )
+        try:
+            asyncio.run(webos_bus.send_command("input:"))
+            c.revisar("una entrada vacía protesta", "no protestó", "RuntimeError")
+        except RuntimeError as error:
+            c.cierto("una entrada vacía protesta", "HDMI" in str(error))
+    finally:
+        webos_bus._get_client = original
+    return c
+
+
+def _alta_boton_webos() -> Caso:
+    """Un botón de red nace como tal; IR conserva su comportamiento."""
+    import inspect
+
+    c = Caso("Alta directa de botones webOS")
+    mando = store.add_ir_remote("TV webOS de prueba", "tv", False, "", "vacio")
+    try:
+        hdmi = store.add_ir_button(
+            mando["id"], "HDMI 3", "monitor", "input:HDMI_3", kind="webos")
+        infrarrojo = store.add_ir_button(
+            mando["id"], "Encender", "power", "codigo-de-prueba")
+        c.revisar("el botón de red guarda su vía", hdmi["kind"], "webos")
+        c.revisar("el botón de red guarda la entrada", hdmi["code"], "input:HDMI_3")
+        c.revisar("el alta anterior sigue siendo IR", infrarrojo["kind"], "ir")
+
+        # Salvaguarda de interfaz: el alta (no solo el editor posterior) tiene
+        # que ofrecer webOS y enviar el código elegido al manejador.
+        from noxuscmmd.ui.dashboard.views.ir_remotes import _add_button_dialog
+        fuente = inspect.getsource(_add_button_dialog)
+        c.cierto("Añadir botón ofrece webOS", 'value="webos"' in fuente)
+        c.cierto("Añadir botón envía su acción", 'name="webos_code"' in fuente)
+    finally:
+        store.delete_ir_remote(mando["id"])
+    return c
 
 
 def _una_sola_tecla() -> Caso:
@@ -263,6 +346,173 @@ def _estado_compartido() -> Caso:
     finally:
         store.delete_light(dos["id"])
         store.delete_light(una["id"])
+    return c
+
+
+def _orden_idempotente() -> Caso:
+    """El estado del plano hace idempotentes TODOS los tipos de luz.
+
+    Se sustituyen ambos transportes por espías: ni MQTT/SSH ni un mando real
+    pueden recibir nada durante esta prueba. Para relés, mandos con ON/OFF y
+    mandos con POWER se exige el mismo contrato: repetir el estado visible no
+    actúa; cambiarlo actúa una única vez.
+    """
+    c = Caso("Estado del plano como verdad para todas las luces")
+    rele = store.add_light(
+        "Relé idempotente", "nodo_prueba", "Nodo Prueba", "22")
+    dos_teclas = store.add_light(
+        "Ventilador idempotente", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_ventilador", btn_on="luz_on", btn_off="luz_off",
+        aspecto="ventilador", mando_modo=store.DOS_TECLAS,
+    )
+    una_tecla = store.add_light(
+        "Tele idempotente", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_tv", btn_on="power", btn_off="power",
+        aspecto="tv", mando_modo=store.UNA_TECLA,
+    )
+    luces = (rele, dos_teclas, una_tecla)
+    enviados: list[tuple[str, str, bool]] = []
+
+    async def espia_mando(light, on):
+        enviados.append(("mando", light["id"], on))
+
+    async def espia_rele(light, on, ssh):
+        enviados.append(("rele", light["id"], on))
+
+    original_mando = ops._enviar_por_mando
+    original_rele = ops._enviar_a_rele
+    original_to_thread = ops.asyncio.to_thread
+
+    async def en_el_loop(func, *args, **kwargs):
+        # Aquí se prueba la decisión, no el executor. Algunos selectores del
+        # entorno de pruebas no despiertan al terminar un hilo si el loop no
+        # tiene ningún otro temporizador pendiente, y dejarían asyncio.run()
+        # esperando aunque la escritura ya hubiera terminado.
+        return func(*args, **kwargs)
+
+    async def escenario():
+        for luz in luces:
+            via = "mando" if luz["kind"] == store.LUZ_MANDO else "rele"
+            store.set_sensor_state(luz["id"], False)
+
+            inicio = len(enviados)
+            await ops.set_light(luz["id"], False)
+            await ops.set_light(luz["id"], False)
+            c.revisar(
+                f'{luz["name"]}: repetir apagado no toca el transporte',
+                enviados[inicio:], [],
+            )
+
+            await ops.set_light(luz["id"], True)
+            await ops.set_light(luz["id"], True)
+            c.revisar(
+                f'{luz["name"]}: encender actúa exactamente una vez',
+                enviados[inicio:], [(via, luz["id"], True)],
+            )
+
+            await ops.set_light(luz["id"], False)
+            await ops.set_light(luz["id"], False)
+            c.revisar(
+                f'{luz["name"]}: apagar actúa exactamente una vez',
+                enviados[inicio:],
+                [(via, luz["id"], True), (via, luz["id"], False)],
+            )
+            c.revisar(
+                f'{luz["name"]}: el plano queda apagado',
+                store.get_sensor_state(luz["id"]), False,
+            )
+
+    ops._enviar_por_mando = espia_mando
+    ops._enviar_a_rele = espia_rele
+    ops.asyncio.to_thread = en_el_loop
+    try:
+        asyncio.run(escenario())
+    finally:
+        ops._enviar_por_mando = original_mando
+        ops._enviar_a_rele = original_rele
+        ops.asyncio.to_thread = original_to_thread
+        for luz in luces:
+            store.delete_light(luz["id"])
+    return c
+
+
+def _secuencia_apagar_habitacion() -> Caso:
+    """Una secuencia Alexa omite lo apagado y continúa en orden.
+
+    Alexa ejecuta estas acciones mediante el mismo motor de automatizaciones.
+    Se llama directamente a ese motor con una casa temporal y transportes
+    espía: los pasos ya satisfechos cuentan como correctos, pero no emiten una
+    orden; los que estaban encendidos se apagan en el orden declarado.
+    """
+    from noxuscmmd.domains.automations import engine
+
+    c = Caso("Apagar habitación desde una secuencia Alexa")
+    rele_apagado = store.add_light(
+        "Relé ya apagado", "nodo_prueba", "Nodo Prueba", "31")
+    tele_encendida = store.add_light(
+        "Tele encendida", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_tv", btn_on="power", btn_off="power",
+        aspecto="tv", mando_modo=store.UNA_TECLA,
+    )
+    ventilador_apagado = store.add_light(
+        "Ventilador ya apagado", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_ventilador", btn_on="on", btn_off="off",
+        aspecto="ventilador", mando_modo=store.DOS_TECLAS,
+    )
+    rele_encendido = store.add_light(
+        "Relé encendido", "nodo_prueba", "Nodo Prueba", "32")
+    luces = (rele_apagado, tele_encendida, ventilador_apagado, rele_encendido)
+    enviados: list[tuple[str, str, bool]] = []
+
+    async def espia_mando(light, on):
+        enviados.append(("mando", light["id"], on))
+
+    async def espia_rele(light, on, ssh):
+        enviados.append(("rele", light["id"], on))
+
+    async def en_el_loop(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    pasos = [{
+        "type": "light.set",
+        "target": f'light:{luz["id"]}',
+        "params": {"on": "off"},
+        "continue_on_error": True,
+        "timeout": 2,
+    } for luz in luces]
+    regla = {"actions": pasos}
+
+    original_mando = ops._enviar_por_mando
+    original_rele = ops._enviar_a_rele
+    original_to_thread = ops.asyncio.to_thread
+    ops._enviar_por_mando = espia_mando
+    ops._enviar_a_rele = espia_rele
+    ops.asyncio.to_thread = en_el_loop
+    try:
+        store.set_sensor_state(rele_apagado["id"], False)
+        store.set_sensor_state(tele_encendida["id"], True)
+        store.set_sensor_state(ventilador_apagado["id"], False)
+        store.set_sensor_state(rele_encendido["id"], True)
+
+        hechos, errores = asyncio.run(engine._ejecutar_pasos(regla))
+        c.revisar("los cuatro pasos continúan y terminan", (hechos, errores), (4, []))
+        c.revisar(
+            "solo actúa sobre lo que el plano mostraba encendido y en orden",
+            enviados,
+            [("mando", tele_encendida["id"], False),
+             ("rele", rele_encendido["id"], False)],
+        )
+        c.revisar(
+            "todos terminan apagados en el plano",
+            [store.get_sensor_state(luz["id"]) for luz in luces],
+            [False, False, False, False],
+        )
+    finally:
+        ops._enviar_por_mando = original_mando
+        ops._enviar_a_rele = original_rele
+        ops.asyncio.to_thread = original_to_thread
+        for luz in luces:
+            store.delete_light(luz["id"])
     return c
 
 

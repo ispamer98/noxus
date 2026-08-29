@@ -33,8 +33,36 @@ fijo: esperan a que quien escribe avise (ver core/bus.py), y el guardia se
 consulta igual — `bus.Aviso.espera` devuelve lo mismo que esta.
 """
 import asyncio
+import inspect
 
 _app = None
+
+# ── Un bucle por sesión y por nombre ─────────────────────────────────────────
+# Desde que los on_load se relanzan en CADA (re)conexión del websocket —que es
+# lo que hace que una pestaña que vuelve de segundo plano recupere sus
+# actualizaciones sin recargar la página—, el mismo bucle puede volver a
+# arrancar sobre una sesión que ya lo tenía girando. Sin esto se acumularían:
+# la misma avería de las sesiones fantasma, pero desde dentro de una sesión
+# viva y sin que nadie cierre nada.
+#
+# Cada arranque toma un número y deja obsoleto al anterior; el viejo se apaga
+# solo en su siguiente vuelta (ver Guardia.sigue). Así queda SIEMPRE uno, el
+# más reciente, sin tener que acordarse de dar de baja nada a mano.
+#
+# Todo esto vive en el hilo del bucle de eventos —guardia() solo se llama desde
+# manejadores async—, así que un dict pelado basta: no hace falta cerrojo.
+_relevos: dict[tuple[str, str], int] = {}
+
+
+def _relevar(token: str, nombre: str) -> int:
+    clave = (token, nombre)
+    numero = _relevos.get(clave, 0) + 1
+    _relevos[clave] = numero
+    return numero
+
+
+def _vigente(token: str, nombre: str, numero: int) -> bool:
+    return _relevos.get((token, nombre)) == numero
 
 
 def _token_to_socket():
@@ -75,8 +103,10 @@ class Guardia:
     refrescaría nunca.
     """
 
-    def __init__(self, token: str):
+    def __init__(self, token: str, nombre: str = "", numero: int = 0):
         self._token = token
+        self._nombre = nombre
+        self._numero = numero
         self._vista = False
 
     @property
@@ -84,13 +114,29 @@ class Guardia:
         return self._token
 
     def sigue(self) -> bool:
+        # Ha arrancado otro bucle igual para esta misma sesión —una reconexión
+        # relanza los on_load—: manda el nuevo y este sobra. Se mira ANTES que
+        # la conexión, porque en ese momento la sesión está viva y por ahí no
+        # se distinguiría que hay dos girando.
+        if self._nombre and not _vigente(self._token, self._nombre, self._numero):
+            return False
         estado = conectada(self._token)
         if estado is None:
             return True
         if estado:
             self._vista = True
             return True
-        return not self._vista
+        if self._vista:
+            self._olvidar()
+            return False
+        return True
+
+    def _olvidar(self) -> None:
+        """Borra el apunte de este bucle al apagarse, para que el registro no
+        crezca sin fin. Solo si sigue siendo el vigente: si no, el apunte ya es
+        de un relevo más nuevo y no hay que tocarlo."""
+        if self._nombre and _vigente(self._token, self._nombre, self._numero):
+            _relevos.pop((self._token, self._nombre), None)
 
     async def espera(self, segundos: float) -> bool:
         """Duerme lo que se le diga y dice si merece la pena seguir."""
@@ -112,10 +158,24 @@ async def guardia(estado) -> Guardia:
 
     Se lee el token una sola vez, al empezar: no cambia mientras la sesión vive,
     y así el bucle no tiene que entrar en `async with self` solo para esto.
+
+    El NOMBRE del bucle se toma de la función que llama, sin tener que pasarlo:
+    junto al token identifica «este bucle, en esta sesión», que es lo que
+    permite que un arranque nuevo releve al anterior en vez de sumarse a él
+    (ver _relevos). Se saca del marco de quien llama porque los dieciséis
+    bucles que hay ya llamaban a `guardia(self)` a secas, y hacerles pasar su
+    propio nombre era pedir que alguien se lo dejara justo en el que importa.
+
+    Sin token no se releva a nadie: todas las sesiones que no lo tengan
+    compartirían clave y se apagarían unas a otras.
     """
+    marco = inspect.currentframe()
+    quien = marco.f_back.f_code.co_name if marco and marco.f_back else ""
     async with estado:
         try:
             token = estado.router.session.client_token
         except Exception:
             token = ""
-    return Guardia(token)
+    if not token or not quien:
+        return Guardia(token)
+    return Guardia(token, quien, _relevar(token, quien))

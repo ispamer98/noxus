@@ -1,9 +1,34 @@
+"""
+Punto de entrada de la aplicación Reflex: aquí nace el objeto `app` que sirve
+`reflex run`, y con él, todo lo que no depende de que alguien tenga el panel
+abierto en un navegador.
+
+Tres cosas viven en este archivo y en ningún otro:
+
+  1. LAS RUTAS HTTP PROPIAS (`_api`, vía `api_transformer`): lo que Reflex 0.8
+     no sabe servir por su cuenta (webhooks, descargas con cabeceras propias,
+     endpoints que no son un componente). Cada dominio declara sus `RUTAS` y
+     aquí solo se juntan.
+  2. LA ANIMACIÓN GLOBAL (`STYLE`): los `@keyframes` que usan varios
+     componentes sueltos (el plano de planta, el mando virtual) y que Reflex
+     necesita inyectar una sola vez a nivel de app, no por componente.
+  3. LAS TAREAS DE FONDO (`register_lifespan_task`): todo lo que vigila la
+     casa (alarma, presencia, movimiento, tiempo en línea, backups, métricas,
+     Alexa, SSH) tiene que seguir corriendo con el navegador cerrado — de ahí
+     que cuelguen del PROCESO y no de una sesión ni de un `on_load`. El orden
+     de arranque no importa entre ellas: cada una se resuelve sola si su
+     dependencia (un fichero, una conexión) todavía no está lista.
+
+`/` y `/panel` sirven la MISMA vista a propósito: quitar cualquiera de las dos
+rompería enlaces ya guardados (el acceso directo del móvil apunta a `/panel`,
+ver ui/pages/dashboard.py y el manifest en assets/).
+"""
 import reflex as rx
 from starlette.applications import Starlette
 
 from .domains.cameras import endpoint as fotograma_endpoint
 from .domains.cameras import fotogramas
-from .domains.devices import hue, voz
+from .domains.devices import alexa_cloud_endpoint, alexa_cloud_sync, hue, voz
 from .domains.notifications import endpoint as aviso_endpoint
 from .domains.automations import engine as automations_engine
 from .domains.infra import backups
@@ -16,7 +41,7 @@ from .domains.security import presencia_motor
 from .domains.cameras import movimiento_motor
 from .domains.security import watcher
 from .ui.pages.upload import upload_page
-from .ui.pages.dashboard import dashboard_page
+from .ui.pages.dashboard import EVENTOS_DE_ENTRADA, dashboard_page
 
 STYLE = {
     "@keyframes pulse": {
@@ -99,6 +124,7 @@ STYLE = {
 # Las dos entran por ^/api/.*$, que es la regla que el túnel ya manda al :8000.
 _api = Starlette(routes=[*aviso_endpoint.RUTAS, *fotograma_endpoint.RUTAS,
                          *planos.RUTAS,
+                         *alexa_cloud_endpoint.RUTAS,
                          *voz.RUTAS])
 
 app = rx.App(
@@ -177,6 +203,7 @@ app.register_lifespan_task(SSHManager.run_forever)
 # puede abrir el puerto 80 lo dice en el log y se apaga: es un extra, y que
 # Alexa no funcione no puede impedir que la casa arranque con su alarma.
 app.register_lifespan_task(hue.run_forever)
+app.register_lifespan_task(alexa_cloud_sync.run_forever)
 # La simulación de presencia. De proceso y no por sesión porque tiene que
 # funcionar con todos los navegadores cerrados: es justo entonces cuando hace
 # falta. Solo mueve algo si está encendida en Ajustes Y el sistema está armado
@@ -187,11 +214,19 @@ app.register_lifespan_task(presencia_motor.run_forever)
 # apagada y solo mira las cámaras que se marquen (ver cameras/movimiento_motor).
 app.register_lifespan_task(movimiento_motor.run_forever)
 
-# IMPORTANTE: on_load se gestiona vía on_mount en la página (uno por domain
-# state: SecurityState, InfraState) para evitar que Reflex arranque los
-# background tasks múltiples veces (una por conexión WebSocket nueva). Cada
-# domain state protege sus propios background tasks globales con su propio
-# flag _STARTED, igual que hacía _SSH_STARTED antes.
-app.add_page(dashboard_page, route="/", title="Noxus Control Center")
+# Los eventos de entrada van como on_load y NO como on_mount del componente.
+# Es a propósito y es justo al revés de lo que ponía aquí antes: Reflex reenvía
+# los on_load en CADA (re)conexión del websocket, y eso es lo que hace que una
+# pestaña que vuelve de segundo plano recupere sus bucles de refresco sin
+# recargar la página. Con on_mount solo corrían al montar el componente, así
+# que tras una reconexión la pantalla se quedaba viva pero sorda —una solicitud
+# de acceso nueva no aparecía— y no había más remedio que cerrar y abrir.
+#
+# Lo que antes lo desaconsejaba —que se arrancaran bucles de más, uno por
+# conexión— ya no puede pasar: los de sesión se relevan entre ellos (ver
+# core/sesiones.py) y los de proceso siguen protegidos por su flag _STARTED.
+app.add_page(dashboard_page, route="/", title="Noxus Control Center",
+             on_load=EVENTOS_DE_ENTRADA)
 app.add_page(upload_page, route="/upload")
-app.add_page(dashboard_page, route="/panel", title="Noxus Control Center")
+app.add_page(dashboard_page, route="/panel", title="Noxus Control Center",
+             on_load=EVENTOS_DE_ENTRADA)

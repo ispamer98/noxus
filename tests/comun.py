@@ -65,6 +65,9 @@ class CasaDePruebas:
         "PRESENCIA_FILE": "presencia.json",
         "MOVIMIENTO_FILE": "movimiento.json",
         "AUTOMATIZACIONES_FILE": "automatizaciones.json",
+        "ALEXA_CLOUD_FILE": "alexa_cloud.json",
+        "ALEXA_EVENT_CLIENT_FILE": "alexa_event_client.json",
+        "ALEXA_DEVICES_FILE": "alexa_dispositivos.json",
     }
 
     def __init__(self):

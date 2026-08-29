@@ -40,7 +40,7 @@ from pathlib import Path
 
 from ..access import store as access_store
 from ..automations import store as auto_store
-from ..devices import overrides_store
+from ..devices import alexa_catalog_store, overrides_store
 from ..notifications import branding
 from ..notifications import suscriptores
 from ..security import groups_store, logs_store, shared_state
@@ -91,6 +91,8 @@ def ficheros() -> list[tuple[str, Path]]:
         ("Control de accesos", Path(access_store.ARCHIVO)),
         ("Automatizaciones", Path(auto_store.ARCHIVO)),
         ("Estado de las automatizaciones", Path(auto_store.ARCHIVO_ESTADO)),
+        ("Dispositivos y acciones publicados en Alexa",
+         Path(alexa_catalog_store.ARCHIVO)),
         ("Ajustes del registro de dispositivos", Path(overrides_store.ARCHIVO)),
         ("Nombre en los avisos", Path(branding.ARCHIVO)),
         ("Dispositivos con avisos", Path(suscriptores.ARCHIVO)),

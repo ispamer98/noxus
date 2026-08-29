@@ -8,7 +8,9 @@ import reflex as rx
 
 from . import catalogo, red, store
 from ..auth import permisos
+from ..entities import service
 from ..security import audit, logs
+from ...core import bus, sesiones
 
 
 class InventoryState(rx.State):
@@ -23,6 +25,17 @@ class InventoryState(rx.State):
     camaras: list[dict] = []
     mandos: list[dict] = []
     sueltos: list[dict] = []
+    estancias: list[dict] = []
+    accesorios: list[dict] = []
+    grupos: list[dict] = []
+    automatizaciones: list[dict] = []
+    carpetas: list[dict] = []
+    planos: list[dict] = []
+    widgets: list[dict] = []
+    botones: list[dict] = []
+    metricas: list[dict] = []
+    voz: list[dict] = []
+    alexa: list[dict] = []
 
     total: int = 0
     sin_documentar: int = 0
@@ -44,6 +57,22 @@ class InventoryState(rx.State):
     @rx.event
     def on_load(self):
         self._recargar()
+        yield InventoryState.sync_loop
+
+    @rx.event(background=True)
+    async def sync_loop(self):
+        guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.ENTIDADES)
+        while True:
+            try:
+                if not await aviso.espera(guardia, 8):
+                    return
+                async with self:
+                    self._recargar()
+            except Exception as e:
+                print(f"Error en InventoryState.sync_loop: {e}")
+                if not await sesiones.espera(guardia, 8):
+                    return
 
     def _recargar(self):
         tablas = catalogo.construir()
@@ -51,6 +80,17 @@ class InventoryState(rx.State):
         self.nodos = tablas["nodos"]
         self.sensores = tablas["sensores"]
         self.cerraderos = tablas["cerraderos"]
+        self.estancias = tablas.get("estancias", [])
+        self.accesorios = tablas.get("accesorios", [])
+        self.grupos = tablas.get("grupos", [])
+        self.automatizaciones = tablas.get("automatizaciones", [])
+        self.carpetas = tablas.get("carpetas", [])
+        self.planos = tablas.get("planos", [])
+        self.widgets = tablas.get("widgets", [])
+        self.botones = tablas.get("botones", [])
+        self.metricas = tablas.get("metricas", [])
+        self.voz = tablas.get("voz", [])
+        self.alexa = tablas.get("alexa", [])
         self.luces = tablas["luces"]
         self.camaras = tablas["camaras"]
         self.mandos = tablas["mandos"]
@@ -137,6 +177,17 @@ class InventoryState(rx.State):
                                 position="top-center")
 
     # ── Elementos que el panel no controla ───────────────────────────────
+    @rx.event
+    async def borrar_entidad(self, collection: str, entity_id: str, nombre: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        if not service.delete(collection, entity_id):
+            return rx.toast.error("Esta entidad no admite borrado desde el inventario.",
+                                  position="top-center")
+        self._recargar()
+        await audit.registrar(self, logs.SISTEMA, "ENTIDAD_ELIMINADA", nombre)
+        return rx.toast.success(f"{nombre} eliminado.", position="top-center")
+
     @rx.event
     def set_nuevo_nombre(self, v: str):
         self.nuevo_nombre = v

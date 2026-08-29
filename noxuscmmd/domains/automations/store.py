@@ -28,6 +28,8 @@ import time
 import uuid
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("AUTOMATIZACIONES_FILE", "automatizaciones.json"))
 ARCHIVO_ESTADO = Path(os.getenv("AUTOMATIZACIONES_ESTADO_FILE", "automatizaciones_estado.json"))
 
@@ -184,6 +186,7 @@ def _write(data: dict) -> None:
         os.fsync(f.fileno())
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     os.replace(tmp, ARCHIVO)
+    bus.publicar(bus.ENTIDADES)
 
 
 def _mutar(mutador):

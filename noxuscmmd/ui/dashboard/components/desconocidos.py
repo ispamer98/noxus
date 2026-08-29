@@ -31,6 +31,15 @@ def _fila(d: rx.Var) -> rx.Component:
             # llega sin tipo y el + no sabe si es suma o unión de textos.
             rx.text("Quiere entrar en el panel · visto " + d["visto"].to(str),
                     size="1", color=theme.MUTED),
+            # Lo que la propia persona escribió para decir quién es o a qué
+            # viene — ver AuthState.enviar_nota_acceso. Es justo lo que hace
+            # falta para decidir "dar acceso" o "bloquear" sin preguntar antes
+            # por otro lado.
+            rx.cond(
+                d["nota_acceso"] != "",
+                rx.text("«" + d["nota_acceso"].to(str) + "»", size="1",
+                        color=theme.TEXT, style={"font-style": "italic"}),
+            ),
             spacing="0", align="start", min_width="0",
         ),
         rx.spacer(),

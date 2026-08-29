@@ -103,18 +103,32 @@ _APPS = {
     "movistar": "com.movistarplus.webos",
 }
 
+# Namespace explícito para que una entrada física nunca se confunda con el id
+# de una app. El sufijo es el ``id`` que devuelve get_inputs() y que espera
+# set_input(); en las LG suele ser HDMI_1, HDMI_2... Mantener el valor opaco
+# también permite usar ids distintos si otro modelo de tele los devuelve.
+_INPUT_PREFIX = "input:"
+
 
 async def send_command(comando: str) -> None:
     """Ejecuta un comando webOS. `comando` es o el nombre de un botón de
     navegación (HOME, BACK...) o el nombre corto de una app a lanzar
-    (netflix, disneyplus...) — ver _BOTONES y _APPS."""
-    if not comando:
+    (netflix, disneyplus...), o ``input:<id>`` para cambiar directamente de
+    entrada sin navegar por Home — ver _BOTONES y _APPS."""
+    clave = str(comando or "").strip()
+    if not clave:
         raise RuntimeError(
             "Este botón no tiene comando asignado — edítalo y elige qué debe hacer."
         )
+    es_entrada = clave.lower().startswith(_INPUT_PREFIX)
+    entrada = clave[len(_INPUT_PREFIX):].strip() if es_entrada else ""
+    if es_entrada and not entrada:
+        raise RuntimeError("La acción de entrada no indica qué HDMI debe seleccionar.")
     async with _LOCK:
         client = await _get_client()
-        clave = comando.strip()
+        if es_entrada:
+            await client.set_input(entrada)
+            return
         if clave.upper() in _BOTONES:
             await client.button(clave.upper())
             return
@@ -161,7 +175,11 @@ def comandos_disponibles() -> list[tuple[str, str]]:
         ("plex", "Abrir Plex"),
         ("movistar", "Abrir Movistar+"),
     ]
-    return navegacion + apps
+    entradas = [
+        (f"{_INPUT_PREFIX}HDMI_{numero}", f"Cambiar directamente a HDMI {numero}")
+        for numero in range(1, 5)
+    ]
+    return navegacion + entradas + apps
 
 
 def forget_connection() -> None:

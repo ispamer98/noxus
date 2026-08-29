@@ -1,3 +1,10 @@
+"""
+Sensores de hardware de la Raspberry Pi puente VPN — hoy solo su temperatura
+de CPU, leída por SSH (ver ssh_manager.py) porque no hay otra vía de acceso a
+esa máquina desde aquí. Si se necesita más telemetría de esa Raspberry en el
+futuro, este es el sitio: un método por sensor, todos vía la misma conexión
+persistente.
+"""
 import asyncio
 from .ssh_manager import SSHManager
 

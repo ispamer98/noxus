@@ -1,16 +1,14 @@
 """
-Control por voz: `POST /api/voz`. Es lo que usan Siri y Alexa.
+Control local por voz: `POST /api/voz`. Lo usan Siri, atajos y clientes HTTP.
 
-CÓMO FUNCIONA, en una frase: el atajo del móvil (o la rutina del altavoz) manda
-la frase dictada y una clave, y aquí se busca en el catálogo de comandos de la
-casa y se ejecuta el que case. La respuesta trae una frase corta para que el
+CÓMO FUNCIONA, en una frase: el atajo del móvil o un cliente propio manda la
+frase dictada y una clave, y aquí se busca en el catálogo de comandos de la casa
+y se ejecuta el que case. La respuesta trae una frase corta para que el
 asistente la lea en voz alta.
 
-SIN NUBE DE TERCEROS. No hay integración con Apple ni con Amazon: los dos saben
-hacer una petición HTTP, y eso es todo lo que hace falta. En Siri es un Atajo con
-«Obtener contenido de una URL»; en Alexa, una rutina con un webhook. Nada de esta
-casa pasa por un servidor ajeno, y el día que Apple o Amazon cambien su API, esto
-sigue funcionando igual.
+SIN NUBE DE TERCEROS. En Siri es un Atajo con «Obtener contenido de una URL».
+Este endpoint no interviene en la Skill oficial de Alexa, que usa el catálogo y
+las directivas Smart Home de ``alexa_cloud_endpoint.py``.
 
 LA CLAVE ES UNA SESIÓN FIRMADA, la misma máquina que el resto del panel
 (auth/sessions.py). Ventajas de no inventarse otro sistema: se firma con el mismo
@@ -41,6 +39,10 @@ from . import comandos
 # Cuántas alternativas se ofrecen cuando la frase es ambigua. Tres son las que
 # caben en una frase hablada sin marear.
 ALTERNATIVAS = 3
+
+# Cuánto dura la clave de voz — la misma constante que usa "Generar una clave"
+# en Ajustes (ui/dashboard/views/voz.py la importa de aquí).
+DIAS_CLAVE = 365
 
 
 def _quien(request, cuerpo: dict) -> tuple[str, str]:

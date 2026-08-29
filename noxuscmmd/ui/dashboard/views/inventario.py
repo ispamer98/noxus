@@ -14,6 +14,7 @@ from ....domains.inventory.state import InventoryState
 from ....domains.inventory import catalogo
 
 # (clave de la fila, encabezado). El nombre va siempre el primero y no se
+from ..components.actions_menu import confirm_delete_dialog
 # declara aquí: lo pone _tabla, junto al botón de abrir la ficha.
 _COLUMNAS = {
     "equipos": [("ip_local", "IP local"), ("ip_tailscale", "Tailscale"),
@@ -34,8 +35,34 @@ _COLUMNAS = {
                ("ubicacion", "Ubicación")],
     "sueltos": [("familia", "Qué es"), ("ip_local", "IP local"), ("mac", "MAC"),
                 ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
+    "accesorios": [("nodo", "Nodo"), ("pin", "Pin"),
+                   ("gobierno", "Se gobierna"), ("modelo", "Modelo"),
+                   ("ubicacion", "Ubicación")],
+    "estancias": [("tipo", "Tipo"), ("modelo", "Modelo"),
+                  ("ubicacion", "Ubicación")],
+    "grupos": [("miembros", "Sensores"), ("principal", "Principal"),
+                ("armado", "Armado"), ("modelo", "Modelo"),
+                ("ubicacion", "Ubicación")],
+    "automatizaciones": [("activa", "Activa"), ("disparadores", "Disparadores"),
+                           ("acciones", "Acciones"), ("modelo", "Modelo"),
+                           ("ubicacion", "Ubicación")],
+    "carpetas": [("reglas", "Automatizaciones"), ("modelo", "Modelo"),
+                 ("ubicacion", "Ubicación")],
+    "planos": [("medidas", "Medidas"), ("principal", "Principal"),
+                ("iconos", "Iconos colocados"), ("modelo", "Modelo"),
+                ("ubicacion", "Ubicación")],
+    "widgets": [("tipo", "Tipo"), ("destino", "Destino"),
+                ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
+    "botones": [("tipo", "Tipo"), ("padre", "Pertenece a"),
+                 ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
+    "metricas": [("forma", "Forma"), ("medida", "Mide"), ("dias", "Días"),
+                  ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
+    "voz": [("comando", "Acción"), ("modelo", "Modelo"),
+            ("ubicacion", "Ubicación")],
+    "alexa": [("comportamiento", "Comportamiento"), ("accion", "Acción"),
+              ("frase_alexa", "Cómo se pide"), ("modelo", "Modelo"),
+              ("ubicacion", "Ubicación")],
 }
-
 
 def _celda(texto) -> rx.Component:
     return rx.table.cell(
@@ -67,11 +94,16 @@ def _fila(item: rx.Var, columnas: list[tuple[str, str]],
                     on_click=InventoryState.abrir_ficha(item["id"], item["nombre"]),
                 ),
                 rx.cond(
-                    borrable,
-                    rx.button(
-                        rx.icon("trash-2", size=12), size="1", variant="soft",
-                        color_scheme="red",
-                        on_click=InventoryState.borrar_suelto(item["id"]),
+                    item["entity_can_delete"],
+                    confirm_delete_dialog(
+                        rx.button(
+                            rx.icon("trash-2", size=12), size="1", variant="soft",
+                            color_scheme="red"),
+                        title="¿Eliminar este elemento?",
+                        tipo="elemento", nombre=item["nombre"],
+                        on_confirm=InventoryState.borrar_entidad(
+                            item["entity_collection"], item["entity_id"],
+                            item["nombre"]),
                     ),
                 ),
                 spacing="1", justify="end",
@@ -259,6 +291,23 @@ def inventario_view() -> rx.Component:
         _tabla("Luces", "lightbulb", "luces", InventoryState.luces),
         _tabla("Cámaras", "video", "camaras", InventoryState.camaras),
         _tabla("Mandos", "gamepad-2", "mandos", InventoryState.mandos),
+        _tabla("Accesorios", "box", "accesorios", InventoryState.accesorios),
+        _tabla("Estancias", "house", "estancias", InventoryState.estancias),
+        _tabla("Grupos de alarma", "layers", "grupos", InventoryState.grupos),
+        _tabla("Automatizaciones", "workflow", "automatizaciones",
+               InventoryState.automatizaciones),
+        _tabla("Carpetas de automatizaciones", "folder", "carpetas",
+               InventoryState.carpetas),
+        _tabla("Planos", "map", "planos", InventoryState.planos),
+        _tabla("Widgets del resumen", "layout-grid", "widgets",
+               InventoryState.widgets),
+        _tabla("Botones y mandos", "square-mouse-pointer", "botones",
+               InventoryState.botones),
+        _tabla("Paneles de métricas", "chart-no-axes-combined", "metricas",
+               InventoryState.metricas),
+        _tabla("Comandos de voz", "mic", "voz", InventoryState.voz),
+        _tabla("Elementos publicados en Alexa", "audio-lines", "alexa",
+               InventoryState.alexa),
 
         rx.text("Otros equipos de red", size="1", weight="bold",
                 color=theme.MUTED, margin_top="6px"),

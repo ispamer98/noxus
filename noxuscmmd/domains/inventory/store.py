@@ -19,6 +19,8 @@ import secrets
 import time
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("INVENTARIO_FILE", "inventario.json"))
 
 # Lo que se puede escribir a mano de CUALQUIER elemento.
@@ -44,6 +46,7 @@ def escribir(datos: dict) -> None:
     tmp = ARCHIVO.with_suffix(".tmp")
     tmp.write_text(json.dumps(datos, indent=2, ensure_ascii=False) + "\n")
     os.replace(tmp, ARCHIVO)
+    bus.publicar(bus.ENTIDADES)
 
 
 # ── Campos a mano de un elemento que ya existe en el panel ───────────────

@@ -66,9 +66,9 @@ _MANTENIMIENTO = [
     ("inventario", "clipboard-list", "Inventario",
      "Todo lo instalado con su IP, MAC, nodo y pin; el modelo y la ubicación, "
      "a mano."),
-    ("voz", "mic", "Comandos de voz",
-     "Ata una frase a una accion para Siri o Alexa, y saca la clave que "
-     "necesita el atajo del movil."),
+    ("voz", "audio-lines", "Alexa y voz",
+     "Publica dispositivos y acciones en Alexa sin tocar código; también "
+     "gestiona las frases locales y los Atajos de Siri."),
     ("system", "hard-drive-download", "Copias de seguridad",
      "Se guarda sola una copia al día de todo lo que hay dado de alta; desde "
      "aquí se restaura."),

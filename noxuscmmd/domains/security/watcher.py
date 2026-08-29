@@ -19,7 +19,7 @@ import time
 from ..cameras import fotogramas
 from ..devices import registry
 from ..nodes import store as nodes_store
-from ..notifications import alertas
+from ..notifications import alertas, categorias
 from ..notifications.push import enviar_notificacion
 from . import arming, groups_store, logs, logs_store, retardos
 
@@ -107,7 +107,7 @@ async def _alertar(g: dict, nombre_sensor: str, sensor_id: str,
         return
     await asyncio.to_thread(
         enviar_notificacion, titulo, cuerpo, "todos", clave,
-        False, alertas.ACCIONES_ALARMA,
+        False, alertas.ACCIONES_ALARMA, categoria=categorias.ALARMA,
     )
     # Queda pendiente de que alguien diga «visto». Si nadie lo dice, se repite.
     await asyncio.to_thread(alertas.crear, clave, titulo, cuerpo)
@@ -132,6 +132,7 @@ async def _repetir_sin_confirmar() -> None:
             f"🔁 SIN CONFIRMAR ({vuelta}) · {ficha['titulo']}",
             ficha["cuerpo"] + " Nadie lo ha confirmado todavía.",
             "todos", clave, False, alertas.ACCIONES_ALARMA,
+            categoria=categorias.ALARMA,
         )
         await asyncio.to_thread(alertas.marcar_repetida, clave)
         logs.registrar(logs.ALARMA, "ALERTA_REPETIDA", "sistema",

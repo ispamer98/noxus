@@ -1,3 +1,19 @@
+"""
+Pantalla «CCTV» (dentro de Ajustes): dar de alta, editar, ocultar y abrir
+cualquier cámara de la casa.
+
+DOS FAMILIAS DE TARJETA, y no es capricho: "Cámara Fija" y "Cámara PTZ" son
+las dos que trae la instalación de fábrica (registry.py, con su propio
+control de movimiento — ver ui/views/camera_view.py) y no se pueden borrar,
+solo ocultar; el resto son cámaras que el usuario ha ido añadiendo con
+"Añadir cámara" (domains/nodes), que sí se pueden borrar del todo. De ahí
+`_camera_card` (fija/PTZ) y `_dynamic_camera_card` (las añadidas) como
+funciones separadas aunque se vean casi iguales.
+
+El vídeo en directo NO se pinta aquí: esta pantalla solo identifica la cámara
+y da acceso a sus acciones; el preview real vive en la ventana flotante que
+abre el botón «Abrir» (ver ui/dashboard/windows.py).
+"""
 import reflex as rx
 
 from ....domains.cameras.state import CameraState

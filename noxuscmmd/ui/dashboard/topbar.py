@@ -1,3 +1,15 @@
+"""
+La barra superior, siempre visible: dice en qué vista se está (`VIEW_TITLES`,
+la tabla completa de TODAS las vistas — la hermana `NAV_ITEMS` de sidebar.py
+solo tiene las cinco que además aparecen en el menú), deja armar/desarmar de
+un vistazo, y agrupa lo que hace falta poder alcanzar desde cualquier pantalla:
+la paleta de comandos, enviar un aviso, registros, métricas y el chip de
+"este dispositivo".
+
+QUÉ NO HAY AQUÍ Y POR QUÉ: nada que se toque una vez y no se vuelva a tocar
+vive en esta barra — eso es Ajustes (ver settings_hub.py). Esta barra se ve
+todo el rato, así que solo lleva lo que de verdad se usa todo el rato.
+"""
 import reflex as rx
 
 from ...domains.security.state import SecurityState
@@ -31,7 +43,7 @@ VIEW_TITLES = {
     "system": ("Copias de seguridad", "hard-drive-download"),
     "logs": ("Registros", "clipboard-list"),
     "metricas": ("Métricas", "chart-line"),
-    "voz": ("Comandos de voz", "mic"),
+    "voz": ("Alexa y voz", "audio-lines"),
     "instalador": ("Modo instalador", "ear"),
     "presencia": ("Simulación de presencia", "user-round-check"),
     "accesorios": ("Accesorios", "toggle-right"),

@@ -276,6 +276,19 @@ def _bocadillo(e, color) -> rx.Component:
         border=f"1px solid {theme.BORDER_STRONG}",
         border_radius="12px",
         padding="14px",
+        # El primer evento de la lista debe abrirse debajo de su fila, pero en
+        # las últimas filas (o en una pantalla móvil baja) no cabe ahí. Radix
+        # cambia automáticamente a `top` cuando `avoid_collisions` detecta que
+        # el lado preferido no tiene espacio suficiente. El margen evita que
+        # el bocadillo quede pegado al borde del viewport y `max_height` deja
+        # consultar todos sus datos aunque la foto haga crecer el contenido.
+        side="bottom",
+        align="start",
+        side_offset=8,
+        avoid_collisions=True,
+        collision_padding=12,
+        max_height="calc(100dvh - 24px)",
+        overflow_y="auto",
         max_width="min(340px, 88vw)",
     )
 

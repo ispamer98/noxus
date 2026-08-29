@@ -1,3 +1,10 @@
+"""
+Utilidades de red de bajo nivel que no pertenecen a ningún dominio concreto:
+hacer ping a una IP (para saber si un equipo está en línea) y mandar un paquete
+mágico de Wake-on-LAN (para encenderlo). Lo usan tanto domains/nodes/
+operations.py (el "Encender PC" del catálogo de comandos) como cualquier otro
+sitio que necesite preguntar "¿está vivo esto?" sin más contexto.
+"""
 import asyncio
 import platform
 from wakeonlan import send_magic_packet

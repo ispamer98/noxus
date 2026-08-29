@@ -18,9 +18,23 @@ SUSCRIPTORES_FILE = "suscriptores.json"
 TODOS = "todos"
 
 
+def _categoria_bloqueada(nombre_usuario: str, categoria: str) -> bool:
+    """¿Este dispositivo tiene esa categoría de aviso silenciada?
+
+    Import diferido: auth/store.py no depende de notifications a nivel de
+    módulo, pero mantener el mismo patrón que el resto del dominio (ver
+    notifications/state.py) evita sorpresas si eso cambia."""
+    from ..auth import store as auth_store
+    id_dispositivo, _ = auth_store.por_nombre(nombre_usuario)
+    if not id_dispositivo:
+        return False
+    return categoria in auth_store.categorias_desactivadas(id_dispositivo)
+
+
 def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
                         tag: str = "", silencioso: bool = False,
-                        acciones: tuple | list = (), url: str = "") -> None:
+                        acciones: tuple | list = (), url: str = "",
+                        categoria: str = "") -> None:
     """`destino`: "todos", el nombre de un dispositivo, o una lista de nombres.
 
     Acepta las tres formas porque las llamadas automáticas (una alarma que
@@ -46,7 +60,14 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
     `url` es a dónde lleva el aviso al pulsarlo, dentro del panel
     ("/panel?vista=logs"). Sin ella se abre el panel por donde estuviera, que
     para un aviso de movimiento obligaba a buscar el evento a mano. Un móvil con
-    el service worker viejo la ignora y abre el panel, como hasta ahora."""
+    el service worker viejo la ignora y abre el panel, como hasta ahora.
+
+    `categoria` es una de notifications/categorias.CATEGORIAS ("movimiento",
+    "alarma", "desconocido"...). Con ella puesta, un dispositivo que la tenga
+    silenciada (Ajustes → Dispositivos y accesos) no recibe este aviso aunque
+    esté en `destino`. Sin categoría —el caso de una alerta escrita a mano o el
+    aviso de una regla de automatización— no se filtra nada: esos ya eligen su
+    destino en el momento de mandarlos."""
     from pywebpush import webpush
 
     if not os.path.exists(SUSCRIPTORES_FILE):
@@ -75,7 +96,10 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
             "url": url or "",
         })
         for sub in subs:
-            if not a_todos and sub.get("nombre_usuario") not in elegidos:
+            nombre = sub.get("nombre_usuario", "")
+            if not a_todos and nombre not in elegidos:
+                continue
+            if categoria and _categoria_bloqueada(nombre, categoria):
                 continue
             try:
                 webpush(

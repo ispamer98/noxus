@@ -35,6 +35,11 @@ tinytuya.json
 # nombres de los aparatos de la familia y los códigos de invitación vivos.
 auth_secreto.json
 dispositivos.json
+alexa_cloud.json
+alexa_proxy_secret
+alexa_oauth_client.json
+alexa_event_client.json
+alexa_dispositivos.json
 # El mapa de la instalación: IPs, MAC y dónde está físicamente cada aparato.
 inventario.json
 # Los modos de la casa y cuál está puesto ahora.

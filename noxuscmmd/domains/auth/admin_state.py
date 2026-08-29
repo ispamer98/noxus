@@ -12,13 +12,38 @@ y la vista solo las coloca.
 """
 from datetime import datetime
 
-import asyncio
-
 import reflex as rx
 
 from . import permisos, store
+from ..notifications import categorias
 from ..security import audit, logs
-from ...core import sesiones
+from ...core import bus, sesiones
+
+
+# Los iconos entre los que se puede elegir para un dispositivo — ver
+# elegir_icono. Curados para aparatos personales de la familia, no
+# infraestructura de la casa (ese catálogo es _HOST_ICONS, en equipment.py).
+ICONOS_DISPOSITIVO = [
+    "smartphone", "laptop", "monitor", "tablet", "watch",
+    "tv", "gamepad-2", "server", "router", "printer",
+]
+
+
+def _icono_de_partida(nombre: str) -> str:
+    """Propuesta de icono según el nombre, para no arrancar todos los
+    dispositivos con el mismo icono genérico. No se guarda hasta que alguien
+    lo confirma o lo cambia a mano (ver elegir_icono): esto es solo lo que se
+    PROPONE mientras nadie ha elegido nada."""
+    n = nombre.lower()
+    if any(p in n for p in ("ipad", "tablet")):
+        return "tablet"
+    if any(p in n for p in ("portátil", "portatil", "laptop", "macbook")):
+        return "laptop"
+    if any(p in n for p in ("pc", "ordenador", "desktop", "torre", "sobremesa")):
+        return "monitor"
+    if any(p in n for p in ("tv", "televisor")):
+        return "tv"
+    return "smartphone"  # el caso más común en una casa: móviles
 
 
 def _fecha(marca: float | None) -> str:
@@ -72,26 +97,28 @@ class AuthAdminState(rx.State):
 
     @rx.event(background=True)
     async def vigilar_desconocidos(self):
-        """Relee la lista de dispositivos cada pocos segundos.
+        """Releé la lista de dispositivos en cuanto cambia algo, en cualquier
+        pestaña.
 
         Es lo que hace que el aviso de «hay un aparato desconocido pidiendo
         entrar» aparezca con el panel ya abierto, en vez de solo al recargar: sin
         esto, un administrador con el panel puesto no se enteraba de nada hasta
         que recargaba, y el aviso al móvil era el único camino.
 
-        Se compara antes de asignar, que si no el panel se repintaría cada tres
-        segundos."""
+        También es lo que hace que dos administradores con Ajustes abierto a la
+        vez se vean el uno al otro: si uno cambia un rol, revoca una invitación o
+        da de baja un aparato, la lista del otro se actualiza sola. Espera el
+        aviso de quien escribe (core/bus.py) en vez de sondear: como solo
+        despierta cuando alguien ha escrito de verdad, no hace falta comparar
+        antes de recargar."""
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.DISPOSITIVOS)
         while True:
             try:
-                if not await sesiones.espera(guardia, 3.0):
+                async with self:
+                    self._recargar()
+                if not await aviso.espera(guardia, 3.0):
                     return
-                antes = [d["id"] for d in self.dispositivos if d["pide_acceso"]]
-                datos = await asyncio.to_thread(store.todos)
-                ahora = [d["id"] for d in datos if d.get("pide_acceso")]
-                if antes != ahora or len(datos) != len(self.dispositivos):
-                    async with self:
-                        self._recargar()
             except Exception as e:
                 print(f"⚠️ Error vigilando dispositivos: {e}")
                 if not await sesiones.espera(guardia, 10):
@@ -103,6 +130,12 @@ class AuthAdminState(rx.State):
             {
                 "id": d["id"],
                 "nombre": d.get("nombre") or "(sin nombre)",
+                # Lo que se pinta grande en la tarjeta. d.get("icono") es lo
+                # que alguien eligió a mano (ver elegir_icono); mientras nadie
+                # lo toque, se propone uno según el nombre — un "iPhone Ana"
+                # nace ya con forma de móvil, no con un icono genérico igual
+                # para todos.
+                "icono": d.get("icono") or _icono_de_partida(d.get("nombre", "")),
                 "rol": store.rol_de(d["id"]),
                 "rol_nombre": store.NOMBRES_DE_ROL.get(
                     store.rol_de(d["id"]), store.rol_de(d["id"])),
@@ -116,6 +149,21 @@ class AuthAdminState(rx.State):
                 # el rol, justo para que el aviso no vuelva a salir cada vez que
                 # alguien deja un aparato en «Sin acceso».
                 "pide_acceso": bool(d.get("pide_acceso")),
+                # Lo que la propia persona escribió para identificarse mientras
+                # esperaba acceso (ver AuthState.enviar_nota_acceso). Se queda
+                # aunque ya se le haya resuelto: es contexto de por qué se le
+                # dio o no el rol que tiene, no solo mientras pide_acceso.
+                "nota_acceso": d.get("nota_acceso") or "",
+                # Qué avisos de sistema recibe ESTE aparato — solo tiene sentido
+                # elegirlo si puede recibir avisos en absoluto (ver "tiene_avisos"
+                # arriba). "activa" en Python y no en la vista por lo mismo que el
+                # resto de esta pantalla: un rx.foreach no puede comparar contra
+                # una lista dentro de otra lista sin que Reflex se atragante.
+                "categorias": [
+                    {"id": cid, "nombre": nombre,
+                     "activa": cid not in d.get("categorias_desactivadas", [])}
+                    for cid, nombre in categorias.CATEGORIAS.items()
+                ],
             }
             for d in store.todos()
         ]
@@ -186,6 +234,42 @@ class AuthAdminState(rx.State):
         return rx.toast.success(
             f"{antes.get('nombre') or 'El dispositivo'} pasa a "
             f"{store.NOMBRES_DE_ROL.get(rol, rol)}.", position="top-center")
+
+    @rx.event
+    async def alternar_categoria(self, id_dispositivo: str, categoria: str):
+        """Silencia o reactiva un tipo de aviso para ESTE aparato — no toca a
+        los demás. Guardado como lista de categorías DESACTIVADAS (ver
+        auth/store.categorias_desactivadas): así un dispositivo que nunca ha
+        tocado este ajuste sigue recibiendo todo, igual que antes de que esto
+        existiera."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        d = store.dispositivo(id_dispositivo)
+        if d is None:
+            return
+        desactivadas = set(d.get("categorias_desactivadas", []))
+        si_estaba_activa = categoria not in desactivadas
+        if si_estaba_activa:
+            desactivadas.add(categoria)
+        else:
+            desactivadas.discard(categoria)
+        store.actualizar(id_dispositivo, categorias_desactivadas=sorted(desactivadas))
+        self._recargar()
+        await audit.registrar(
+            self, logs.ACCESOS, "AVISOS_CAMBIADOS",
+            f"{d.get('nombre') or id_dispositivo}: "
+            f"{categorias.CATEGORIAS.get(categoria, categoria)} "
+            f"{'desactivado' if si_estaba_activa else 'activado'}",
+        )
+
+    @rx.event
+    async def elegir_icono(self, id_dispositivo: str, icono: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        if icono not in ICONOS_DISPOSITIVO or not store.dispositivo(id_dispositivo):
+            return
+        store.actualizar(id_dispositivo, icono=icono)
+        self._recargar()
 
     @rx.event
     async def eliminar_dispositivo(self, id_dispositivo: str):

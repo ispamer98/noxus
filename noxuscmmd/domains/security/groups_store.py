@@ -16,6 +16,8 @@ import time
 import uuid
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("GRUPOS_FILE", "grupos_armado.json"))
 
 
@@ -47,6 +49,7 @@ def _write(groups: list[dict]) -> None:
             f.flush()
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    bus.publicar(bus.ENTIDADES)
 
 
 def read_all() -> list[dict]:
