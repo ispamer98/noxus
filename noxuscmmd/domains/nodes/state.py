@@ -628,6 +628,9 @@ class NodesState(rx.State):
     editing_button_icon: str = "circle"
     editing_button_kind: str = "ir"
     editing_button_code: str = ""
+    # Vía elegida en «Añadir botón». Hace visible el selector webOS sin
+    # alterar el flujo de aprendizaje IR/RF que ya funciona.
+    new_button_signal: str = "ir"
 
     @rx.var
     def ssh_hosts(self) -> list[dict]:
@@ -668,7 +671,19 @@ class NodesState(rx.State):
         # renombrar algo y que se quede una copia atrás. Es idempotente y solo
         # escribe si encuentra algo desfasado.
         referencias.sincronizar()
-        data = store.read_all()
+        self._refrescar(store.read_all())
+
+    def _refrescar(self, data: dict) -> None:
+        """Vuelca en las Vars un `data` ya leído del disco.
+
+        Va aparte de `_reload` porque lo llama TAMBIÉN el bucle de
+        sincronización, y ese no puede pasar por `referencias.sincronizar()`:
+        esa función ESCRIBE cuando encuentra una copia desfasada, y escribir
+        publica en el bus, que es justo lo que despierta a este bucle en todas
+        las sesiones. Una sesión sincronizando referencias despertaría a las
+        demás, que volverían a sincronizar... Quien corrige las referencias es
+        siempre quien hace el cambio (`_reload`), una sola vez.
+        """
         self.nodes = data["nodes"]
         self.sensors = data["sensors"]
         self.doors = data["doors"]
@@ -994,17 +1009,42 @@ class NodesState(rx.State):
     # fuera de este proceso.
     @rx.event(background=True)
     async def sync_loop(self):
+        """Refleja en ESTA pestaña lo que cambie desde cualquier otra.
+
+        DOS CAMINOS, y la diferencia es lo que hace que esto sea barato:
+
+        - El de siempre (sensores y equipos): dos lecturas pequeñas, muchas
+          veces al día. Es lo que se mueve solo — un imán, un ping.
+        - El de la CONFIGURACIÓN (`bus.ENTIDADES`): alguien ha dado de alta,
+          renombrado, movido o borrado algo. Ahí no basta con releer estados:
+          hay que rehacer las listas enteras, porque `lights`, `hosts`,
+          `ir_remotes`, los catálogos del plano... son copias en memoria de
+          esta sesión. Sin esto, renombrar una luz en el móvil no se veía en el
+          ordenador hasta recargar la página — el cambio estaba en disco, pero
+          nadie volvía a leerlo.
+
+        El caro solo se paga cuando de verdad cambió algo: se compara el
+        contador del tema (`bus.version`) en vez de rehacerlo en cada vuelta.
+        """
         guardia = await sesiones.guardia(self)
-        aviso = bus.Aviso(bus.SENSORES, bus.EQUIPOS)
+        aviso = bus.Aviso(bus.SENSORES, bus.EQUIPOS, bus.ENTIDADES)
+        entidades_vistas = bus.version(bus.ENTIDADES)
         while True:
             try:
-                real_sensors = await asyncio.to_thread(store.get_all_sensor_states)
-                real_hosts = await asyncio.to_thread(store.get_all_host_online)
-                async with self:
-                    if real_sensors != self.sensor_state:
-                        self.sensor_state = real_sensors
-                    if real_hosts != self.host_online:
-                        self.host_online = real_hosts
+                entidades_ahora = bus.version(bus.ENTIDADES)
+                if entidades_ahora != entidades_vistas:
+                    entidades_vistas = entidades_ahora
+                    data = await asyncio.to_thread(store.read_all)
+                    async with self:
+                        self._refrescar(data)
+                else:
+                    real_sensors = await asyncio.to_thread(store.get_all_sensor_states)
+                    real_hosts = await asyncio.to_thread(store.get_all_host_online)
+                    async with self:
+                        if real_sensors != self.sensor_state:
+                            self.sensor_state = real_sensors
+                        if real_hosts != self.host_online:
+                            self.host_online = real_hosts
                 if not await aviso.espera(guardia, 3.0):
                     return
             except Exception as e:
@@ -1457,7 +1497,7 @@ class NodesState(rx.State):
         item = store.update_light(light_id, name, node_id, self._node_name(node_id), pin, room_id,
                                   show_on_floor, floor_icon, kind=kind,
                                   remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
-                               aspecto=aspecto, mando_modo=mando_modo)
+                                  aspecto=aspecto, mando_modo=mando_modo)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
@@ -1583,6 +1623,15 @@ class NodesState(rx.State):
     # (TV, ventilador, aire...). Aprender y disparar botones van por
     # domains/devices/ir_bus.py, 100% LAN, sin pasar por ninguna nube.
     @rx.event
+    def prepare_add_remote_button(self):
+        self.new_button_signal = "ir"
+        self.ir_status = ""
+
+    @rx.event
+    def set_new_button_signal(self, valor: str):
+        self.new_button_signal = valor if valor in ("ir", "rf", "webos") else "ir"
+
+    @rx.event
     async def submit_add_ir_remote(self, form_data: dict):
         # Editar la instalacion es cosa de administradores: «familia»
         # puede USAR todo y no cambiar nada (ver auth/permisos.py).
@@ -1633,17 +1682,17 @@ class NodesState(rx.State):
 
     @rx.event(background=True)
     async def submit_learn_ir_button(self, form_data: dict):
-        """"Añadir botón" del mando virtual: en vez de un formulario que solo
-        guarda texto, pone el hub en modo aprendizaje y espera a que acerques
-        el mando real y pulses — el código que capture ES el botón, no hay
-        paso de escribir nada a mano.
+        """«Añadir botón» del mando virtual: para IR/RF pone el hub en modo
+        aprendizaje y espera a que acerques el mando real y pulses; el código
+        capturado ES el botón, no hay que copiarlo a mano.
 
         signal="ir" (por defecto) es un único paso (acercar + pulsar).
         signal="rf" (433/315MHz — típico de ventiladores de techo) son DOS
         pasos con instrucciones que cambian a mitad de aprendizaje (mantener
         pulsado para encontrar la frecuencia, soltar y pulsar breve para
         capturar) — de ahí el callback on_status en vez de un único mensaje
-        fijo como en IR."""
+        fijo como en IR. signal="webos" guarda directamente la acción de red
+        elegida sin contactar con ningún dispositivo al crearla."""
         remote_id = form_data.get("remote_id", "")
         label = form_data.get("label", "").strip()
         icon = form_data.get("icon", "circle") or "circle"
@@ -1661,7 +1710,36 @@ class NodesState(rx.State):
             remote = next((r for r in self.ir_remotes if r["id"] == remote_id), None)
             if remote is None:
                 return
-            self.ir_learning = f"{remote_id}:{label}"
+            if signal != "webos":
+                self.ir_learning = f"{remote_id}:{label}"
+
+        if signal == "webos":
+            codigo = form_data.get("webos_code", "").strip()
+            if not codigo:
+                await _status("⚠️ Elige qué acción debe ejecutar la TV.")
+                return
+            try:
+                await asyncio.to_thread(
+                    store.add_ir_button, remote_id, label, icon, codigo,
+                    kind="webos",
+                )
+                msg = f'✅ Botón "{label}" creado en {remote["name"]}'
+                creado = True
+            except Exception as e:
+                msg = f'❌ Error creando "{label}": {e}'
+                creado = False
+            async with self:
+                self._reload()
+                infra = await self.get_state(InfraState)
+                infra.status = msg
+                self.ir_status = msg
+                if creado:
+                    await self._log(
+                        logs.SISTEMA, "MANDO_WEBOS_BOTON_CREADO",
+                        f'{remote["name"]} · {label}',
+                    )
+            return
+
         primer_mensaje = (
             f"📡 Acerca el mando real y pulsa \"{label}\" (15s)..." if signal == "ir"
             else f"📡 Mantén PULSADO \"{label}\" en el mando real (buscando frecuencia)..."

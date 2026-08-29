@@ -23,7 +23,7 @@ from .state import SecurityState
 from ..devices import registry
 from ..nodes.state import NodesState
 from ..notifications.state import PushState
-from ...core import sesiones
+from ...core import bus, sesiones
 
 
 class GroupsState(rx.State):
@@ -77,14 +77,24 @@ class GroupsState(rx.State):
 
     @rx.event(background=True)
     async def sync_loop(self):
+        """Espera el aviso de quien escribe en vez de releer cada segundo.
+
+        Los dos temas hacen falta y no son el mismo: `ENTIDADES` cubre armar,
+        desarmar y editar un grupo (todo eso pasa por `groups_store._write`),
+        y `ARMADO` cubre el camino inverso — armar el sistema desde el escudo
+        de la barra mueve el grupo principal a través de
+        `shared_state.set_sistema_armado`. Escuchando solo uno, la mitad de
+        los armados tardaban hasta un segundo en verse en las demás pestañas.
+        """
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.ENTIDADES, bus.ARMADO)
         while True:
             try:
                 real = await asyncio.to_thread(groups_store.read_all)
                 async with self:
                     if real != self.groups:
                         self.groups = real
-                if not await sesiones.espera(guardia, 1):
+                if not await aviso.espera(guardia, 3.0):
                     return
             except Exception as e:
                 print(f"⚠️ Error en GroupsState.sync_loop: {e}")

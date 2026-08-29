@@ -46,6 +46,14 @@ class NotConfigured(OperationError):
     señal aprendida, MQTT caído."""
 
 
+def _salida_ssh(salida: str) -> str:
+    """Convierte el convenio textual del bus SSH en un fallo accionable."""
+    texto = str(salida or "")
+    if texto.lstrip().upper().startswith("ERROR:"):
+        raise OperationError(texto)
+    return texto
+
+
 # ── Resolución ──────────────────────────────────────────────────────────────
 def find(collection: str, item_id: str, data: dict | None = None) -> dict | None:
     datos = data if data is not None else store.read_all()
@@ -155,6 +163,15 @@ async def _enviar_por_mando(light: dict, on: bool) -> None:
     await send_remote_button(mando, tecla, apuntar_estado=False)
 
 
+def _remote_con_estado_real(remote_id: str, data: dict) -> bool:
+    """Si este mando tiene algún botón webOS, la tele que hay detrás tiene un
+    estado de verdad que preguntar por red (webos_bus.is_on()) — no hace falta
+    fiarse a ciegas del último que se le pidió. Ver el aviso de `set_light`
+    sobre por qué esa suposición se desincroniza sola."""
+    mando = find("ir_remotes", remote_id, data)
+    return bool(mando) and any(b.get("kind") == "webos" for b in mando.get("buttons", []))
+
+
 # ── Luces ───────────────────────────────────────────────────────────────────
 async def set_light(light_id: str, on: bool | None = None, *,
                     on_applied=None, on_failed=None) -> bool:
@@ -177,11 +194,36 @@ async def set_light(light_id: str, on: bool | None = None, *,
         light = find("lights", light_id, data)
         if light is None:
             raise EntityNotFound(f"La luz {light_id} ya no existe")
-        nuevo = (not data["sensor_states"].get(light_id, False)) if on is None else bool(on)
         # Una luz de mando no cuelga de ningún nodo, así que no se le busca SSH:
         # con node_id vacío esto no tiene nada que resolver.
         por_mando = light.get("kind") == store.LUZ_MANDO
+        actual = bool(data["sensor_states"].get(light_id, False))
+        # Un accesorio de UNA sola tecla (la tele, el ventilador) no tiene botón
+        # de apagar propio: el mismo pulso alterna, así que lo guardado es una
+        # SUPOSICIÓN, no un hecho — y basta con que alguien use el mando físico
+        # de verdad una sola vez (o que un pulso IR se pierda) para que se
+        # desincronice. Con el estado ya mal, «apaga» que coincide por
+        # casualidad con lo guardado no manda nada (más abajo), y el aparato se
+        # queda atascado en lo que sea que esté de verdad — que es justo lo que
+        # le pasaba a la tele. Si el mando tiene un botón webOS, hay un hecho
+        # de verdad que preguntar por red en vez de fiarse de lo guardado.
+        if (por_mando and light.get("mando_modo") == store.UNA_TECLA
+                and _remote_con_estado_real(light.get("remote_id", ""), data)):
+            try:
+                actual = await webos_bus.is_on()
+            except Exception:
+                pass  # sin red ahora mismo: se sigue confiando en lo guardado
+        nuevo = (not actual) if on is None else bool(on)
         ssh = None if por_mando else node_ssh(light["node_id"], data)
+
+        # El estado que pinta el plano es la fuente de verdad para TODAS las
+        # luces y accesorios. Una orden explícita «apaga»/«enciende» que ya se
+        # cumple no toca el transporte: evita que POWER en una TV/ventilador
+        # de una sola tecla haga justo lo contrario y también ahorra pulsos de
+        # relé o mando innecesarios. El clic manual llega como el estado
+        # contrario, así que continúa conmutando exactamente como antes.
+        if on is not None and nuevo == actual:
+            return actual
 
         await asyncio.to_thread(store.set_sensor_state, light_id, nuevo)
         if on_applied:
@@ -307,6 +349,30 @@ def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> None:
             store.set_sensor_state(luz["id"], False)
 
 
+async def _despertar_tv_si_hace_falta(remote: dict) -> None:
+    """Antes de un comando webOS (abrir una app, Home...), enciende la tele si
+    hace falta.
+
+    El botón «Encender» del mando es infrarrojos normal, y en esta TV es un
+    interruptor único: el mismo código enciende y apaga. Pulsarlo a ciegas
+    antes de cada app apagaría la tele las veces que ya estuviera encendida —
+    que es el caso normal al pedir «pon Netflix». Por eso solo se pulsa cuando
+    `webos_bus.is_on()` confirma que de verdad no responde por red."""
+    if await webos_bus.is_on():
+        return
+    encender = next(
+        (b for b in remote.get("buttons", [])
+         if b.get("kind") == "ir" and b.get("icon") == "power" and b.get("code")),
+        None)
+    if encender is None:
+        return
+    await ir_bus.send_button(encender["code"])
+    # webOS tarda unos segundos en arrancar y abrir el WebSocket; sin esta
+    # espera, send_command() de justo después llegaría antes de que la tele
+    # pudiera escucharlo.
+    await asyncio.sleep(8)
+
+
 async def send_remote_button(remote_id: str, button_id: str, *,
                              apuntar_estado: bool = True) -> str:
     """Dispara una tecla de un mando virtual — por infrarrojos/radiofrecuencia
@@ -327,6 +393,7 @@ async def send_remote_button(remote_id: str, button_id: str, *,
         )
     try:
         if boton.get("kind") == "webos":
+            await _despertar_tv_si_hace_falta(remote)
             await webos_bus.send_command(boton["code"])
         else:
             await ir_bus.send_button(boton["code"])
@@ -359,11 +426,11 @@ async def host_action(host_id: str, accion: str) -> str:
     if ssh is None:
         raise NotConfigured("este equipo no tiene usuario SSH configurado")
     if accion == "apagar":
-        return await ssh_bus.accion_apagar(ssh)
+        return _salida_ssh(await ssh_bus.accion_apagar(ssh))
     if accion == "reiniciar":
-        return await ssh_bus.accion_reiniciar(ssh)
+        return _salida_ssh(await ssh_bus.accion_reiniciar(ssh))
     if accion == "temperatura":
-        return await ssh_bus.accion_temperatura(ssh)
+        return _salida_ssh(await ssh_bus.accion_temperatura(ssh))
     raise NotConfigured(f"acción desconocida: {accion}")
 
 
@@ -371,7 +438,7 @@ async def run_host_command(host_id: str, cmd: str, timeout: int = 8) -> str:
     ssh = host_ssh(host_id)
     if ssh is None:
         raise NotConfigured("este equipo no tiene usuario SSH configurado")
-    return await ssh_bus.ssh_execute(ssh, cmd, timeout=timeout)
+    return _salida_ssh(await ssh_bus.ssh_execute(ssh, cmd, timeout=timeout))
 
 
 async def run_host_button(button_id: str) -> str:
@@ -385,7 +452,8 @@ async def run_host_button(button_id: str) -> str:
         raise NotConfigured("este equipo no tiene usuario SSH configurado")
     try:
         if btn["kind"] == "ssh_command":
-            return await ssh_bus.ssh_execute(ssh, btn["value"], timeout=8)
+            return _salida_ssh(
+                await ssh_bus.ssh_execute(ssh, btn["value"], timeout=8))
         if btn["kind"] == "pin_write_on":
             await gpio_bus.set_pin(ssh, btn["value"], True, timeout=3)
             return f"Pin {btn['value']} -> ON"
@@ -393,7 +461,8 @@ async def run_host_button(button_id: str) -> str:
             await gpio_bus.set_pin(ssh, btn["value"], False, timeout=3)
             return f"Pin {btn['value']} -> OFF"
         if btn["kind"] == "pin_read":
-            return await gpio_bus.read_pin(ssh, btn["value"], timeout=3)
+            return _salida_ssh(
+                await gpio_bus.read_pin(ssh, btn["value"], timeout=3))
     except OperationError:
         raise
     except Exception as e:

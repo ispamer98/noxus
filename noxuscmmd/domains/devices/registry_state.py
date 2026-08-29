@@ -10,6 +10,7 @@ from ..auth import permisos
 
 from . import registry
 from ..security import groups_store
+from ...core import bus, sesiones
 
 # Forma completa de una entrada de floor_pos. Toda escritura parcial en esa Var
 # tiene que partir de aquí (o de la entrada que ya hubiera): al marcador del
@@ -73,6 +74,34 @@ class RegistryState(rx.State):
         es justo por lo que los sensores dados de alta desde la web sí
         conservaban su estado."""
         self._refresh()
+        return RegistryState.sync_loop
+
+    @rx.event(background=True)
+    async def sync_loop(self):
+        """Refleja en ESTA pestaña lo que otra haya editado de las entidades
+        de fábrica: nombre, icono, aislado y posición en el plano.
+
+        Hasta ahora este State no tenía bucle ninguno: `apply_override` deja
+        `registry.DEVICES` al día en el proceso —así que el dato ya era
+        correcto para todos—, pero las Vars de arriba son una copia POR SESIÓN
+        y solo las rellenaba `on_load`. Resultado: renombrar la puerta
+        principal desde el móvil no se veía en el ordenador hasta recargar.
+
+        No relee ningún fichero: `DEVICES` es del proceso y ya lo tiene todo.
+        Solo hay que volver a volcarlo en las Vars cuando algo cambie.
+        """
+        guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.ENTIDADES)
+        while True:
+            try:
+                async with self:
+                    self._refresh()
+                if not await aviso.espera(guardia, 5.0):
+                    return
+            except Exception as e:
+                print(f"⚠️ Error en RegistryState.sync_loop: {e}")
+                if not await sesiones.espera(guardia, 2):
+                    return
 
     def _refresh(self):
         self.names = {eid: e.name for eid, e in registry.DEVICES.items()}

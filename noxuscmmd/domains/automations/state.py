@@ -20,9 +20,11 @@ import reflex as rx
 from ..auth import permisos
 
 from . import catalog, engine, store
+from ..devices import comandos as comandos_dispositivos
+from ..modes import store as modes_store
 from ..nodes import store as nodes_store
 from ..security import audit, logs
-from ...core import sesiones
+from ...core import bus, sesiones
 
 # Secciones del editor. El nombre es el que se pasa a los eventos para saber
 # sobre cuál de las tres listas se está operando.
@@ -90,6 +92,10 @@ class AutomationsState(rx.State):
 
     # ── Editor ───────────────────────────────────────────────────────────
     editing: bool = False
+    # True cuando el editor se abrió desde la ficha de Alexa para construir
+    # una secuencia manual. El store sigue siendo el mismo: solo cambia qué
+    # partes del formulario se muestran y qué acciones se admiten.
+    desde_alexa: bool = False
     draft_id: str = ""
     draft_name: str = ""
     draft_icon: str = "workflow"
@@ -142,6 +148,11 @@ class AutomationsState(rx.State):
         una regla que se desactive sola) y rehace el catálogo para que el
         hardware dado de alta en otra pestaña aparezca aquí."""
         guardia = await sesiones.guardia(self)
+        # Se despierta al instante con ENTIDADES (alta, edición o borrado de una
+        # regla, o hardware nuevo que tiene que aparecer en el catálogo) y, si no
+        # llega ningún aviso, sigue mirando cada 2 s: el motor escribe la última
+        # ejecución en su propio fichero de estado, que no pasa por el bus.
+        aviso = bus.Aviso(bus.ENTIDADES)
         while True:
             try:
                 async with self:
@@ -150,7 +161,7 @@ class AutomationsState(rx.State):
                         # listas debajo del formulario haría saltar lo que se
                         # está escribiendo.
                         self._reload()
-                if not await sesiones.espera(guardia, 2):
+                if not await aviso.espera(guardia, 2.0):
                     return
             except Exception as e:
                 print(f"⚠️ Error en AutomationsState.sync_loop: {e}")
@@ -187,6 +198,8 @@ class AutomationsState(rx.State):
 
     @rx.var
     def titulo_editor(self) -> str:
+        if self.desde_alexa:
+            return "Nueva secuencia para Alexa"
         return "Editar automatización" if self.draft_id else "Nueva automatización"
 
     # ── Lista ────────────────────────────────────────────────────────────
@@ -341,10 +354,10 @@ class AutomationsState(rx.State):
     def set_draft_cooldown(self, valor: str):
         self.draft_cooldown = valor
 
-    @rx.event
-    def new_rule(self):
+    def _preparar_nueva(self, *, desde_alexa: bool = False,
+                        nombre: str = "") -> None:
         self.draft_id = ""
-        self.draft_name = ""
+        self.draft_name = nombre
         self.draft_icon = "workflow"
         self.draft_folder = ""
         self.draft_match = "all"
@@ -353,7 +366,18 @@ class AutomationsState(rx.State):
         self.draft_conditions = []
         self.draft_actions = []
         self.status = ""
+        self.desde_alexa = desde_alexa
         self.editing = True
+
+    @rx.event
+    def new_rule(self):
+        self._preparar_nueva()
+
+    def preparar_secuencia_alexa(self, nombre: str = "") -> None:
+        """Abre un borrador manual que el coordinador de la UI devolverá a
+        la ficha Alexa cuando se guarde o se cancele."""
+        sugerido = nombre.strip() or "Secuencia Alexa"
+        self._preparar_nueva(desde_alexa=True, nombre=sugerido)
 
     @rx.event
     def edit_rule(self, rule_id: str):
@@ -374,27 +398,36 @@ class AutomationsState(rx.State):
         self.draft_actions = [self._fila(a["type"], a["target"], a["params"], a, etiquetas)
                               for a in regla["actions"]]
         self.status = ""
+        self.desde_alexa = False
         self.editing = True
 
-    @rx.event
-    def cancel_edit(self):
+    def _cancelar_edicion(self) -> None:
+        self.desde_alexa = False
         self.editing = False
         self.picker_for = ""
         self._reload()
 
     @rx.event
-    async def save_rule(self):
+    def cancel_edit(self):
+        self._cancelar_edicion()
+
+    async def _guardar_regla(self) -> str | None:
+        """Valida y persiste el borrador. Devuelve el id solo si se guardó.
+
+        Es método interno para que DashboardState pueda completar de forma
+        atómica el viaje secuencia → Alexa sin copiar la lógica del store.
+        """
         # Editar la instalacion es cosa de administradores: «familia»
         # puede USAR todo y no cambiar nada (ver auth/permisos.py).
-        if (no := await permisos.denegar(self, permisos.AJUSTES)):
-            return no
+        if await permisos.denegar(self, permisos.AJUSTES):
+            return None
         nombre = self.draft_name.strip()
         if not nombre:
             self.status = "⚠️ Ponle un nombre a la automatización."
-            return
+            return None
         if not self.draft_actions:
             self.status = "⚠️ Una automatización sin acciones no haría nada — añade al menos una."
-            return
+            return None
 
         def predicados(filas):
             return [{"kind": f["kind"], "target": f["target"],
@@ -407,6 +440,18 @@ class AutomationsState(rx.State):
             "repeat": f["repeat"], "repeat_pause": f["repeat_pause"],
             "continue_on_error": f["continue_on_error"],
         } for f in self.draft_actions]
+
+        if self.desde_alexa:
+            # La UI ya filtra el selector, pero se valida otra vez al guardar:
+            # un evento manipulado desde el navegador no puede colar una
+            # puerta, el armado o un pin dentro de una orden de voz.
+            if not all(comandos_dispositivos.paso_permitido_alexa(paso)
+                       for paso in acciones):
+                self.status = (
+                    "⚠️ Esa secuencia contiene una acción que Alexa no puede "
+                    "usar (puertas, alarma, pines o una regla insegura)."
+                )
+                return None
 
         campos = dict(
             name=nombre, icon=self.draft_icon, folder_id=self.draft_folder,
@@ -435,6 +480,13 @@ class AutomationsState(rx.State):
         self.status = ("💾 Guardada." if self.draft_id
                        else "💾 Creada y desactivada — actívala cuando la hayas revisado.")
         await audit.registrar(self, logs.AUTOMATIZACIONES, accion, nombre, entidad=rid)
+        return rid
+
+    @rx.event
+    async def save_rule(self):
+        rid = await self._guardar_regla()
+        if rid:
+            self.desde_alexa = False
 
     # ── Filas del editor ─────────────────────────────────────────────────
     def _lista(self, seccion: str) -> list[dict]:
@@ -545,6 +597,22 @@ class AutomationsState(rx.State):
         origen = {DISPARADORES: self.cat_triggers,
                   CONDICIONES: self.cat_conditions,
                   ACCIONES: self.cat_actions}.get(self.picker_for, [])
+        if self.desde_alexa and self.picker_for == ACCIONES:
+            try:
+                reglas = store.read_all()
+            except store.ArchivoCorrupto:
+                reglas = []
+            modos = modes_store.leer().get("modos", [])
+            origen = [
+                {**seccion, "options": [
+                    opcion for opcion in seccion["options"]
+                    if comandos_dispositivos.paso_permitido_alexa(
+                        {"type": opcion["kind"], "target": opcion["target"]},
+                        reglas=reglas, modos=modos)
+                ]}
+                for seccion in origen
+            ]
+            origen = [seccion for seccion in origen if seccion["options"]]
         busca = self.picker_query.strip().lower()
         if not busca:
             return origen
@@ -569,6 +637,12 @@ class AutomationsState(rx.State):
         # huecos hasta que alguien toque cada campo.
         params = {c["name"]: c.get("default") for c in campos}
         filas = list(self._lista(seccion))
-        filas.append(self._fila(clave, target, params))
+        nueva = self._fila(clave, target, params)
+        if self.desde_alexa and seccion == ACCIONES:
+            # Una orden compuesta («apaga la habitación») debe intentar TV,
+            # PC, ventilador y luces aunque uno ya esté fuera de línea. Quien
+            # necesite una secuencia estricta puede apagarlo en ese paso.
+            nueva["continue_on_error"] = True
+        filas.append(nueva)
         self._guardar_lista(seccion, filas)
         self.picker_for = ""

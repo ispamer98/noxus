@@ -16,6 +16,8 @@ import json
 import os
 from pathlib import Path
 
+from ...core import bus
+
 ARCHIVO = Path(os.getenv("REGISTRY_OVERRIDES_FILE", "registry_overrides.json"))
 
 
@@ -44,6 +46,10 @@ def _write(data: dict) -> None:
             f.flush()
         finally:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    # Después de escribir, nunca antes: quien despierte vuelve a leer. Es lo que
+    # hace que ocultar o renombrar una entidad de fábrica desde una pestaña se
+    # vea en las demás sin recargar (ver devices/registry_state.py:sync_loop).
+    bus.publicar(bus.ENTIDADES)
 
 
 _HIDDEN_KEY = "_hidden"

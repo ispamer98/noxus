@@ -11,7 +11,7 @@ from ..auth import permisos
 from . import store
 from ..nodes.state import NodesState
 from ..security import audit, logs
-from ...core import sesiones
+from ...core import bus, sesiones
 
 
 class AccessControlState(rx.State):
@@ -30,7 +30,12 @@ class AccessControlState(rx.State):
 
     @rx.event(background=True)
     async def sync_loop(self):
+        # Espera el aviso de quien escribe (core/bus.py) en vez de releer cada
+        # segundo: dar de alta una tarjeta o cambiarla de nivel pasa por
+        # `store._write`, que publica en ENTIDADES. El tope de 3 s es el
+        # respaldo por si el fichero lo tocara algo de fuera del proceso.
         guardia = await sesiones.guardia(self)
+        aviso = bus.Aviso(bus.ENTIDADES)
         while True:
             try:
                 real = await asyncio.to_thread(store.read_all)
@@ -39,7 +44,7 @@ class AccessControlState(rx.State):
                         self.levels = real["levels"]
                     if real["credentials"] != self.credentials:
                         self.credentials = real["credentials"]
-                if not await sesiones.espera(guardia, 1):
+                if not await aviso.espera(guardia, 3.0):
                     return
             except Exception as e:
                 print(f"⚠️ Error en AccessControlState.sync_loop: {e}")
