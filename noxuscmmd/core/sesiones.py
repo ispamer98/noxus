@@ -49,6 +49,18 @@ _app = None
 # solo en su siguiente vuelta (ver Guardia.sigue). Así queda SIEMPRE uno, el
 # más reciente, sin tener que acordarse de dar de baja nada a mano.
 #
+# EL NOMBRE LLEVA EL STATE DELANTE, y no es un adorno. Nueve States distintos
+# llaman `sync_loop` a su bucle (seguridad, nodos, grupos, accesos, registros,
+# automatizaciones, inventario, alertas, registry). Identificándolos solo por
+# el nombre de la función, los nueve compartían la clave `(token,
+# "sync_loop")`: cada uno que arrancaba dejaba obsoletos a los ocho anteriores
+# y estos se apagaban en su primera vuelta. De los nueve sobrevivía UNO —el
+# último en arrancar—, así que en una pestaña recién abierta casi nada se
+# refrescaba solo: el escudo del armado se quedaba en verde con la casa
+# armada, y un cambio hecho en otro dispositivo no llegaba nunca. Con el State
+# delante, cada bucle tiene su propia clave y solo se releva a sí mismo, que
+# es lo único que este mecanismo quería evitar.
+#
 # Todo esto vive en el hilo del bucle de eventos —guardia() solo se llama desde
 # manejadores async—, así que un dict pelado basta: no hace falta cerrojo.
 _relevos: dict[tuple[str, str], int] = {}
@@ -159,12 +171,17 @@ async def guardia(estado) -> Guardia:
     Se lee el token una sola vez, al empezar: no cambia mientras la sesión vive,
     y así el bucle no tiene que entrar en `async with self` solo para esto.
 
-    El NOMBRE del bucle se toma de la función que llama, sin tener que pasarlo:
-    junto al token identifica «este bucle, en esta sesión», que es lo que
-    permite que un arranque nuevo releve al anterior en vez de sumarse a él
-    (ver _relevos). Se saca del marco de quien llama porque los dieciséis
-    bucles que hay ya llamaban a `guardia(self)` a secas, y hacerles pasar su
-    propio nombre era pedir que alguien se lo dejara justo en el que importa.
+    El NOMBRE del bucle se compone del State y de la función que llama, sin
+    tener que pasarlo: junto al token identifica «este bucle, en esta sesión»,
+    que es lo que permite que un arranque nuevo releve al anterior en vez de
+    sumarse a él (ver _relevos). La función se saca del marco de quien llama
+    porque los dieciséis bucles que hay ya llamaban a `guardia(self)` a secas,
+    y hacerles pasar su propio nombre era pedir que alguien se lo dejara justo
+    en el que importa.
+
+    El State va DELANTE porque nueve bucles distintos se llaman `sync_loop` y
+    sin él compartían clave, matándose entre ellos — ver el comentario largo
+    de _relevos.
 
     Sin token no se releva a nadie: todas las sesiones que no lo tengan
     compartirían clave y se apagarían unas a otras.
@@ -178,4 +195,5 @@ async def guardia(estado) -> Guardia:
             token = ""
     if not token or not quien:
         return Guardia(token)
-    return Guardia(token, quien, _relevar(token, quien))
+    nombre = f"{type(estado).__name__}.{quien}"
+    return Guardia(token, nombre, _relevar(token, nombre))
