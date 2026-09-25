@@ -61,7 +61,7 @@ from ..dashboard.views.usuarios import usuarios_view
 from ..dashboard.views.inventario import inventario_view
 from ..dashboard.views.modos import modos_view
 from ..dashboard.views.retardos import retardos_view
-from ..dashboard.components.armado import dialogo_armado
+from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
 
 _DRAG_AND_CLOCK_SCRIPT = """
 (function(){
@@ -135,6 +135,11 @@ _DENSIDAD_CSS = """
 [data-densidad="pro"] .rt-Card { padding: 9px 11px; }
 [data-densidad="pro"] .rt-BadgeRoot { padding-top: 0; padding-bottom: 0; }
 """
+
+# JavaScript propio del panel (assets/nx.js): conserva la precarga de la
+# suscripción y recupera la red Obsidiana con límites específicos para móvil.
+_NX_JS = "/nx.js?v=20260925o2"
+
 
 def _sin_permiso() -> rx.Component:
     return rx.vstack(
@@ -252,14 +257,7 @@ def _aviso_vincular() -> rx.Component:
             rx.icon("x", size=16, color=theme.MUTED, cursor="pointer",
                     on_click=PushState.descartar_aviso_vincular, flex_shrink="0"),
             align="center", spacing="3",
-            position="fixed", bottom=["76px", "76px", "20px"], left="50%",
-            transform="translateX(-50%)",
-            width="min(560px, calc(100vw - 24px))",
-            padding="12px 14px", border_radius="12px",
-            background=theme.BG_WINDOW,
-            border=f"1px solid {theme.WARNING}",
-            box_shadow="0 10px 30px rgba(0,0,0,0.45)",
-            z_index="900",
+            class_name="nx-floating-notice nx-link-notice",
         ),
     )
 
@@ -268,14 +266,17 @@ def _comprobando() -> rx.Component:
     """Lo que se ve el instante que tarda en resolverse quién es este navegador.
 
     Existe para no tener que elegir entre dos parpadeos malos: enseñar el panel
-    a quien puede no tener acceso, o enseñar «sin acceso» a quien sí lo tiene."""
-    return rx.center(
-        rx.vstack(
-            rx.spinner(size="3"),
-            rx.text("Comprobando el acceso...", size="2", color=theme.MUTED),
-            spacing="3", align="center",
+    a quien puede no tener acceso, o enseñar «sin acceso» a quien sí lo tiene.
+    Desde que la entrada va en un solo evento (DashboardState.entrar) dura lo
+    que tarda ese viaje, y al terminar el panel sale entero y ya se puede tocar."""
+    return rx.el.div(
+        rx.el.div(
+            rx.el.img(src="/noxus-marca.svg", alt="", width="64", height="64"),
+            rx.el.div("Comprobando el acceso…", class_name="nx-boot-texto"),
+            class_name="nx-boot-marca",
         ),
-        height="100vh", width="100%",
+        class_name="nx-boot",
+        role="status",
     )
 
 
@@ -363,45 +364,44 @@ def _sin_acceso() -> rx.Component:
 
 
 def _panel() -> rx.Component:
+    # La carcasa es un contenedor FIJO a toda la pantalla (.nx-shell en
+    # assets/nx.css) y lo único que se desplaza es el contenido (.nx-scroll).
+    # Antes se desplazaba la página entera y la barra de arriba era sticky: en
+    # el iPhone, al tirar hacia abajo estando arriba del todo, el rebote
+    # elástico se la llevaba hasta media pantalla. Ahora la barra está fuera de
+    # lo que rebota y no se mueve.
     return rx.fragment(
         rx.script(_DRAG_AND_CLOCK_SCRIPT),
-        rx.hstack(
+        rx.el.div(
             sidebar(),
-            rx.vstack(
+            rx.el.div(
                 topbar(),
-                # Antes del contenido y en el flujo: una alerta de alarma sin
-                # confirmar no puede quedarse en una esquina flotante.
-                banner_alertas(),
-                banner_desconocidos(),
-                rx.box(
-                    _content(),
-                    width="100%",
-                    padding=["14px", "14px", "28px"],
-                    padding_bottom=["100px", "100px", "28px"],
-                    flex="1",
-                    # Centra CUALQUIER vista, tenga o no un max_width propio
-                    # (Equipos, Ajustes, Auto sí lo llevan; Registros, CCTV,
-                    # Alarma llenan el 100% y con esto no cambian). Antes todo
-                    # colgaba pegado al borde izquierdo del hueco disponible,
-                    # que en una pantalla ancha con el sidebar abierto se
-                    # notaba mucho — un único cambio aquí centra las doce
-                    # pestañas de golpe, sin tocar vista por vista.
-                    display="flex",
-                    justify_content="center",
+                rx.el.main(
+                    rx.el.div(
+                        _content(),
+                        # key: al cambiar de pestaña React monta la vista de
+                        # nuevo y entra con un fundido cortísimo (nx.css): lo
+                        # justo para que el cambio se note sin hacer esperar.
+                        key=DashboardState.active_view,
+                        class_name="nx-stage",
+                    ),
+                    class_name="nx-scroll",
                 ),
-                width="100%",
-                min_height="100vh",
-                spacing="0",
-                align="start",
+                class_name="nx-main",
             ),
-            width="100%",
-            spacing="0",
-            align="start",
+            class_name="nx-shell",
         ),
-        _aviso_vincular(),
-        # El desplegable de «esto impide armar»: al nivel de la pagina para que
-        # salga se pulse el armado desde donde se pulse.
-        dialogo_armado(),
+        # Una sola pila evita que los avisos propios se tapen entre sí. Está al
+        # nivel de la página para verse se pulse el armado desde donde se pulse.
+        rx.el.aside(
+            banner_alertas(),
+            banner_desconocidos(),
+            dialogo_armado(),
+            cuenta_atras_salida(),
+            _aviso_vincular(),
+            class_name="nx-floating-notices",
+            aria_label="Avisos del panel",
+        ),
         mobile_bottom_nav(),
         camera_dialogs(),
         photo_dialog(
@@ -417,13 +417,13 @@ def _panel() -> rx.Component:
     )
 
 
-# Lo que hay que hacer al ENTRAR en el panel. Va como `on_load` de la pagina
-# (ver noxuscmmd.py) y no como `on_mount` de este componente, y la diferencia
-# importa: Reflex reenvia los on_load en CADA (re)conexion del websocket, asi
-# que una pestana que vuelve de segundo plano —el movil, sin ir mas lejos—
-# recupera sus bucles de refresco sola. Con on_mount solo corrian al montar el
-# componente: tras una reconexion la pantalla se quedaba viva pero sorda, sin
-# enterarse de nada, y habia que cerrar la aplicacion y abrirla.
+# Lo que hay que hacer al ENTRAR en el panel. DashboardState.entrar consume
+# esta lista desde el servidor y es el unico `on_load` de la pagina (ver
+# noxuscmmd.py). Sigue siendo `on_load`, y no `on_mount`, porque Reflex lo
+# reenvia en CADA (re)conexion del websocket: una pestana que vuelve de segundo
+# plano —el movil, sin ir mas lejos— recupera sus bucles de refresco sola. Con
+# on_mount solo corrian al montar el componente: tras una reconexion la pantalla
+# se quedaba viva pero sorda y habia que cerrar la aplicacion y abrirla.
 #
 # Que se repitan no duplica nada: cada bucle de sesion releva al anterior en
 # vez de sumarse a el (ver core/sesiones.py), y los de proceso siguen con su
@@ -473,6 +473,7 @@ def dashboard_page() -> rx.Component:
         # viajan por el websocket y se pueden invocar sin pasar por ningún botón.
         # Esto es para que quien no tiene acceso no vea el estado de la casa.
         rx.el.style(_DENSIDAD_CSS),
+        rx.script(src=_NX_JS),
         # El color de acento de ESTE accesorio. rx.theme envuelve el panel, asi que
         # botones, insignias, interruptores y campos se pintan con el color que
         # cada uno haya elegido en su ficha (ver auth/store.preferencias).
@@ -499,6 +500,9 @@ def dashboard_page() -> rx.Component:
         ),
         min_height="100vh",
         width="100%",
-        background=f"radial-gradient(circle at top, {theme.BG_TOPBAR} 0%, {theme.BG_APP} 55%)",
-        custom_attrs={"data-densidad": AuthState.densidad},
+        background="transparent",
+        # data-nx-armado tiñe el ambiente entero (aurora, filo de la barra, titulares) de rojo con la
+        # casa armada: se ve de un vistazo desde la otra punta de la habitacion (assets/nx.css).
+        custom_attrs={"data-densidad": AuthState.densidad,
+                      "data-nx-armado": SecurityState.sistema_armado},
     )

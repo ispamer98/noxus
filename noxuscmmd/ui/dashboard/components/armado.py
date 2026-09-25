@@ -1,8 +1,7 @@
-"""El desplegable de «esto impide armar» y la cuenta atrás de salida.
+"""Avisos no modales del armado: impedimentos y cuenta atrás de salida.
 
-Aparece solo cuando hay algo abierto. Con la casa cerrada, armar sigue siendo
-un toque y esto no se ve nunca — que es la diferencia entre una alarma que se
-usa y una que cansa.
+Viven en la pila flotante común de dashboard.py para que aparezcan en cualquier
+vista, abajo a la derecha y sin bloquear el resto del panel.
 """
 import reflex as rx
 
@@ -22,84 +21,85 @@ def _abierto(item: rx.Var) -> rx.Component:
 
 
 def dialogo_armado() -> rx.Component:
-    return rx.dialog.root(
-        rx.dialog.content(
-            rx.dialog.title(
+    """Decisión de armado como panel no modal: informa sin secuestrar la UI."""
+    return rx.cond(
+        ArmingState.hay_dialogo,
+        rx.el.section(
+            rx.el.header(
                 rx.hstack(
                     rx.icon("shield-alert", size=18, color=theme.WARNING),
                     rx.text("Esto impide armar", size="3", weight="bold",
                             color=theme.TEXT),
                     align="center", spacing="2",
                 ),
+                rx.el.button(
+                    rx.icon("x", size=16),
+                    on_click=ArmingState.cerrar,
+                    class_name="nx-notice-close",
+                    type="button",
+                    aria_label="Cerrar",
+                ),
+                class_name="nx-notice-head",
+            ),
+            rx.text(
+                "Si armas ahora, esto se queda sin vigilar.",
+                size="1", color=theme.MUTED,
             ),
             rx.vstack(
-                rx.text(
-                    "Si armas ahora, esto se queda sin vigilar.",
-                    size="1", color=theme.MUTED,
-                ),
-                rx.vstack(
-                    rx.foreach(ArmingState.abiertos, _abierto),
-                    spacing="1", width="100%", max_height="220px",
-                    overflow_y="auto",
-                ),
-                rx.vstack(
-                    rx.button(
-                        rx.icon("shield-check", size=15),
-                        "Armar excluyendo esto",
-                        on_click=ArmingState.armar_excluyendo,
-                        color_scheme="red", size="2", width="100%",
-                    ),
-                    rx.button(
-                        rx.icon("clock", size=15),
-                        "Armar cuando cierren",
-                        on_click=ArmingState.armar_al_cerrar,
-                        variant="soft", size="2", width="100%",
-                    ),
-                    rx.button(
-                        "Dejarlo", on_click=ArmingState.cerrar,
-                        variant="soft", color_scheme="gray", size="2",
-                        width="100%",
-                    ),
-                    spacing="2", width="100%",
-                ),
-                rx.text(
-                    "Lo que se deje fuera queda apuntado en los registros, y "
-                    "vuelve a vigilarse en cuanto se desarme.",
-                    size="1", color=theme.MUTED, style={"line-height": "1.5"},
-                ),
-                spacing="3", width="100%",
+                rx.foreach(ArmingState.abiertos, _abierto),
+                spacing="1", width="100%", max_height="180px",
+                overflow_y="auto",
             ),
-            max_width="420px",
+            rx.vstack(
+                rx.button(
+                    rx.icon("shield-check", size=15),
+                    "Armar excluyendo esto",
+                    on_click=ArmingState.armar_excluyendo,
+                    color_scheme="red", size="2", width="100%",
+                ),
+                rx.button(
+                    rx.icon("clock", size=15),
+                    "Armar cuando cierren",
+                    on_click=ArmingState.armar_al_cerrar,
+                    variant="soft", size="2", width="100%",
+                ),
+                rx.button(
+                    "Dejarlo", on_click=ArmingState.cerrar,
+                    variant="soft", color_scheme="gray", size="2",
+                    width="100%",
+                ),
+                spacing="2", width="100%",
+            ),
+            rx.text(
+                "Lo que se deje fuera queda apuntado en los registros, y "
+                "vuelve a vigilarse en cuanto se desarme.",
+                size="1", color=theme.MUTED, style={"line-height": "1.5"},
+            ),
+            class_name="nx-floating-notice nx-arm-blockers",
+            aria_live="assertive",
         ),
-        open=ArmingState.hay_dialogo,
-        on_open_change=lambda abierto: rx.cond(
-            abierto, rx.noop(), ArmingState.cerrar()),
     )
 
 
 def cuenta_atras_salida() -> rx.Component:
-    """Mientras corre el tiempo para salir. Con su botón de cancelar, porque
-    lo primero que se hace cuando uno se arrepiente es querer pararlo."""
+    """Cuenta de salida compacta y cancelable, visible desde cualquier vista."""
     return rx.cond(
         ArmingState.contando != "",
-        rx.hstack(
+        rx.el.section(
             rx.icon("timer", size=20, color=theme.WARNING, flex_shrink="0"),
-            rx.vstack(
+            rx.el.div(
                 rx.text("Saliendo de casa", size="2", weight="bold",
                         color=theme.TEXT),
                 rx.text("Se armará al terminar la cuenta.", size="1",
                         color=theme.MUTED),
-                spacing="0", align="start",
+                class_name="nx-countdown-copy",
             ),
-            rx.spacer(),
             rx.text(ArmingState.restantes.to_string() + " s", size="5",
                     weight="bold", color=theme.WARNING,
                     font_family=theme.FONT_MONO),
             rx.button("Cancelar", size="1", variant="soft", color_scheme="gray",
                       on_click=ArmingState.cancelar_cuenta, flex_shrink="0"),
-            align="center", spacing="3", width="100%",
-            padding="12px 14px", border_radius="12px",
-            background=theme.alpha(theme.WARNING, 0.1),
-            border=f"1px solid {theme.alpha(theme.WARNING, 0.4)}",
+            class_name="nx-floating-notice nx-countdown",
+            aria_live="polite",
         ),
     )
