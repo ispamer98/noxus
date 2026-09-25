@@ -61,7 +61,7 @@ from ..dashboard.views.usuarios import usuarios_view
 from ..dashboard.views.inventario import inventario_view
 from ..dashboard.views.modos import modos_view
 from ..dashboard.views.retardos import retardos_view
-from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
+from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado, indicador_armado_principal
 
 _DRAG_AND_CLOCK_SCRIPT = """
 (function(){
@@ -391,6 +391,9 @@ def _panel() -> rx.Component:
             ),
             class_name="nx-shell",
         ),
+        # Indicador visual de armado principal (esquina superior izquierda)
+        # Va FUERA del shell para que quede por encima de todo, fijo en viewport
+        indicador_armado_principal(),
         # Una sola pila evita que los avisos propios se tapen entre sí. Está al
         # nivel de la página para verse se pulse el armado desde donde se pulse.
         rx.el.aside(

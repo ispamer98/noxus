@@ -7,6 +7,7 @@ import reflex as rx
 
 from .. import theme
 from ....domains.security.arming_state import ArmingState
+from ....domains.nodes.state import NodesState
 
 
 def _abierto(item: rx.Var) -> rx.Component:
@@ -102,4 +103,57 @@ def cuenta_atras_salida() -> rx.Component:
             class_name="nx-floating-notice nx-countdown",
             aria_live="polite",
         ),
+    )
+
+
+def indicador_armado_principal() -> rx.Component:
+    """Indicador visual en esquina superior izquierda: luz + líneas que se
+    vuelven rojas cuando el grupo principal está armado.
+
+    Usa `NodesState.principal_armed` (Var reactiva) para detectar el estado.
+    Cuando está armado: color ALERT (rojo) con pulso suave.
+    Cuando está desarmado: colores actuales (neutros/cian).
+    """
+    # Colores calculados reactivamente
+    light_color = rx.cond(
+        NodesState.principal_armed,
+        theme.ALERT,  # Rojo alerta cuando armado
+        theme.ACCENT  # Cian normal cuando desarmado
+    )
+    light_glow = rx.cond(
+        NodesState.principal_armed,
+        theme.alpha(theme.ALERT, 0.6),
+        theme.alpha(theme.ACCENT, 0.4)
+    )
+    line_color = rx.cond(
+        NodesState.principal_armed,
+        theme.ALERT,
+        theme.BORDER
+    )
+
+    return rx.el.div(
+        # Luz artificial (círculo superior izquierdo)
+        rx.el.div(
+            class_name=rx.cond(NodesState.principal_armed, "nx-armed-indicator-light nx-armed-pulse", "nx-armed-indicator-light"),
+            style={
+                "background": light_color,
+                "box_shadow": f"0 0 8px {light_glow}, 0 0 16px {light_glow}, 0 0 32px {light_glow}",
+                "transition": "all 0.4s ease",
+            },
+        ),
+        # Líneas colindantes (dos barras que forman esquina)
+        rx.el.div(
+            class_name="nx-armed-indicator-line nx-armed-indicator-line-h",
+            style={"background": line_color, "transition": "all 0.4s ease"},
+        ),
+        rx.el.div(
+            class_name="nx-armed-indicator-line nx-armed-indicator-line-v",
+            style={"background": line_color, "transition": "all 0.4s ease"},
+        ),
+        class_name="nx-armed-indicator",
+        # Aria para accesibilidad
+        aria_live="polite",
+        aria_atomic="true",
+        # data attribute para CSS selectors si se prefiere
+        custom_attrs={"data-armed": NodesState.principal_armed},
     )
