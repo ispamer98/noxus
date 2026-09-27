@@ -18,13 +18,23 @@ LEER_SUSCRIPCION = """
 (async function() {
     try {
         if (!('serviceWorker' in navigator)) return "";
-        // navigator.serviceWorker.ready no resuelve NUNCA si no hay ningún
-        // service worker registrado (ej: justo después de borrar el storage
-        // del sitio) — con una carrera contra un timeout evitamos que esto
-        // se quede colgado para siempre y bloquee la comprobación.
-        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 3000));
-        const reg = await Promise.race([navigator.serviceWorker.ready, timeout]);
+        // El arranque de la página puede dejar preparada esta lectura antes
+        // de que Reflex procese su callback. Reutilizarla evita esperar dos
+        // veces al mismo navegador.
+        if (window.__nxSuscripcion) {
+            const adelantada = await window.__nxSuscripcion;
+            if (typeof adelantada === 'string') return adelantada;
+        }
+
+        let reg = await navigator.serviceWorker.getRegistration();
         if (!reg) return "";
+        if (!reg.active) {
+            // ready no resuelve mientras el registro no llegue a estar activo.
+            // La carrera impide que este script bloquee la cola de eventos.
+            const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
+            reg = await Promise.race([navigator.serviceWorker.ready, timeout]);
+            if (!reg) return "";
+        }
         const sub = await reg.pushManager.getSubscription();
         return sub ? sub.endpoint : "";
     } catch (e) {

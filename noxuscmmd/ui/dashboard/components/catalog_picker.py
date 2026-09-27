@@ -33,7 +33,7 @@ def _opcion(opt: dict, on_pick) -> rx.Component:
         padding="9px 12px",
         border_radius="9px",
         border=f"1px solid {theme.BORDER}",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         _hover={"background": theme.alpha(theme.ACCENT, 0.10),
                 "border_color": theme.alpha(theme.ACCENT, 0.45)},
     )
@@ -44,7 +44,7 @@ def _seccion(section: dict, on_pick) -> rx.Component:
         rx.hstack(
             rx.icon(section["icon"].to(str), size=14, color=theme.ACCENT),
             rx.text(section["label"], size="1", weight="bold", color=theme.MUTED,
-                    letter_spacing="0.08em", text_transform="uppercase"),
+                    class_name="nx-label"),
             rx.spacer(),
             rx.badge(section["options"].to(list[dict]).length().to_string(), variant="soft",
                      size="1", color_scheme="gray"),

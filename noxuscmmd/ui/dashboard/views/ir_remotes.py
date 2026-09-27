@@ -87,8 +87,8 @@ def _remote_card(remote: dict) -> rx.Component:
             ),
         ),
         spacing="3", align="center", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
-        border_radius="12px", padding="14px", backdrop_filter="blur(10px)", wrap="wrap",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
+        border_radius="12px", padding="14px", wrap="wrap",
     )
 
 
@@ -161,7 +161,7 @@ def _add_remote_dialog() -> rx.Component:
 def ir_remotes_view() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.text("MANDOS IR", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Mandos IR", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_remote_dialog(),
             width="100%", align="center", wrap="wrap",
@@ -601,7 +601,7 @@ def _add_button_dialog(remote: dict) -> rx.Component:
                     NodesState.ir_status != "",
                     rx.text(NodesState.ir_status, size="2", color=theme.TEXT,
                             padding="8px 10px", border_radius="8px", width="100%",
-                            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}"),
+                            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}"),
                 ),
                 rx.hstack(
                     rx.spacer(),
@@ -666,8 +666,8 @@ def _button_editor_dialog(remote: dict) -> rx.Component:
                     )),
                     # Botón de infrarrojos: se (re)aprende la señal del mando real.
                     rx.vstack(
-                        rx.text("SEÑAL", size="1", color=theme.MUTED, weight="medium",
-                                letter_spacing="0.02em"),
+                        rx.text("Señal", size="1", color=theme.MUTED,
+                                weight="medium", class_name="nx-label"),
                         rx.hstack(
                             rx.button(
                                 rx.icon("radio-tower", size=13),
@@ -696,7 +696,7 @@ def _button_editor_dialog(remote: dict) -> rx.Component:
                     NodesState.ir_status != "",
                     rx.text(NodesState.ir_status, size="2", color=theme.TEXT,
                             padding="8px 10px", border_radius="8px", width="100%",
-                            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}"),
+                            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}"),
                 ),
                 rx.hstack(
                     rx.button("Cancelar", variant="soft", color_scheme="gray", size="2",
@@ -807,3 +807,15 @@ def ir_remote_window(remote: dict) -> rx.Component:
 
 def ir_remote_windows_layer() -> rx.Component:
     return rx.foreach(NodesState.ir_remotes, ir_remote_window)
+
+
+def ir_remote_kiosco(remote: rx.Var) -> rx.Component:
+    """Solo el mando utilizable, sin edición ni carcasa de ventana flotante."""
+    return rx.vstack(
+        _remote_body(remote),
+        rx.cond(
+            NodesState.ir_status != "",
+            rx.text(NodesState.ir_status, size="2", color=theme.MUTED),
+        ),
+        width="100%", align="center", spacing="3",
+    )

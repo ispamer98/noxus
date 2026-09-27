@@ -23,7 +23,7 @@ def _aviso() -> rx.Component:
         rx.box(
             rx.text(InstaladorState.mensaje, size="1", color=theme.TEXT),
             padding="9px 11px", border_radius="10px", width="100%",
-            background=rx.cond(InstaladorState.error, "#3a1a1a", theme.BG_CARD),
+            background=rx.cond(InstaladorState.error, "#3a1a1a", theme.BG_CARD), class_name="nx-card",
             border=f"1px solid {theme.BORDER}",
         ),
     )
@@ -55,7 +55,7 @@ def _hallazgo(h: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="9px 11px", border_radius="10px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -104,7 +104,7 @@ def _paso_oir() -> rx.Component:
                     size="1", color=theme.MUTED,
                 ),
                 padding="14px", border_radius="10px", width="100%",
-                background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+                background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
             ),
         ),
         spacing="3", width="100%", align="start",
@@ -123,8 +123,8 @@ def _paso_ficha() -> rx.Component:
         ),
         _aviso(),
         rx.vstack(
-            rx.text("QUÉ ES", size="1", color=theme.MUTED, weight="bold",
-                    letter_spacing="0.08em"),
+            rx.text("Qué es", size="1", color=theme.MUTED,
+                    weight="bold", class_name="nx-label"),
             rx.select.root(
                 rx.select.trigger(variant="surface"),
                 # Lista fija de Python, así que se despliega aquí: un rx.foreach
@@ -149,8 +149,8 @@ def _paso_ficha() -> rx.Component:
                     size="2",
                 ),
             ),
-            rx.text("CÓMO SE LLAMA", size="1", color=theme.MUTED, weight="bold",
-                    letter_spacing="0.08em"),
+            rx.text("Cómo se llama", size="1", color=theme.MUTED,
+                    weight="bold", class_name="nx-label"),
             rx.input(value=InstaladorState.ficha_nombre,
                      on_change=InstaladorState.set_ficha_nombre,
                      placeholder="Ventana del salón", size="2", width="100%"),
@@ -160,8 +160,8 @@ def _paso_ficha() -> rx.Component:
             spacing="2", width="100%", align="start",
         ),
         rx.vstack(
-            rx.text("EL NODO", size="1", color=theme.MUTED, weight="bold",
-                    letter_spacing="0.08em"),
+            rx.text("El nodo", size="1", color=theme.MUTED,
+                    weight="bold", class_name="nx-label"),
             rx.cond(
                 InstaladorState.nodo_hay_que_crearlo,
                 rx.vstack(
@@ -208,7 +208,7 @@ def _paso_ficha() -> rx.Component:
                 ),
             ),
             padding="9px 11px", border_radius="10px", width="100%",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         ),
         rx.hstack(
             rx.button("Dar de alta", size="2", on_click=InstaladorState.guardar,
@@ -235,7 +235,7 @@ def _paso_hecho() -> rx.Component:
         ),
         spacing="3", width="100%", align="start",
         padding="14px", border_radius="10px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 

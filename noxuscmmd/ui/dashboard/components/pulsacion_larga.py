@@ -84,9 +84,15 @@ PULSACION_LARGA = """
             Math.abs(e.clientY - inicioY) > TOLERANCIA) cancelar();
     }, {passive: true});
 
-    ['pointerup', 'pointercancel', 'scroll'].forEach(function(ev){
+    ['pointerup', 'pointercancel'].forEach(function(ev){
         document.addEventListener(ev, cancelar, {passive: true});
     });
+
+    // 'scroll' no burbujea: si el scroll ocurre dentro de un contenedor
+    // (overflow-y:auto, que es como vive el panel) nunca llegaría a
+    // document salvo en fase de captura, y sin esto el temporizador seguía
+    // vivo mientras se hacía scroll y el menú saltaba a mitad de gesto.
+    document.addEventListener('scroll', cancelar, {passive: true, capture: true});
 
     // Clic derecho en el ordenador: el mismo menú, y se le quita el del
     // navegador SOLO cuando hay uno nuestro que ofrecer.

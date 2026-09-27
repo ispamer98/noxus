@@ -35,14 +35,16 @@ def catalogo_camaras(cam_mode: str = "pc") -> list[dict]:
         salida.append({
             "id": cid, "name": cam.name, "icon": getattr(cam, "icon", None) or "video",
             "kind": "factory",
-            "stream_url": f"https://cam.noxuscmmd.uk/stream.html?src={src}&mode={modo}",
+            # Relativa: mismo dominio que el panel, con `portero-camaras`
+            # delante. Ver domains/cameras/endpoint.py.
+            "stream_url": f"/cam/stream.html?src={src}&mode={modo}",
             "playable": True,
         })
 
     for c in nodes_store.read_all()["cameras"]:
         kind = c.get("kind", "embed")
         if kind == "go2rtc":
-            url = f"https://cam.noxuscmmd.uk/stream.html?src={c.get('url', '')}&mode={modo}"
+            url = f"/cam/stream.html?src={c.get('url', '')}&mode={modo}"
             playable = True
         elif kind == "rtsp":
             url = c.get("url", "")

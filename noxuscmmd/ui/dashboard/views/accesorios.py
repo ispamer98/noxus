@@ -62,8 +62,8 @@ def _add_aparato_dialog() -> rx.Component:
 def accesorios_view() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.text("ACCESORIOS", size="1", color=theme.MUTED,
-                    letter_spacing="0.08em", weight="bold"),
+            rx.text("Accesorios", size="1", color=theme.MUTED,
+                    class_name="nx-label", weight="bold"),
             rx.spacer(),
             _add_aparato_dialog(),
             width="100%", align="center", wrap="wrap",

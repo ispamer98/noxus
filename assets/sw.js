@@ -97,8 +97,8 @@ self.addEventListener('push', function(event) {
 
     const options = {
         body: cuerpo,
-        icon: data.icon || '/icono-192.png',
-        badge: data.badge || '/icono-192.png',
+        icon: data.icon || '/noxus-icon-192.png',
+        badge: data.badge || '/noxus-icon-192.png',
         tag: tag,
         // renotify hace que la SUSTITUCIÓN vuelva a sonar: sin esto, agrupar
         // tendría un efecto feo — la segunda apertura de la puerta actualizaría
@@ -130,8 +130,8 @@ self.addEventListener('push', function(event) {
 async function avisarDelFallo(texto) {
     await mostrar('No se pudo hacer', {
         body: texto,
-        icon: '/icono-192.png',
-        badge: '/icono-192.png',
+        icon: '/noxus-icon-192.png',
+        badge: '/noxus-icon-192.png',
         tag: 'noxus:fallo',
         renotify: true,
         vibrate: [100, 50, 100],
@@ -173,8 +173,8 @@ async function mandarAccion(accion, clave) {
     // no volver a sonar por algo que la persona acaba de pulsar.
     await mostrar('Noxus', {
         body: datos.mensaje || 'Hecho.',
-        icon: '/icono-192.png',
-        badge: '/icono-192.png',
+        icon: '/noxus-icon-192.png',
+        badge: '/noxus-icon-192.png',
         tag: clave || 'noxus:hecho',
         silent: true,
     });

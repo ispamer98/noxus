@@ -34,11 +34,12 @@ _COLORES = {
     "armado_parcial": theme.WARNING,
     # Del plano (mismos nombres que el selector de color de los marcadores)
     "claro": "#cbd5e1", "verde": theme.SUCCESS, "azul": theme.ACCENT,
-    "morado": theme.PURPLE, "ambar": "#f59e0b", "cian": "#22d3ee", "gris": "#64748b",
+    "morado": theme.PURPLE, "ambar": theme.WARNING, "cian": "#22d3ee", "gris": "#64748b",
     # Por familia, cuando no hay nada más específico
     "alarma": theme.DANGER, "grupos": theme.PURPLE, "puertas": theme.WARNING,
     "luces": theme.WARNING, "sensores": theme.ACCENT, "cctv": theme.PURPLE,
-    "accesos": theme.SUCCESS, "equipos": theme.ACCENT, "sistema": theme.MUTED,
+    "acceso_app": theme.WARNING, "accesos": theme.SUCCESS,
+    "equipos": theme.ACCENT, "sistema": theme.MUTED,
 }
 
 
@@ -383,7 +384,7 @@ def _fila(e) -> rx.Component:
                 border_radius="9px",
                 border=f"1px solid {theme.BORDER}",
                 border_left=f"3px solid {color}",
-                background=theme.BG_CARD,
+                background=theme.BG_CARD, class_name="nx-card",
                 cursor="pointer",
                 _hover={"background": theme.BG_CARD_HOVER},
             ),

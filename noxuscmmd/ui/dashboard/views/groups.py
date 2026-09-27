@@ -120,7 +120,7 @@ def _group_card(group: dict) -> rx.Component:
         sensor_select(lambda sid: GroupsState.add_sensor_to_group(group["id"], sid)),
         spacing="3",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=rx.cond(
             is_principal,
             f"1px solid {theme.alpha(theme.PURPLE, 0.5)}",
@@ -128,7 +128,6 @@ def _group_card(group: dict) -> rx.Component:
         ),
         border_radius="12px",
         padding="16px",
-        backdrop_filter="blur(10px)",
     )
 
 
@@ -161,7 +160,7 @@ def groups_view() -> rx.Component:
     # siempre (y la vista clásica). Pulsa la estrella de cualquier grupo para convertirlo en el principal.
     return rx.vstack(
         rx.hstack(
-            rx.text("GRUPOS", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Grupos", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_group_dialog(),
             width="100%",

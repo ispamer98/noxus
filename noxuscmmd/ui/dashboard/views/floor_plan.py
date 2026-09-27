@@ -11,6 +11,8 @@ sin querer mientras usa el plano.
 import reflex as rx
 
 from ....domains.nodes.state import NodesState
+from ....domains.nodes.store import ICONO_ASPECTO
+from ....domains.security.state import SecurityState
 from ...views.device_list import (
     floor_plan_content, PLAN_COMMIT_SCRIPT, PLAN_RESET_SCRIPT, FLOOR_COLORS,
 )
@@ -19,21 +21,7 @@ from ..state import DashboardState
 from ..components.floor_fields import FLOOR_ICON_OPTIONS
 from ..components.icon_picker import icon_grid
 from ..components.actions_menu import confirm_delete_dialog
-
-_LEGEND = [
-    ("triangle-alert", theme.DANGER, "En alarma: abierto — rojo parpadeando"),
-    ("circle-dot", FLOOR_COLORS[""], "En reposo: el color que le pongas a cada uno"),
-    ("lightbulb", theme.WARNING, "Luz encendida / puerta abriéndose"),
-]
-
-
-def _legend_item(icon: str, color: str, label: str) -> rx.Component:
-    return rx.hstack(
-        rx.icon(icon, size=14, color=color),
-        rx.text(label, size="1", color=theme.MUTED),
-        spacing="2",
-        align="center",
-    )
+from .overview import _quick_action
 
 
 def _color_swatch(clave: str, color: str, ref, activo: bool = False) -> rx.Component:
@@ -76,8 +64,8 @@ def _color_picker(entry: dict) -> rx.Component:
         ),
         rx.popover.content(
             rx.vstack(
-                rx.text("EN REPOSO", size="1", color=theme.MUTED, weight="bold",
-                        letter_spacing="0.08em"),
+                rx.text("En reposo", size="1", color=theme.MUTED,
+                        weight="bold", class_name="nx-label"),
                 rx.hstack(
                     *[_color_swatch(k, v, ref) for k, v in FLOOR_COLORS.items() if k],
                     spacing="2",
@@ -86,8 +74,8 @@ def _color_picker(entry: dict) -> rx.Component:
                 # abierto o disparado si es un sensor o una puerta. Se elige
                 # aparte porque en un plano lleno el color es lo único que
                 # distingue un marcador de otro de un vistazo.
-                rx.text("ENCENDIDO / ABIERTO", size="1", color=theme.MUTED,
-                        weight="bold", letter_spacing="0.08em"),
+                rx.text("Encendido / abierto", size="1", color=theme.MUTED,
+                        class_name="nx-label", weight="bold"),
                 rx.hstack(
                     *[_color_swatch(k, v, ref, activo=True)
                       for k, v in FLOOR_COLORS.items() if k],
@@ -214,7 +202,7 @@ def _placed_row(entry: dict) -> rx.Component:
         min_width="0",
         padding="7px 10px",
         border_radius="8px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
     )
 
@@ -264,7 +252,7 @@ def _available_row(entry: dict) -> rx.Component:
         min_width="0",
         padding="7px 10px",
         border_radius="8px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         _hover={"background": theme.BG_CARD_HOVER, "border_color": theme.BORDER_STRONG},
     )
@@ -296,14 +284,14 @@ def _available_section(section: dict) -> rx.Component:
 
 def _editor_panel() -> rx.Component:
     return rx.vstack(
-        rx.text("EN EL PLANO", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+        rx.text("En el plano", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
         rx.cond(
             NodesState.floor_placed.length() > 0,
             rx.vstack(rx.foreach(NodesState.floor_placed, _placed_row), spacing="2", width="100%"),
             rx.text("Todavía no hay nada en el plano.", size="1", color=theme.MUTED, italic=True),
         ),
         rx.divider(opacity="0.1", margin_y="2"),
-        rx.text("AÑADIR AL PLANO", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+        rx.text("Añadir al plano", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
         rx.cond(
             NodesState.floor_available.length() > 0,
             rx.vstack(
@@ -317,7 +305,7 @@ def _editor_panel() -> rx.Component:
         max_width="720px",
         padding="14px",
         border_radius="12px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER_STRONG}",
     )
 
@@ -337,7 +325,7 @@ def _pestana_plano(p: rx.Var) -> rx.Component:
         cursor="pointer", spacing="2", align="center", flex_shrink="0",
         padding="6px 10px", border_radius="9px",
         background=rx.cond(p["activo"], theme.alpha(theme.ACCENT, 0.12),
-                           theme.BG_CARD),
+                           theme.BG_CARD), class_name="nx-card",
         border=rx.cond(p["activo"], f"1px solid {theme.alpha(theme.ACCENT, 0.55)}",
                        f"1px solid {theme.BORDER}"),
     )
@@ -372,8 +360,8 @@ def _gestion_planos() -> rx.Component:
     return rx.cond(
         DashboardState.editing_floor_plan,
         rx.vstack(
-            rx.text("PLANOS", size="1", color=theme.MUTED, weight="bold",
-                    letter_spacing="0.08em"),
+            rx.text("Planos", size="1", color=theme.MUTED,
+                    weight="bold", class_name="nx-label"),
             rx.foreach(
                 NodesState.planos_ui,
                 lambda p: rx.hstack(
@@ -410,7 +398,7 @@ def _gestion_planos() -> rx.Component:
                     ),
                     align="center", spacing="2", width="100%",
                     padding="7px 10px", border_radius="8px",
-                    background=theme.BG_CARD,
+                    background=theme.BG_CARD, class_name="nx-card",
                     border=f"1px solid {theme.BORDER}",
                 ),
             ),
@@ -477,78 +465,197 @@ def _gestion_planos() -> rx.Component:
     )
 
 
+def _resumen_item(icon: str, etiqueta: str, valor, tono: str = "") -> rx.Component:
+    return rx.el.div(
+        rx.el.span(rx.icon(icon, size=15), class_name="nx-plano-resumen-icono"),
+        rx.el.span(etiqueta, class_name="nx-plano-resumen-etiqueta"),
+        rx.el.strong(valor, class_name="nx-plano-resumen-valor"),
+        class_name="nx-plano-resumen-item",
+        custom_attrs={"data-tono": tono},
+    )
+
+
+def _resumen_en_vivo() -> rx.Component:
+    armado = SecurityState.sistema_armado
+    return rx.el.div(
+        _resumen_item(
+            rx.cond(armado, "shield-check", "shield-off"),
+            "Sistema",
+            rx.cond(armado, "Armado", "Desarmado"),
+            "armado",
+        ),
+        _resumen_item(
+            "door-open", "Abiertos", SecurityState.lista_abiertos, "abiertos"),
+        _resumen_item(
+            "lightbulb", "Luces",
+            NodesState.luces_encendidas_en_plano.to_string() + " encendidas",
+            "luces",
+        ),
+        class_name="nx-plano-resumen",
+        custom_attrs={"data-armado": armado},
+    )
+
+
+def _icono_luz(luz: rx.Var):
+    icono_aspecto = rx.match(
+        luz["aspecto"].to(str),
+        *[(aspecto, icono) for aspecto, icono in ICONO_ASPECTO.items()],
+        "lightbulb",
+    )
+    return rx.cond(
+        luz["floor_icon"].to(str) != "",
+        luz["floor_icon"].to(str),
+        icono_aspecto,
+    )
+
+
+def _baldosa_luz(luz: rx.Var) -> rx.Component:
+    identificador = luz["id"].to(str)
+    encendida = luz["is_on"].to(bool)
+    return _quick_action(
+        _icono_luz(luz),
+        luz["name"],
+        NodesState.toggle_light(identificador),
+        tono="lamp",
+        activo=encendida,
+        trailing=rx.el.span(class_name="nx-tile-switch", aria_hidden="true"),
+        meta=rx.el.span(
+            rx.cond(encendida, "Encendido", "Apagado"),
+            class_name="nx-tile-meta",
+        ),
+    )
+
+
+def _fila_equipo(equipo: rx.Var) -> rx.Component:
+    online = equipo["online"].to(bool)
+    return rx.el.div(
+        rx.el.span(
+            rx.icon(equipo["icon"].to(str), size=15),
+            class_name="nx-plano-equipo-icono",
+        ),
+        rx.el.span(equipo["name"], class_name="nx-plano-equipo-nombre"),
+        rx.el.span(
+            rx.cond(online, "En línea", "Sin conexión"),
+            class_name="nx-plano-equipo-estado",
+        ),
+        class_name="nx-plano-equipo",
+        custom_attrs={"data-online": online},
+    )
+
+
+def _ahora_mismo() -> rx.Component:
+    return rx.el.aside(
+        rx.el.section(
+            rx.el.h2("Ahora mismo", class_name="nx-plano-panel-titulo"),
+            _resumen_en_vivo(),
+            class_name="nx-plano-panel",
+        ),
+        rx.el.section(
+            rx.el.h2("Luces y aparatos", class_name="nx-plano-panel-titulo"),
+            rx.cond(
+                NodesState.lights_on_floor.length() > 0,
+                rx.el.div(
+                    rx.foreach(NodesState.lights_on_floor, _baldosa_luz),
+                    class_name="nx-plano-tiles",
+                ),
+                rx.el.p("No hay interruptores en este plano.",
+                        class_name="nx-plano-vacio"),
+            ),
+            class_name="nx-plano-panel",
+        ),
+        rx.el.section(
+            rx.el.h2("Equipos", class_name="nx-plano-panel-titulo"),
+            rx.cond(
+                NodesState.hosts_on_floor.length() > 0,
+                rx.el.div(
+                    rx.foreach(NodesState.hosts_on_floor, _fila_equipo),
+                    class_name="nx-plano-equipos-lista",
+                ),
+                rx.el.p("No hay equipos en este plano.",
+                        class_name="nx-plano-vacio"),
+            ),
+            class_name="nx-plano-panel nx-plano-equipos",
+        ),
+        class_name="nx-plano-lateral-der",
+    )
+
+
+def _plano_enmarcado() -> rx.Component:
+    return rx.el.div(
+        rx.el.div(
+            rx.el.div(
+                rx.cond(
+                    DashboardState.editing_floor_plan,
+                    rx.hstack(
+                        rx.icon("move", size=15, color=theme.WARNING),
+                        rx.text(
+                            'Arrastra los iconos y pulsa "Listo" para guardar',
+                            size="2", color=theme.WARNING, weight="medium",
+                        ),
+                        spacing="2", align="center",
+                        class_name="nx-plano-instruccion",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.cond(
+                    DashboardState.editing_floor_plan,
+                    rx.button(
+                        rx.icon("check", size=14), "Listo",
+                        on_click=[
+                            rx.call_script(
+                                PLAN_COMMIT_SCRIPT,
+                                callback=NodesState.save_floor_positions,
+                            ),
+                            DashboardState.toggle_editing_floor_plan,
+                        ],
+                        size="1", variant="solid", color_scheme="green",
+                    ),
+                    rx.button(
+                        rx.icon("pencil", size=13), "Editar plano",
+                        on_click=[
+                            rx.call_script(PLAN_RESET_SCRIPT),
+                            DashboardState.toggle_editing_floor_plan,
+                        ],
+                        size="1", variant="surface",
+                    ),
+                ),
+                class_name="nx-plano-cabecera",
+                custom_attrs={"data-editando": DashboardState.editing_floor_plan},
+            ),
+            rx.el.div(
+                rx.image(
+                    src=NodesState.plano_imagen_url,
+                    alt="",
+                    aria_hidden="true",
+                    class_name="nx-plano-fondo",
+                    draggable=False,
+                ),
+                floor_plan_content(),
+                class_name="nx-plano-lienzo",
+            ),
+            class_name="nx-plano-marco",
+        ),
+        class_name="nx-plano-centro",
+    )
+
+
 def floor_plan_view() -> rx.Component:
     return rx.vstack(
-        rx.hstack(
-            rx.cond(
-                DashboardState.editing_floor_plan,
-                rx.hstack(
-                    rx.icon("move", size=15, color=theme.WARNING),
-                    rx.text(
-                        'Arrastra los iconos y pulsa "Listo" para guardar',
-                        size="2", color=theme.WARNING, weight="medium",
-                    ),
-                    spacing="2", align="center",
-                ),
-                rx.fragment(),
-            ),
-            rx.spacer(),
-            rx.cond(
-                DashboardState.editing_floor_plan,
-                rx.button(
-                    rx.icon("check", size=14), "Listo",
-                    # Aquí es donde se GRABA: el script devuelve todas las
-                    # posiciones movidas y save_floor_positions las escribe de
-                    # una vez. Antes cada suelta guardaba por su cuenta.
-                    on_click=[
-                        rx.call_script(
-                            PLAN_COMMIT_SCRIPT,
-                            callback=NodesState.save_floor_positions,
-                        ),
-                        DashboardState.toggle_editing_floor_plan,
-                    ],
-                    size="1", variant="solid", color_scheme="green",
-                ),
-                # Discreto a propósito: el plano se usa mucho más de lo que se
-                # edita, así que el botón se mantiene tenue hasta pasar por
-                # encima (mismo criterio que el enlace al panel en la clásica).
-                rx.hstack(
-                    rx.icon("pencil", size=13, color=theme.MUTED),
-                    rx.text("Editar plano", size="1", color=theme.MUTED),
-                    on_click=[
-                        rx.call_script(PLAN_RESET_SCRIPT),
-                        DashboardState.toggle_editing_floor_plan,
-                    ],
-                    cursor="pointer",
-                    spacing="1",
-                    align="center",
-                    padding="5px 9px",
-                    border_radius="8px",
-                    opacity="0.55",
-                    transition="opacity 0.15s ease, background 0.15s ease",
-                    _hover={"opacity": "1", "background": theme.BG_CARD},
-                ),
-            ),
-            width="100%",
-            max_width="720px",
-            align="center",
-            wrap="wrap",
-        ),
         _pestanas_planos(),
-        rx.box(
-            floor_plan_content(),
-            width="100%",
-            max_width="720px",
+        rx.el.div(
+            _plano_enmarcado(),
+            rx.cond(
+                DashboardState.editing_floor_plan,
+                rx.fragment(),
+                _ahora_mismo(),
+            ),
+            class_name="nx-plano-layout",
+            custom_attrs={"data-editando": DashboardState.editing_floor_plan},
         ),
         rx.cond(DashboardState.editing_floor_plan, _editor_panel(), rx.fragment()),
         _gestion_planos(),
-        rx.hstack(
-            *[_legend_item(icon, color, label) for icon, color, label in _LEGEND],
-            spacing="4",
-            wrap="wrap",
-            padding_top="2",
-        ),
         spacing="4",
         width="100%",
         align="center",
+        class_name="nx-plano-vista",
     )

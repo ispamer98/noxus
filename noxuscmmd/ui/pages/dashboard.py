@@ -43,6 +43,8 @@ from ..dashboard.views.cctv import cctv_view
 from ..dashboard.views.alarm import alarm_view
 from ..dashboard.views.groups import groups_view
 from ..dashboard.views.floor_plan import floor_plan_view
+from ..dashboard.views.estancias import estancias_view
+from ..dashboard.views.pruebas import pruebas_view
 from ..dashboard.views.video_wall import video_wall_view
 from ..dashboard.views.access import access_view
 from ..dashboard.views.lights import lights_view
@@ -61,7 +63,7 @@ from ..dashboard.views.usuarios import usuarios_view
 from ..dashboard.views.inventario import inventario_view
 from ..dashboard.views.modos import modos_view
 from ..dashboard.views.retardos import retardos_view
-from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado, indicador_armado_principal
+from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
 
 _DRAG_AND_CLOCK_SCRIPT = """
 (function(){
@@ -138,7 +140,7 @@ _DENSIDAD_CSS = """
 
 # JavaScript propio del panel (assets/nx.js): conserva la precarga de la
 # suscripción y recupera la red Obsidiana con límites específicos para móvil.
-_NX_JS = "/nx.js?v=20260925o2"
+_NX_JS = "/nx.js?v=20260928b"
 
 
 def _sin_permiso() -> rx.Component:
@@ -225,6 +227,8 @@ def _content() -> rx.Component:
         ("presencia", _solo_ajustes(presencia_view())),
         ("accesorios", _solo_ajustes(accesorios_view())),
         ("movimiento", _solo_ajustes(movimiento_view())),
+        ("pruebas", _solo_ajustes(pruebas_view())),
+        ("estancias", _solo_ajustes(estancias_view())),
         overview_view(),
     )
 
@@ -384,6 +388,8 @@ def _panel() -> rx.Component:
                         # justo para que el cambio se note sin hacer esperar.
                         key=DashboardState.active_view,
                         class_name="nx-stage",
+                        # nx.js decide por vista dónde vibra al pulsar.
+                        custom_attrs={"data-vista": DashboardState.active_view},
                     ),
                     class_name="nx-scroll",
                 ),
@@ -391,9 +397,6 @@ def _panel() -> rx.Component:
             ),
             class_name="nx-shell",
         ),
-        # Indicador visual de armado principal (esquina superior izquierda)
-        # Va FUERA del shell para que quede por encima de todo, fijo en viewport
-        indicador_armado_principal(),
         # Una sola pila evita que los avisos propios se tapen entre sí. Está al
         # nivel de la página para verse se pulse el armado desde donde se pulse.
         rx.el.aside(
@@ -431,7 +434,7 @@ def _panel() -> rx.Component:
 # Que se repitan no duplica nada: cada bucle de sesion releva al anterior en
 # vez de sumarse a el (ver core/sesiones.py), y los de proceso siguen con su
 # propio flag _STARTED.
-EVENTOS_DE_ENTRADA = [
+EVENTOS_DE_IDENTIFICACION = [
     # El PRIMERO de todos: hasta que no se sabe qué dispositivo es
     # este, no se sabe qué puede hacer ni qué se le debe enseñar.
     AuthState.identificar,
@@ -439,6 +442,10 @@ EVENTOS_DE_ENTRADA = [
     # Vigila en vivo si a este accesorio le cambian el acceso: quitarle el
     # permiso tiene que echarlo en el momento, no al recargar.
     AuthState.vigilar_acceso,
+]
+
+EVENTOS_DE_ENTRADA = [
+    *EVENTOS_DE_IDENTIFICACION,
     # Para que el aviso de «dispositivo desconocido» tenga datos en
     # cualquier vista, no solo dentro de Ajustes → Dispositivos.
     AuthAdminState.on_load,
@@ -507,5 +514,9 @@ def dashboard_page() -> rx.Component:
         # data-nx-armado tiñe el ambiente entero (aurora, filo de la barra, titulares) de rojo con la
         # casa armada: se ve de un vistazo desde la otra punta de la habitacion (assets/nx.css).
         custom_attrs={"data-densidad": AuthState.densidad,
-                      "data-nx-armado": SecurityState.sistema_armado},
+                      "data-nx-armado": rx.cond(
+                          AuthState.tiene_acceso,
+                          SecurityState.sistema_armado,
+                          False,
+                      )},
     )

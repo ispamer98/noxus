@@ -17,6 +17,8 @@ import reflex as rx
 from . import abiertos, arming, groups_store, logs, retardos
 from ..auth import permisos
 from . import audit
+from .groups_state import GroupsState
+from .state import SecurityState
 from ...core import sesiones
 
 
@@ -38,6 +40,29 @@ class ArmingState(rx.State):
     def cuantos_abiertos(self) -> int:
         return len(self.abiertos)
 
+    async def _repintar(self):
+        """Deja en esta pestaña, ya, lo que se acaba de escribir en disco.
+
+        El bucle de GroupsState lo traeria solo —el aviso del bus le llega al
+        instante—, pero entre la agrupacion de rafagas y la relectura del
+        fichero se van unas decimas, y en el boton del armado eso se ve: se
+        pulsa, sale el aviso y el escudo sigue como estaba. Igual que hacen
+        GroupsState.toggle_group_armed y SecurityState.conmutar_alarma, el
+        manejador se adelanta y el bucle queda de respaldo para las DEMAS
+        pestañas, que es para lo que esta.
+        """
+        grupos = await asyncio.to_thread(groups_store.read_all)
+        grupos_state = await self.get_state(GroupsState)
+        grupos_state.groups = grupos
+
+        principal = next((g for g in grupos if g["is_principal"]), None)
+        if principal is None:
+            return
+        sec = await self.get_state(SecurityState)
+        if sec.sistema_armado != principal["armed"]:
+            sec.sistema_armado = principal["armed"]
+            sec.status = sec._status_text()
+
     @rx.event
     async def pedir_armar(self, group_id: str = ""):
         """Punto de entrada de todos los botones de armar.
@@ -52,14 +77,14 @@ class ArmingState(rx.State):
                  else next((g for g in groups_store.read_all()
                             if g["id"] == group_id), None))
         if grupo is None:
-            return rx.toast.error("Ese grupo ya no existe.", position="top-center")
+            return rx.toast.error("Ese grupo ya no existe.")
 
         quien = await audit.usuario_de(self)
 
         if grupo["armed"]:
             await arming.set_group_armed(grupo["id"], False, quien)
-            return rx.toast.success(f"{grupo['name']} desarmado.",
-                                    position="top-center")
+            await self._repintar()
+            return None
 
         # Si había una cuenta atrás o una espera para este grupo, pulsar otra
         # vez la cancela: el botón hace lo contrario de lo último que hizo.
@@ -68,7 +93,7 @@ class ArmingState(rx.State):
             self.contando = ""
             logs.registrar(logs.ALARMA, "ARMADO_CANCELADO", quien, "",
                            grupo=grupo["name"])
-            return rx.toast.success("Armado cancelado.", position="top-center")
+            return None
 
         pendientes = abiertos.con_id_de_grupo(grupo)
         if pendientes:
@@ -89,21 +114,15 @@ class ArmingState(rx.State):
             self.restantes = salida
             logs.registrar(logs.ALARMA, "SALIDA_EN_CURSO", quien,
                            f"{salida} s para salir", grupo=grupo["name"])
-            # Dos eventos: el aviso y el bucle que va bajando el número. El
-            # bucle tiene que salir de aquí — poner una bandera y esperar a que
-            # alguien la mire no arrancaría nada.
-            return [
-                rx.toast.success(
-                    f"{grupo['name']} se armará en {salida} s. Sal ya.",
-                    position="top-center",
-                    duration=min(salida * 1000, 10000)),
-                ArmingState.contar,
-            ]
+            # El aviso visible es la cuenta flotante; aquí solo arranca el
+            # bucle que baja el número, sin duplicarlo con un toast.
+            return ArmingState.contar
 
         if bypass:
             retardos.poner_bypass(grupo["id"], bypass)
         await arming.set_group_armed(grupo["id"], True, quien)
-        return rx.toast.success(f"{grupo['name']} armado.", position="top-center")
+        await self._repintar()
+        return None
 
     @rx.event
     async def armar_excluyendo(self):
@@ -141,9 +160,7 @@ class ArmingState(rx.State):
         retardos.programar(grupo["id"], retardos.AL_CERRAR, 0, quien, [])
         logs.registrar(logs.ALARMA, "ARMADO_AL_CERRAR", quien,
                        "se armará solo cuando cierre todo", grupo=nombre)
-        return rx.toast.success(
-            f"{nombre} se armará en cuanto cierre todo.",
-            position="top-center", duration=8000)
+        return None
 
     @rx.event
     def cerrar(self):
@@ -197,4 +214,4 @@ class ArmingState(rx.State):
         self.restantes = 0
         quien = await audit.usuario_de(self)
         logs.registrar(logs.ALARMA, "ARMADO_CANCELADO", quien, "")
-        return rx.toast.success("Armado cancelado.", position="top-center")
+        return None

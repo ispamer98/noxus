@@ -105,7 +105,7 @@ class InventoryState(rx.State):
         s para no lanzar dos procesos por repintado; esto salta ese cacheo."""
         red.olvidar_cache()
         self._recargar()
-        return rx.toast.success("Inventario actualizado.", position="top-center")
+        return rx.toast.success("Inventario actualizado.")
 
     @rx.var
     def resumen(self) -> str:
@@ -173,8 +173,7 @@ class InventoryState(rx.State):
         self.editando_id = ""
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "INVENTARIO_EDITADO", nombre)
-        return rx.toast.success(f"Ficha de {nombre} guardada.",
-                                position="top-center")
+        return rx.toast.success(f"Ficha de {nombre} guardada.")
 
     # ── Elementos que el panel no controla ───────────────────────────────
     @rx.event
@@ -182,11 +181,10 @@ class InventoryState(rx.State):
         if (no := await permisos.denegar(self, permisos.AJUSTES)):
             return no
         if not service.delete(collection, entity_id):
-            return rx.toast.error("Esta entidad no admite borrado desde el inventario.",
-                                  position="top-center")
+            return rx.toast.error("Esta entidad no admite borrado desde el inventario.")
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "ENTIDAD_ELIMINADA", nombre)
-        return rx.toast.success(f"{nombre} eliminado.", position="top-center")
+        return rx.toast.success(f"{nombre} eliminado.")
 
     @rx.event
     def set_nuevo_nombre(self, v: str):
@@ -202,13 +200,12 @@ class InventoryState(rx.State):
             return no
         nombre = self.nuevo_nombre.strip()
         if not nombre:
-            return rx.toast.error("Ponle un nombre.", position="top-center")
+            return rx.toast.error("Ponle un nombre.")
         store.añadir_suelto(nombre, self.nuevo_familia)
         self.nuevo_nombre = ""
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "INVENTARIO_ANADIDO", nombre)
-        return rx.toast.success(f"{nombre} añadido al inventario.",
-                                position="top-center")
+        return rx.toast.success(f"{nombre} añadido al inventario.")
 
     @rx.event
     async def borrar_suelto(self, suelto_id: str):
@@ -216,8 +213,7 @@ class InventoryState(rx.State):
             return no
         store.borrar_suelto(suelto_id)
         self._recargar()
-        return rx.toast.success("Elemento quitado del inventario.",
-                                position="top-center")
+        return rx.toast.success("Elemento quitado del inventario.")
 
     @rx.event
     async def limpiar(self):
@@ -227,8 +223,6 @@ class InventoryState(rx.State):
         quitados = store.limpiar_huerfanos(catalogo.ids_vivos())
         self._recargar()
         if not quitados:
-            return rx.toast.success("No había fichas sueltas que limpiar.",
-                                    position="top-center")
+            return rx.toast.success("No había fichas sueltas que limpiar.")
         return rx.toast.success(
-            f"{quitados} fichas de elementos que ya no existen, quitadas.",
-            position="top-center")
+            f"{quitados} fichas de elementos que ya no existen, quitadas.")

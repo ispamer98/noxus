@@ -64,7 +64,7 @@ class PushState(rx.State):
             f"Guardado: los avisos dirán «{self.nombre_app}». Para verlo en un "
             "dispositivo hay que quitar el acceso directo de su pantalla de "
             "inicio y volver a añadirlo.",
-            position="top-center", duration=9000,
+            duration=9000,
         )
 
     @rx.event
@@ -357,7 +357,7 @@ class PushState(rx.State):
         titulo = (form_data.get("titulo") or "").strip() or "Aviso de Noxus"
         mensaje = (form_data.get("mensaje") or "").strip()
         if not mensaje:
-            return rx.toast.error("Escribe el texto de la alerta.", position="top-center")
+            return rx.toast.error("Escribe el texto de la alerta.")
 
         destino = list(self.destinos) if self.destinos else "todos"
         a_quien = "todos los dispositivos" if not self.destinos else ", ".join(self.destinos)
@@ -370,7 +370,7 @@ class PushState(rx.State):
         infra.status = f"📤 Alerta enviada a {a_quien}"
         await audit.registrar(self, logs.SISTEMA, "ALERTA_ENVIADA",
                               f"a {a_quien}: «{titulo}» — {mensaje}")
-        return rx.toast.success(f"Alerta enviada a {a_quien}.", position="top-center")
+        return rx.toast.success(f"Alerta enviada a {a_quien}.")
 
     @rx.event
     async def lanzar_alerta_global(self):

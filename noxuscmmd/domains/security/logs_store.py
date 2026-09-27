@@ -53,11 +53,13 @@ logs.json se queda intacto donde está: se importa una vez (ver `_importar`) y n
 se vuelve a leer ni a escribir. Es la red para poder volver atrás.
 """
 import json
+import math
 import os
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from collections import OrderedDict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 RUTA = Path(os.getenv("HISTORICO_DB", "historico.db"))
@@ -133,6 +135,13 @@ _CAMPOS = ("timestamp", "categoria", "accion", "usuario", "detalle", "grupo",
 # operaciones normales no lo usan: de serializarlas ya se encarga SQLite.
 _candado = threading.Lock()
 _preparada = False
+
+# Los intentos de entrada son el único evento que puede provocar una visita
+# anónima con solo recargar. Este filtro vive en memoria a propósito: evita el
+# ruido sin convertir la base de datos en estado de sesión ni guardar cookies.
+_candado_antispam = threading.Lock()
+_antispam: OrderedDict[str, float] = OrderedDict()
+_MAX_ANTISPAM = 2048
 
 
 # ── Conexión ────────────────────────────────────────────────────────────────
@@ -436,6 +445,34 @@ def registrar(categoria: str, accion: str, usuario: str = "sistema",
     return nuevo
 
 
+def registrar_limitado(clave: str, ventana: float, categoria: str, accion: str,
+                       usuario: str = "sistema", detalle: str = "",
+                       grupo: str = "", entidad: str = "") -> int:
+    """Registra como máximo una vez por ``clave`` dentro de ``ventana``.
+
+    La reserva bajo candado es O(1) y SQLite se toca después de soltarlo. Si la
+    escritura falla se retira solo nuestra reserva, para que el siguiente
+    intento pueda volver a probar. El reloj monotónico evita que un ajuste de
+    hora del servidor abra o alargue la ventana.
+    """
+    ahora = time.monotonic()
+    reserva = ahora + ventana
+    with _candado_antispam:
+        if _antispam.get(clave, 0) > ahora:
+            return 0
+        _antispam[clave] = reserva
+        _antispam.move_to_end(clave)
+        if len(_antispam) > _MAX_ANTISPAM:
+            _antispam.popitem(last=False)
+
+    nuevo = registrar(categoria, accion, usuario, detalle, grupo, entidad)
+    if not nuevo:
+        with _candado_antispam:
+            if _antispam.get(clave) == reserva:
+                _antispam.pop(clave, None)
+    return nuevo
+
+
 def adjuntar_foto(evento_id: int, nombre: str) -> bool:
     """Cuelga un fotograma de un evento ya apuntado. False si el evento no está.
 
@@ -503,6 +540,38 @@ def serie(clave: str, desde: float = 0.0, hasta: float = 0.0) -> list[dict]:
                 f"SELECT ts, valor FROM metricas "
                 f"WHERE {' AND '.join(condiciones)} ORDER BY ts", params)
         ]
+    finally:
+        cx.close()
+
+
+def ultimas_metricas(claves: tuple[str, ...]) -> dict[str, dict]:
+    """Última lectura real de las claves solicitadas, con su fecha original.
+
+    Cada búsqueda termina en una fila mediante el índice (clave, ts), que
+    incluye rowid para desempatar muestras del mismo segundo. No se recorre
+    el histórico entero ni se calcula aquí si una lectura está vigente.
+    Si la última muestra es inválida se omite la clave: rescatar una anterior
+    ocultaría que la lectura más reciente falló.
+    """
+    if not claves:
+        return {}
+    cx = _conectar()
+    try:
+        salida = {}
+        for clave in dict.fromkeys(claves):
+            fila = cx.execute(
+                "SELECT valor, ts FROM metricas WHERE clave = ? "
+                "ORDER BY ts DESC, rowid DESC LIMIT 1", (clave,),
+            ).fetchone()
+            if fila is None:
+                continue
+            try:
+                valor, ts = float(fila["valor"]), float(fila["ts"])
+            except (ValueError, TypeError, OverflowError):
+                continue
+            if math.isfinite(valor) and math.isfinite(ts):
+                salida[clave] = {"valor": valor, "ts": ts}
+        return salida
     finally:
         cx.close()
 
@@ -672,6 +741,256 @@ def conteo_por_dia_de_categoria(categorias: tuple[str, ...],
                 f"FROM eventos WHERE categoria IN ({huecos}) AND ts >= ? "
                 f"GROUP BY dia ORDER BY dia", (*categorias, int(desde)))
         ]
+    finally:
+        cx.close()
+
+
+# ── Consultas configurables de analítica ────────────────────────────────────
+# Se agrupa EN SQLite: ni una gráfica anual ni sus indicadores necesitan traer
+# todas las muestras al proceso web. Las expresiones SQL salen de listas cerradas;
+# los valores del formulario siempre se enlazan como parámetros.
+MAX_TRAMOS_ANALITICA = 12000
+_AGRUPACIONES_ANALITICA = ("dia", "hora", "hora_dia", "intervalo")
+_OPERACIONES_ANALITICA = ("media", "minimo", "maximo", "ultimo", "conteo")
+
+
+def _validar_rango_analitica(desde: float, hasta: float) -> tuple[datetime, datetime]:
+    try:
+        if not math.isfinite(desde) or not math.isfinite(hasta) or hasta <= desde:
+            raise ValueError
+        return datetime.fromtimestamp(desde), datetime.fromtimestamp(hasta)
+    except (ValueError, TypeError, OverflowError, OSError):
+        raise ValueError("El inicio debe ser anterior al final del periodo.") from None
+
+
+def _minutos_analitica(hora: str) -> int:
+    try:
+        if len(hora) != 5 or hora[2] != ":":
+            raise ValueError
+        hh, mm = int(hora[:2]), int(hora[3:])
+        if not (0 <= hh < 24 and 0 <= mm < 60) or hora != f"{hh:02d}:{mm:02d}":
+            raise ValueError
+        return hh * 60 + mm
+    except (ValueError, TypeError):
+        raise ValueError("La franja horaria debe usar HH:MM.") from None
+
+
+def _franja_analitica(hora_desde: str, hora_hasta: str) -> tuple[int, int] | None:
+    if not hora_desde and not hora_hasta:
+        return None
+    inicio, final = _minutos_analitica(hora_desde), _minutos_analitica(hora_hasta)
+    # Los dos extremos iguales representan las 24 horas, incluido 00:00→00:00.
+    return None if inicio == final else (inicio, final)
+
+
+def _filtro_analitica(desde: float, hasta: float,
+                     franja: tuple[int, int] | None) -> tuple[str, list]:
+    filtro, params = "ts >= ? AND ts < ?", [desde, hasta]
+    if franja:
+        minutos = ("(CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) * 60"
+                   " + CAST(strftime('%M', ts, 'unixepoch', 'localtime') AS INTEGER))")
+        inicio, final = franja
+        union = "AND" if inicio < final else "OR"
+        filtro += f" AND ({minutos} >= ? {union} {minutos} < ?)"
+        params.extend((inicio, final))
+    return filtro, params
+
+
+def _expresion_tramo(agrupacion: str, intervalo_minutos: int) -> str:
+    if agrupacion not in _AGRUPACIONES_ANALITICA:
+        raise ValueError("Agrupación desconocida.")
+    if isinstance(intervalo_minutos, bool) or not isinstance(intervalo_minutos, int):
+        raise ValueError("El intervalo debe ser un número entero de minutos.")
+    if not 5 <= intervalo_minutos <= 1440:
+        raise ValueError("El intervalo debe estar entre 5 y 1440 minutos.")
+    formatos = {"dia": "%Y-%m-%d", "hora": "%Y-%m-%d %H:00", "hora_dia": "%H"}
+    if agrupacion in formatos:
+        return f"strftime('{formatos[agrupacion]}', ts, 'unixepoch', 'localtime')"
+    # Los intervalos arrancan cada medianoche local, incluso si su duración no
+    # divide el día (p.ej. 50 min). El último tramo termina a medianoche.
+    minuto = ("(CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER) * 60"
+              " + CAST(strftime('%M', ts, 'unixepoch', 'localtime') AS INTEGER))")
+    suelo = f"(({minuto} / {intervalo_minutos}) * {intervalo_minutos})"
+    return ("strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') || ' ' || "
+            f"printf('%02d:%02d', {suelo} / 60, {suelo} % 60)")
+
+
+def _limite_local_analitica(fecha: datetime) -> float:
+    """Un límite en la hora omitida de primavera se desplaza al primer minuto real.
+
+    datetime.timestamp normaliza 02:30 inexistente a 03:30; para un intervalo
+    de 02:30 a 03:20 el límite correcto es 03:00, no una duración negativa.
+    """
+    for _ in range(1441):
+        ts = fecha.timestamp()
+        if datetime.fromtimestamp(ts) == fecha:
+            return ts
+        fecha += timedelta(minutes=1)
+    raise ValueError("No se pudo interpretar el horario local del periodo.")
+
+
+def _tramos_analitica(desde: float, hasta: float, agrupacion: str,
+                      intervalo_minutos: int, franja: tuple[int, int] | None) -> list[str]:
+    primero, ultimo = _validar_rango_analitica(desde, hasta)
+    if franja is None:
+        ventanas = ((0, 1440),)
+    else:
+        a, b = franja
+        ventanas = ((a, b),) if a < b else ((a, 1440), (0, b))
+
+    def segmentos(inicio: int, final: int) -> list[tuple[int, int]]:
+        return [(max(inicio, a), min(final, b)) for a, b in ventanas
+                if inicio < b and final > a]
+
+    if agrupacion == "hora_dia":
+        return [f"{hora:02d}" for hora in range(24) if segmentos(hora * 60, (hora + 1) * 60)]
+    paso = 1440 if agrupacion == "dia" else 60 if agrupacion == "hora" else intervalo_minutos
+    # Se calculan una vez los intervalos visibles: una franja de una hora no
+    # debe recorrer los 288 intervalos de cinco minutos de cada día solicitado.
+    horarios = [(minuto, segmentos(minuto, min(1440, minuto + paso)))
+                for minuto in range(0, 1440, paso)]
+    horarios = [(minuto, partes) for minuto, partes in horarios if partes]
+    dia = primero.replace(hour=0, minute=0, second=0, microsecond=0)
+    fin_dia = ultimo.replace(hour=0, minute=0, second=0, microsecond=0)
+    claves = []
+    while dia <= fin_dia:
+        for minuto, partes in horarios:
+            def instante(limite: int) -> float:
+                try:
+                    return _limite_local_analitica(dia + timedelta(minutes=limite))
+                except OverflowError:
+                    # El final del último día representable ya queda fuera
+                    # de cualquier periodo que datetime-local pueda enviar.
+                    return hasta
+
+            if not any(max(instante(a), desde) < min(instante(b), hasta)
+                       for a, b in partes):
+                continue
+            inicio = dia + timedelta(minutes=minuto)
+            claves.append(inicio.strftime("%Y-%m-%d" if agrupacion == "dia" else "%Y-%m-%d %H:%M"))
+            if len(claves) > MAX_TRAMOS_ANALITICA:
+                raise ValueError("Demasiados tramos: amplía el intervalo o acorta el periodo.")
+        if dia == fin_dia:
+            break
+        dia += timedelta(days=1)
+    return claves
+
+
+def _completar_analitica(tramos: list[str], filas: list[dict],
+                        es_conteo: bool) -> list[dict]:
+    existentes = {fila["bucket"]: fila for fila in filas}
+    # La unión conserva también una hora repetida o un intervalo que cruza el
+    # cambio de hora; los eventos se filtran por epoch y agrupan por reloj local.
+    claves = sorted(set(tramos) | existentes.keys())
+    if len(claves) > MAX_TRAMOS_ANALITICA:
+        raise ValueError("Demasiados tramos: amplía el intervalo o acorta el periodo.")
+    return [existentes.get(clave, {
+        "bucket": clave, "valor": 0 if es_conteo else None, "muestras": 0,
+        "media": None, "minimo": None, "maximo": None,
+        "ultimo": None, "ultimo_ts": None,
+    }) for clave in claves]
+
+
+def consultar_metricas(clave: str, desde: float, hasta: float, *,
+                       agrupacion: str = "hora", intervalo_minutos: int = 60,
+                       operacion: str = "media", hora_desde: str = "",
+                       hora_hasta: str = "") -> list[dict]:
+    """Muestras agrupadas en [desde, hasta), con huecos explícitos y resumen real.
+
+    Cada fila lleva media/muestras/minimo/maximo/ultimo/ultimo_ts, sea cual sea
+    la operación elegida para ``valor``. Así el resumen general puede ponderar
+    por número de muestras y nunca promediar medias de intervalos desiguales.
+    ``ultimo`` desempata por rowid cuando coinciden dos marcas de tiempo.
+    """
+    if operacion not in _OPERACIONES_ANALITICA:
+        raise ValueError("Operación desconocida.")
+    expresion = _expresion_tramo(agrupacion, intervalo_minutos)
+    franja = _franja_analitica(hora_desde, hora_hasta)
+    tramos = _tramos_analitica(desde, hasta, agrupacion, intervalo_minutos, franja)
+    filtro, params = _filtro_analitica(desde, hasta, franja)
+    cx = _conectar()
+    try:
+        filas = []
+        for fila in cx.execute(
+            f"WITH muestras AS (SELECT {expresion} AS bucket, valor, ts, rowid AS orden "
+            f"FROM metricas WHERE clave = ? AND {filtro}), "
+            "ordenadas AS (SELECT *, ROW_NUMBER() OVER "
+            "(PARTITION BY bucket ORDER BY ts DESC, orden DESC) AS posicion FROM muestras) "
+            "SELECT bucket, COUNT(*) AS muestras, AVG(valor) AS media, "
+            "MIN(valor) AS minimo, MAX(valor) AS maximo, MAX(ts) AS ultimo_ts, "
+            "MAX(CASE WHEN posicion = 1 THEN valor END) AS ultimo "
+            "FROM ordenadas GROUP BY bucket ORDER BY bucket", [clave, *params],
+        ):
+            item = dict(fila)
+            item["valor"] = item["muestras"] if operacion == "conteo" else item[operacion]
+            filas.append(item)
+        return _completar_analitica(tramos, filas, operacion == "conteo")
+    finally:
+        cx.close()
+
+
+def consultar_eventos(desde: float, hasta: float, *, acciones: tuple[str, ...] = (),
+                      categorias: tuple[str, ...] = (), agrupacion: str = "dia",
+                      intervalo_minutos: int = 60, hora_desde: str = "",
+                      hora_hasta: str = "") -> list[dict]:
+    """Cuenta acciones o categorías, rellenando con cero los tramos sin eventos.
+
+    Si se proporcionan ambos filtros se cuenta su unión. Sin ninguno no se
+    cuenta nada: una medida desconocida nunca se convierte en toda la casa.
+    """
+    expresion = _expresion_tramo(agrupacion, intervalo_minutos)
+    franja = _franja_analitica(hora_desde, hora_hasta)
+    tramos = _tramos_analitica(desde, hasta, agrupacion, intervalo_minutos, franja)
+    filtro, params = _filtro_analitica(desde, hasta, franja)
+    familias = []
+    for campo, valores in (("accion", acciones), ("categoria", categorias)):
+        if valores:
+            familias.append(f"{campo} IN ({', '.join('?' for _ in valores)})")
+            params.extend(valores)
+    filtro += " AND (" + (" OR ".join(familias) if familias else "0") + ")"
+    cx = _conectar()
+    try:
+        filas = [{
+            "bucket": fila["bucket"], "valor": fila["cuantas"],
+            "muestras": fila["cuantas"], "media": None, "minimo": None,
+            "maximo": None, "ultimo": None, "ultimo_ts": None,
+        } for fila in cx.execute(
+            f"SELECT {expresion} AS bucket, COUNT(*) AS cuantas "
+            f"FROM eventos WHERE {filtro} GROUP BY bucket ORDER BY bucket", params,
+        )]
+        return _completar_analitica(tramos, filas, True)
+    finally:
+        cx.close()
+
+
+def distribucion_metricas(clave: str, desde: float, hasta: float,
+                          limites: tuple[float, ...], *, hora_desde: str = "",
+                          hora_hasta: str = "") -> list[int]:
+    """Cuenta muestras reales en bandas [-inf,a), [a,b), ..., [z,+inf).
+
+    Los diagramas circulares representan esta distribución, nunca la suma de
+    temperaturas ni porcentajes inventados a partir de medias temporales.
+    """
+    _validar_rango_analitica(desde, hasta)
+    try:
+        limites = tuple(float(limite) for limite in limites)
+        if (len(limites) > 32 or not all(math.isfinite(limite) for limite in limites)
+                or any(a >= b for a, b in zip(limites, limites[1:]))):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Las bandas deben tener límites finitos y crecientes.") from None
+    filtro, params = _filtro_analitica(desde, hasta, _franja_analitica(hora_desde, hora_hasta))
+    banda = ("CASE " + " ".join(f"WHEN valor < ? THEN {i}" for i in range(len(limites)))
+             + f" ELSE {len(limites)} END") if limites else "0"
+    salida = [0] * (len(limites) + 1)
+    cx = _conectar()
+    try:
+        for fila in cx.execute(
+            f"SELECT {banda} AS banda, COUNT(*) AS cuantas FROM metricas "
+            f"WHERE clave = ? AND {filtro} GROUP BY banda", [*limites, clave, *params],
+        ):
+            salida[fila["banda"]] = fila["cuantas"]
+        return salida
     finally:
         cx.close()
 

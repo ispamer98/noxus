@@ -33,7 +33,15 @@ PRUEBAS = (
     "tests.test_entidades",    # inventario y bajas comunes de toda configuración
     "tests.test_alexa",        # comandos Hue como pulsadores de un solo uso
     "tests.test_alexa_cloud",  # contrato Smart Home y OAuth sin tocar Amazon
+    "tests.test_metricas",      # analíticas configurables con histórico aislado
     "tests.test_avisos",       # qué categoría de aviso tiene cada dispositivo
+    "tests.test_n8n",          # el puente con n8n: qué sale y qué se deja entrar
+    "tests.test_entrada",      # arranque agrupado sin encolar viajes al backend
+    "tests.test_conexion",     # ping normal y comprobación de puerto (los Echo)
+    "tests.test_portero",      # el filtro de eventos por rol (tablet, sin acceso, resto)
+    "tests.test_kiosco",       # la tablet de habitación: miembros, rol y confinamiento
+    "tests.test_pruebas",      # Pruebas: valores forzados, caducidad y separación de lo real
+    "tests.test_acceso_app",   # visitantes efímeros y auditoría de entrada
 )
 
 

@@ -94,7 +94,7 @@ def _migrar_estado_legado() -> None:
     except Exception as e:
         print(f"⚠️ No se pudo respaldar {ESTADO_FILE}: {e}")
 
-    ya_guardados = nodes_store.get_all_sensor_states()
+    ya_guardados = nodes_store.get_all_sensor_states(real=True)
     movidos = []
     for clave, sensor_id in _LEGADO_A_SENSOR.items():
         if clave in crudo and sensor_id not in ya_guardados:

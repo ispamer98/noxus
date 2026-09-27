@@ -1,30 +1,35 @@
+"""Tokens de diseño del Centro de Control «Obsidiana» (/panel).
+
+El cian es el acento del panel, el violeta da profundidad al ambiente y los
+colores semánticos conservan su significado. Los mismos valores viven como
+variables CSS en assets/nx.css.
 """
-Tokens de diseño del Centro de Control (dashboard nuevo, /panel).
 
-Mantiene el mismo lenguaje visual que ya usa la vista clásica (header.py):
-azul de acento, verde online, rojo alarma/peligro, naranja aviso, violeta PTZ.
-Centralizado aquí para no repetir literales de color por todo el shell nuevo.
-"""
+BG_APP = "#04060b"
+BG_SIDEBAR = "rgba(7, 11, 19, 0.6)"
+BG_TOPBAR = "rgba(7, 11, 19, 0.5)"
+# El segundo tramo va dentro del valor a propósito: Reflex lo inserta en el
+# atributo style y así las tarjetas existentes recuperan el cristal sin tener
+# que retocar una a una sus props.
+BG_CARD = ("linear-gradient(180deg, rgba(255, 255, 255, 0.05), "
+           "rgba(255, 255, 255, 0.016)); backdrop-filter: blur(10px)")
+BG_CARD_HOVER = "rgba(255, 255, 255, 0.065)"
+BG_WINDOW = "#0a0f18"
 
-BG_APP = "#05070a"
-BG_SIDEBAR = "#0a0f16"
-BG_TOPBAR = "rgba(10, 15, 22, 0.85)"
-BG_CARD = "rgba(255, 255, 255, 0.035)"
-BG_CARD_HOVER = "rgba(255, 255, 255, 0.06)"
-BG_WINDOW = "#0d1420"
+BORDER = "rgba(255, 255, 255, 0.075)"
+BORDER_STRONG = "rgba(255, 255, 255, 0.15)"
 
-BORDER = "rgba(255, 255, 255, 0.08)"
-BORDER_STRONG = "rgba(255, 255, 255, 0.16)"
+ACCENT = "#3ee0ff"
+DANGER = "#ff4d5e"
+SUCCESS = "#2ee6a6"
+WARNING = "#ffa31a"
+# Algo encendido conserva el ámbar cálido estrenado con las baldosas nuevas.
+LAMP = "#ffc24a"
+PURPLE = "#8b7cff"
+MUTED = "#8a97aa"
+TEXT = "#e8eef7"
 
-ACCENT = "#38bdf8"
-DANGER = "#ef4444"
-SUCCESS = "#22c55e"
-WARNING = "#f97316"
-PURPLE = "#a78bfa"
-MUTED = "#94a3b8"
-TEXT = "#e2e8f0"
-
-FONT_MONO = "ui-monospace, SFMono-Regular, Menlo, monospace"
+FONT_MONO = "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
 
 def alpha(hex_color: str, a: float) -> str:

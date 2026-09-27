@@ -93,12 +93,27 @@ def paleta_comandos() -> rx.Component:
 
 
 def boton_paleta() -> rx.Component:
-    """La lupa de la barra superior — la otra forma de abrirla, para quien no
-    tiene teclado (que en esta casa son los dos móviles)."""
-    return rx.box(
-        rx.icon("search", size=18, color=theme.MUTED),
-        on_click=PaletaState.abrir,
-        cursor="pointer", padding="8px", border_radius="8px", flex_shrink="0",
-        _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
-        title="Buscar y ejecutar (Ctrl+K)",
+    """Las dos puertas de la paleta en la barra superior. En escritorio, un
+    buscador con su atajo a la vista (Ctrl+K o ⌘K); en el móvil, la lupa, para
+    quien no tiene teclado (que en esta casa son los dos móviles). Cuál de las
+    dos se ve lo decide nx.css por ancho."""
+    return rx.fragment(
+        rx.el.button(
+            rx.icon("search", size=15),
+            rx.el.span("Buscar"),
+            rx.el.kbd("Ctrl K"),
+            on_click=PaletaState.abrir,
+            class_name="nx-search nx-solo-escritorio",
+            title="Buscar y ejecutar (Ctrl+K)",
+            type="button",
+        ),
+        rx.el.button(
+            rx.icon("search", size=18),
+            on_click=PaletaState.abrir,
+            class_name="nx-icon-btn nx-solo-movil",
+            title="Buscar y ejecutar",
+            aria_label="Buscar y ejecutar",
+            type="button",
+        ),
     )
+

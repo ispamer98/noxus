@@ -67,7 +67,7 @@ def _trigger(current) -> rx.Component:
             width="100%",
             padding="9px 12px",
             border_radius="8px",
-            background=theme.BG_CARD,
+            background=theme.BG_CARD, class_name="nx-card",
             border=f"1px solid {theme.BORDER}",
             cursor="pointer",
             _hover={"border_color": theme.BORDER_STRONG},

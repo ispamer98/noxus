@@ -244,8 +244,7 @@ class VozState(rx.State):
         except alexa_catalog_store.ArchivoCorrupto:
             item = None
         if item is None:
-            return rx.toast.error("Ese elemento de Alexa ya no existe.",
-                                  position="top-center")
+            return rx.toast.error("Ese elemento de Alexa ya no existe.")
         self.alexa_editor_suspendido = False
         self.alexa_editando = endpoint_id
         self.alexa_nombre = str(item.get("name") or "")
@@ -360,17 +359,16 @@ class VozState(rx.State):
                 item = alexa_catalog_store.editar(self.alexa_editando, **campos)
                 accion = "ALEXA_ELEMENTO_EDITADO"
             if item is None:
-                return rx.toast.error("Ese elemento ya no existe.",
-                                      position="top-center")
+                return rx.toast.error("Ese elemento ya no existe.")
         except (alexa_catalog_store.CatalogoAlexaError,
                 alexa_catalog_store.ArchivoCorrupto) as error:
-            return rx.toast.error(str(error), position="top-center", duration=7000)
+            return rx.toast.error(str(error), duration=7000)
         self.alexa_editando = ""
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, accion, item["name"])
         return rx.toast.success(
             f"{item['name']} guardado. Se sincronizará automáticamente con Alexa.",
-            position="top-center", duration=5000)
+            duration=5000)
 
     @rx.event
     async def borrar_elemento_alexa(self, endpoint_id: str, nombre: str):
@@ -379,14 +377,13 @@ class VozState(rx.State):
         try:
             borrado = alexa_catalog_store.borrar(endpoint_id)
         except alexa_catalog_store.ArchivoCorrupto as error:
-            return rx.toast.error(str(error), position="top-center", duration=7000)
+            return rx.toast.error(str(error), duration=7000)
         if not borrado:
-            return rx.toast.error("Ese elemento ya no existe.", position="top-center")
+            return rx.toast.error("Ese elemento ya no existe.")
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "ALEXA_ELEMENTO_ELIMINADO", nombre)
         return rx.toast.success(
-            f"{nombre} eliminado. Alexa recibirá la baja automáticamente.",
-            position="top-center")
+            f"{nombre} eliminado. Alexa recibirá la baja automáticamente.")
 
     @rx.event
     async def refrescar_alexa_cloud(self):
@@ -400,13 +397,12 @@ class VozState(rx.State):
             return no
         if not alexa_cloud_sync.guardar_credenciales(
                 self.alexa_event_client_id, self.alexa_event_client_secret):
-            return rx.toast.error("Pega el Client ID y el Client Secret de Alexa.",
-                                  position="top-center")
+            return rx.toast.error("Pega el Client ID y el Client Secret de Alexa.")
         self.alexa_event_client_id = ""
         self.alexa_event_client_secret = ""
         await audit.registrar(self, logs.SISTEMA, "ALEXA_EVENTOS_CONFIGURADOS",
                               "credenciales de Event Gateway guardadas")
-        return rx.toast.success("Alexa Events configurado.", position="top-center")
+        return rx.toast.success("Alexa Events configurado.")
 
     @rx.event
     async def generar_codigo_alexa(self):
@@ -415,8 +411,7 @@ class VozState(rx.State):
         from ..auth.state import AuthState
         auth = await self.get_state(AuthState)
         if not auth._id:
-            return rx.toast.error("Este dispositivo no está identificado.",
-                                  position="top-center")
+            return rx.toast.error("Este dispositivo no está identificado.")
         self.alexa_codigo_enlace = alexa_cloud_store.emitir_autorizacion(auth._id)
         await audit.registrar(self, logs.ACCESOS, "ALEXA_ENLACE_SOLICITADO",
                               "código temporal generado")
@@ -431,15 +426,12 @@ class VozState(rx.State):
             return no
         frase = self.nueva_frase.strip()
         if len(frase) < 3:
-            return rx.toast.error("Escribe la frase que vas a decir.",
-                                  position="top-center")
+            return rx.toast.error("Escribe la frase que vas a decir.")
         if not self.nuevo_comando:
-            return rx.toast.error("Elige qué tiene que hacer.",
-                                  position="top-center")
+            return rx.toast.error("Elige qué tiene que hacer.")
         creado = nodes_store.add_comando_voz(frase, self.nuevo_comando)
         if creado is None:
-            return rx.toast.error(f"Ya tienes una frase «{frase.lower()}».",
-                                  position="top-center")
+            return rx.toast.error(f"Ya tienes una frase «{frase.lower()}».")
         self.nueva_frase = ""
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "COMANDO_VOZ_CREADO",
@@ -478,8 +470,7 @@ class VozState(rx.State):
         # El id se lee del State de la sesión, no de un parámetro: así una clave
         # solo se puede emitir para el aparato que la está pidiendo.
         if not auth._id:
-            return rx.toast.error("Este dispositivo no está identificado.",
-                                  position="top-center")
+            return rx.toast.error("Este dispositivo no está identificado.")
         self.clave = sessions.emitir_voz(auth._id, duracion=DIAS_CLAVE * 86400)
         await audit.registrar(self, logs.ACCESOS, "CLAVE_VOZ_CREADA",
                               f"válida {DIAS_CLAVE} días")

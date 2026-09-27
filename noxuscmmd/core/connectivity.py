@@ -7,15 +7,36 @@ sitio que necesite preguntar "¿está vivo esto?" sin más contexto.
 """
 import asyncio
 import platform
+import re
 from wakeonlan import send_magic_packet
 
 
 class NetUtils:
     @staticmethod
+    async def tcp(host: str, puerto: int, retries: int = 1) -> bool:
+        """Conectar a un puerto TCP con 1,5 s de margen; cierra sin enviar nada."""
+        for _ in range(max(1, retries)):
+            try:
+                _, escritor = await asyncio.wait_for(
+                    asyncio.open_connection(host, puerto), timeout=1.5)
+                escritor.close()
+                return True
+            except Exception:
+                pass
+        return False
+
+    @staticmethod
     async def ping(host: str, retries: int = 1) -> bool:
         """Ping rápido: timeout 0.8s, un solo intento por defecto."""
         if not host or host == "0.0.0.0":
             return False
+        # «ip:puerto» = comprobar que ese puerto acepta conexión, en vez de ping.
+        # Existe por los altavoces Echo: ignoran el ping (ICMP) pero tienen
+        # abiertos sus puertos de control (55443…), que es lo que dice si están
+        # conectados a la red.
+        con_puerto = re.fullmatch(r"([\w.\-]+):(\d{1,5})", host)
+        if con_puerto:
+            return await NetUtils.tcp(con_puerto.group(1), int(con_puerto.group(2)), retries)
         param = "-n" if platform.system().lower() == "windows" else "-c"
         w_flag = "-w" if platform.system().lower() == "windows" else "-W"
         # En Linux -W acepta segundos; usamos 1 (mínimo)

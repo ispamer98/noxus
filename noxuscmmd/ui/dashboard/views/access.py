@@ -158,11 +158,10 @@ def _door_card(door: dict) -> rx.Component:
         spacing="3",
         align="start",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
     )
 
 
@@ -251,11 +250,10 @@ def _level_card(level: dict) -> rx.Component:
         _door_select(lambda did: AccessControlState.add_door_to_level(level["id"], did)),
         spacing="3",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="16px",
-        backdrop_filter="blur(10px)",
     )
 
 
@@ -334,11 +332,10 @@ def _credential_card(cred: dict) -> rx.Component:
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         wrap="wrap",
     )
 
@@ -371,7 +368,7 @@ def _add_credential_dialog() -> rx.Component:
 def access_view() -> rx.Component:
     return rx.vstack(
         rx.hstack(
-            rx.text("PUERTAS", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Puertas", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_door_dialog(),
             width="100%",
@@ -384,7 +381,7 @@ def access_view() -> rx.Component:
         ),
         rx.divider(border_color=theme.BORDER),
         rx.hstack(
-            rx.text("NIVELES DE ACCESO", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Niveles de acceso", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_level_dialog(),
             width="100%",
@@ -397,7 +394,7 @@ def access_view() -> rx.Component:
         ),
         rx.divider(border_color=theme.BORDER),
         rx.hstack(
-            rx.text("TARJETAS / TAGS", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Tarjetas / tags", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_credential_dialog(),
             width="100%",

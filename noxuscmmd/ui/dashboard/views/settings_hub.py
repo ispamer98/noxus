@@ -69,12 +69,18 @@ _MANTENIMIENTO = [
     ("voz", "audio-lines", "Alexa y voz",
      "Publica dispositivos y acciones en Alexa sin tocar código; también "
      "gestiona las frases locales y los Atajos de Siri."),
+    ("pruebas", "flask-conical", "Pruebas",
+     "Fuerza sensores y conexión de equipos para probar la alarma sin abrir "
+     "la puerta; caduca solo."),
     ("system", "hard-drive-download", "Copias de seguridad",
      "Se guarda sola una copia al día de todo lo que hay dado de alta; desde "
      "aquí se restaura."),
 ]
 
 _DISPOSITIVOS = [
+    ("estancias", "house", "Estancias",
+     "Qué se ve en la pantalla de cada habitación y cómo: elementos, plano, "
+     "cámaras, sirena y tamaño."),
     ("accesorios", "toggle-right", "Accesorios",
      "El ventilador, la tele, un enchufe: se encienden igual que una luz, casi "
      "siempre con una tecla de un mando."),
@@ -117,7 +123,7 @@ def _card(view_id: str, icon: str, title: str, desc: str) -> rx.Component:
         align="center",
         spacing="4",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px 16px",
@@ -151,7 +157,7 @@ def _dialog_card(icon: str, title: str, desc: str, dialog_content: rx.Component,
                 rx.spacer(),
                 rx.icon("chevron-right", size=16, color=theme.MUTED, flex_shrink="0"),
                 cursor="pointer", align="center", spacing="4", width="100%",
-                background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+                background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
                 border_radius="12px", padding="14px 16px",
                 transition="background 0.15s ease, border-color 0.15s ease",
                 _hover={"background": theme.BG_CARD_HOVER, "border_color": theme.BORDER_STRONG},
@@ -213,7 +219,7 @@ def _ajustes_avisos_dialog() -> rx.Component:
 def _section(title: str, items: list[tuple[str, str, str, str]]) -> rx.Component:
     return rx.vstack(
         rx.text(title, size="1", weight="bold", color=theme.MUTED,
-                letter_spacing="0.08em", text_transform="uppercase"),
+                class_name="nx-label"),
         rx.vstack(
             *[_card(*item) for item in items],
             spacing="2",
@@ -244,8 +250,8 @@ def settings_hub_view() -> rx.Component:
         _section("Dispositivos y automatización", _DISPOSITIVOS),
         _section("Mantenimiento", _MANTENIMIENTO),
         rx.vstack(
-            rx.text("Este dispositivo", size="1", weight="bold", color=theme.MUTED,
-                    letter_spacing="0.08em", text_transform="uppercase"),
+            rx.text("Este dispositivo", size="1", weight="bold",
+                    color=theme.MUTED, class_name="nx-label"),
             _dialog_card(
                 "bell", "Nombre en los avisos",
                 "El «De ...» que sale debajo de cada notificación de este accesorio.",

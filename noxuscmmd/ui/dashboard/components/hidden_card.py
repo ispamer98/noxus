@@ -14,7 +14,8 @@ def hidden_entities_card(title: str, items: dict[str, str]) -> rx.Component:
         rx.vstack(
             rx.hstack(
                 rx.icon("eye-off", size=15, color=theme.MUTED),
-                rx.text(f"{title} OCULTOS", size="1", color=theme.MUTED, letter_spacing="0.06em", weight="bold"),
+                rx.text(title, size="1", color=theme.MUTED,
+                        weight="bold", class_name="nx-label"),
                 width="100%",
                 align="center",
             ),

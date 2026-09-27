@@ -1,0 +1,186 @@
+  <svg class="v" viewBox="0 0 720 420" role="img" aria-label="Rubén, envuelto en una nube de trabajo, monta y desmonta el servidor a toda velocidad en su cuarto">
+    <defs>
+      <linearGradient id="pared" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#171d2b"/><stop offset="1" stop-color="#10141d"/></linearGradient>
+      <linearGradient id="cielo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0c1631"/><stop offset="1" stop-color="#1a2f5e"/></linearGradient>
+      <linearGradient id="nubeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3f5f9"/><stop offset="1" stop-color="#c3ccda"/></linearGradient>
+      <radialGradient id="lampara" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#f7c35c" stop-opacity=".45"/><stop offset="1" stop-color="#f7c35c" stop-opacity="0"/></radialGradient>
+      <radialGradient id="luna" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#dfe8ff" stop-opacity=".35"/><stop offset="1" stop-color="#dfe8ff" stop-opacity="0"/></radialGradient>
+      <mask id="creciente"><rect width="720" height="420" fill="#fff"/><circle cx="207" cy="58" r="13" fill="#000"/></mask>
+    </defs>
+
+    <!-- El cuarto: pared, suelo y rodapié -->
+    <rect width="720" height="420" fill="url(#pared)"/>
+    <rect y="318" width="720" height="102" fill="#1a1f2a"/>
+    <rect y="314" width="720" height="6" fill="#232a38"/>
+    <ellipse cx="560" cy="372" rx="170" ry="30" fill="#232937"/>
+
+    <!-- La ventana de arriba del plano, de noche (nox) -->
+    <rect x="36" y="30" width="220" height="118" rx="6" fill="url(#cielo)"/>
+    <circle cx="198" cy="64" r="40" fill="url(#luna)"/>
+    <circle cx="198" cy="64" r="16" fill="#e9efff" mask="url(#creciente)"/>
+    <circle class="estrella" cx="70" cy="56" r="1.8" fill="#fff"/>
+    <circle class="estrella" cx="112" cy="84" r="1.4" fill="#fff"/>
+    <circle class="estrella" cx="150" cy="44" r="1.6" fill="#fff"/>
+    <circle class="estrella" cx="236" cy="110" r="1.3" fill="#fff"/>
+    <rect x="36" y="30" width="220" height="118" rx="6" fill="none" stroke="#2c3548" stroke-width="7"/>
+    <path d="M146 30v118M36 89h220" stroke="#2c3548" stroke-width="4"/>
+
+    <!-- El plano de la habitación, pegado en la pared -->
+    <g transform="rotate(3 600 96)">
+      <rect x="516" y="36" width="170" height="122" rx="4" fill="#1d3a70"/>
+      <path d="M526 46h150v102h-150z" fill="none" stroke="#cfe0ff" stroke-width="2.2"/>
+      <path d="M552 46h60" stroke="#fff" stroke-width="4"/>
+      <rect x="614" y="54" width="54" height="62" rx="3" fill="none" stroke="#cfe0ff" stroke-width="1.6"/>
+      <rect x="619" y="58" width="20" height="10" rx="2" fill="#cfe0ff" opacity=".7"/>
+      <rect x="643" y="58" width="20" height="10" rx="2" fill="#cfe0ff" opacity=".7"/>
+      <rect x="530" y="62" width="7" height="30" fill="#cfe0ff" opacity=".8"/>
+      <rect x="530" y="98" width="12" height="34" fill="none" stroke="#cfe0ff" stroke-width="1.4"/>
+      <circle cx="552" cy="116" r="6" fill="none" stroke="#cfe0ff" stroke-width="1.4"/>
+      <path d="M676 148v-18a18 18 0 0 0-18 18" fill="none" stroke="#cfe0ff" stroke-width="1.4"/>
+      <rect x="560" y="140" width="80" height="6" fill="#cfe0ff" opacity=".5"/>
+      <circle cx="601" cy="40" r="5" fill="#ff5b61"/>
+    </g>
+
+    <!-- La cama del plano, a la derecha, con su mesilla y su lámpara -->
+    <circle cx="560" cy="226" r="70" fill="url(#lampara)"/>
+    <rect x="548" y="236" width="30" height="80" rx="3" fill="#3a2f26"/>
+    <path d="M553 236h20l-4-18h-12z" fill="#f7c35c"/>
+    <rect x="600" y="222" width="130" height="16" rx="6" fill="#4a3d31"/>
+    <rect x="596" y="244" width="140" height="74" rx="10" fill="#3b4254"/>
+    <rect x="612" y="230" width="44" height="22" rx="9" fill="#e4ddd0"/>
+    <rect x="662" y="230" width="44" height="22" rx="9" fill="#e4ddd0"/>
+    <path d="M596 268h140" stroke="#4d566b" stroke-width="3"/>
+
+    <!-- El escritorio con los dos monitores -->
+    <rect x="60" y="262" width="262" height="12" rx="3" fill="#4a3a2c"/>
+    <rect x="72" y="274" width="10" height="44" fill="#382c21"/>
+    <rect x="300" y="274" width="10" height="44" fill="#382c21"/>
+    <rect x="124" y="244" width="8" height="18" fill="#2a3140"/>
+    <rect x="108" y="258" width="40" height="5" rx="2" fill="#2a3140"/>
+    <rect x="80" y="176" width="100" height="70" rx="5" fill="#0c111c" stroke="#2c3548" stroke-width="4"/>
+    <rect x="90" y="188" width="54" height="4" rx="2" fill="#3cd68a"/>
+    <rect x="90" y="198" width="72" height="4" rx="2" fill="#7aa2ff"/>
+    <rect x="90" y="208" width="40" height="4" rx="2" fill="#7aa2ff"/>
+    <rect x="90" y="218" width="62" height="4" rx="2" fill="#f7c35c"/>
+    <rect class="cursor" x="90" y="228" width="8" height="8" fill="#eceff4"/>
+    <rect x="248" y="244" width="8" height="18" fill="#2a3140"/>
+    <rect x="232" y="258" width="40" height="5" rx="2" fill="#2a3140"/>
+    <rect x="192" y="168" width="120" height="78" rx="5" fill="#0c111c" stroke="#2c3548" stroke-width="4"/>
+    <text x="252" y="222" text-anchor="middle" font-family="-apple-system, Segoe UI, sans-serif" font-size="36" font-weight="800" fill="#f7c35c" letter-spacing="-1">404</text>
+    <path d="M241 234v-4a11 11 0 0 1 22 0v4" fill="none" stroke="#eceff4" stroke-width="3" stroke-linecap="round" opacity=".6"/>
+
+    <!-- La silla azul del plano, girando sola del viento -->
+    <g class="silla">
+      <rect x="112" y="262" width="46" height="46" rx="10" fill="#2f55d4"/>
+      <rect x="118" y="300" width="34" height="10" rx="4" fill="#243f9e"/>
+      <rect x="132" y="310" width="6" height="16" fill="#1b2230"/>
+      <path d="M112 330h46" stroke="#1b2230" stroke-width="5" stroke-linecap="round"/>
+    </g>
+
+    <!-- El servidor, con la tapa ya volando -->
+    <rect x="412" y="196" width="80" height="122" rx="7" fill="#1d2330" stroke="#323c50" stroke-width="3"/>
+    <circle class="led" cx="428" cy="214" r="3" fill="#3cd68a"/>
+    <circle class="led" cx="428" cy="226" r="3" fill="#f7c35c"/>
+    <circle class="led" cx="428" cy="238" r="3" fill="#3cd68a"/>
+    <circle cx="462" cy="276" r="18" fill="#141922" stroke="#323c50" stroke-width="2"/>
+    <g class="gira"><path d="M462 262v28M448 276h28M452 266l20 20M472 266l-20 20" stroke="#4a5670" stroke-width="3" stroke-linecap="round"/></g>
+    <path d="M446 216v-4a8 8 0 0 1 16 0v4" fill="none" stroke="#eceff4" stroke-width="2.4" stroke-linecap="round"/>
+    <circle cx="454" cy="214" r="1.8" fill="#f7c35c"/>
+
+    <!-- LA NUBE DE TRABAJO -->
+    <g>
+      <circle class="nube" cx="352" cy="300" r="46" fill="url(#nubeG)"/>
+      <circle class="nube" cx="410" cy="270" r="56" fill="url(#nubeG)"/>
+      <circle class="nube" cx="470" cy="300" r="50" fill="url(#nubeG)"/>
+      <circle class="nube" cx="520" cy="286" r="38" fill="url(#nubeG)"/>
+      <circle class="nube" cx="300" cy="286" r="32" fill="url(#nubeG)"/>
+      <circle class="nube" cx="440" cy="330" r="44" fill="url(#nubeG)"/>
+      <circle class="nube" cx="380" cy="334" r="40" fill="url(#nubeG)"/>
+      <circle class="nube" cx="360" cy="252" r="36" fill="url(#nubeG)"/>
+      <circle class="nube" cx="478" cy="246" r="30" fill="url(#nubeG)"/>
+    </g>
+
+    <!-- Brazos saliendo de la nube, cada uno con su herramienta -->
+    <g class="brazo b1" style="transform-origin: 20% 90%">
+      <path d="M326 262 290 214" stroke="#2c3e78" stroke-width="16" stroke-linecap="round"/>
+      <circle cx="287" cy="209" r="10" fill="#f0c49d"/>
+      <path d="M268 190l24 24" stroke="#aab4c6" stroke-width="7" stroke-linecap="round"/>
+      <path d="M262 184a9 9 0 1 1 12 12l-6-6z" fill="#aab4c6"/>
+    </g>
+    <g class="brazo b2" style="transform-origin: 80% 90%">
+      <path d="M496 250 546 208" stroke="#2c3e78" stroke-width="16" stroke-linecap="round"/>
+      <circle cx="550" cy="204" r="10" fill="#f0c49d"/>
+      <path d="M554 200l22-22" stroke="#aab4c6" stroke-width="4" stroke-linecap="round"/>
+      <rect x="546" y="196" width="12" height="20" rx="4" fill="#f7c35c" transform="rotate(45 552 206)"/>
+    </g>
+    <g class="brazo b3" style="transform-origin: 10% 50%">
+      <path d="M514 312 574 330" stroke="#2c3e78" stroke-width="16" stroke-linecap="round"/>
+      <circle cx="580" cy="332" r="10" fill="#f0c49d"/>
+      <rect x="584" y="318" width="44" height="14" rx="2" fill="#2e7d4f"/>
+      <path d="M588 332v4M594 332v4M600 332v4M606 332v4M612 332v4M618 332v4" stroke="#f7c35c" stroke-width="2"/>
+      <rect x="592" y="321" width="10" height="7" fill="#16241c"/><rect x="608" y="321" width="10" height="7" fill="#16241c"/>
+    </g>
+    <g class="brazo b4" style="transform-origin: 90% 50%">
+      <path d="M318 318 262 338" stroke="#2c3e78" stroke-width="16" stroke-linecap="round"/>
+      <circle cx="256" cy="340" r="10" fill="#f0c49d"/>
+      <path d="M248 342c-20 6-30-10-50 2s-26 4-36 0" fill="none" stroke="#7aa2ff" stroke-width="5" stroke-linecap="round"/>
+      <rect x="236" y="334" width="14" height="12" rx="2" fill="#dfe6f2"/>
+    </g>
+    <g class="brazo b5" style="transform-origin: 50% 100%">
+      <path d="M430 222 428 180" stroke="#2c3e78" stroke-width="15" stroke-linecap="round"/>
+      <circle cx="428" cy="173" r="10" fill="#f0c49d"/>
+      <path d="M428 163v-22" stroke="#6b768c" stroke-width="5" stroke-linecap="round"/>
+      <rect x="421" y="126" width="14" height="18" rx="3" fill="#ff5b61"/>
+    </g>
+
+    <!-- Rubén asomando la cabeza: concentrado, lengua fuera -->
+    <g class="cabeza">
+      <circle cx="384" cy="206" r="34" fill="#f0c49d"/>
+      <path d="M352 196c0-26 18-38 36-38 22 0 34 14 32 34-8-10-18-14-30-12 4 4 4 8 2 10-8-6-20-8-40 6z" fill="#2b1d14"/>
+      <circle cx="350" cy="210" r="7" fill="#e8b88f"/>
+      <path d="M364 196l14 5M404 196l-12 5" stroke="#2b1d14" stroke-width="3.4" stroke-linecap="round"/>
+      <ellipse cx="373" cy="208" rx="6" ry="7" fill="#fff"/><ellipse cx="397" cy="208" rx="6" ry="7" fill="#fff"/>
+      <circle cx="375" cy="210" r="3.2" fill="#1b1b24"/><circle cx="399" cy="210" r="3.2" fill="#1b1b24"/>
+      <path d="M383 216q3 5 0 7" fill="none" stroke="#c98f6a" stroke-width="2" stroke-linecap="round"/>
+      <path d="M372 228q12 6 24-2" fill="none" stroke="#8a4b3a" stroke-width="3" stroke-linecap="round"/>
+      <path d="M392 227q8 2 7 9-6 2-9-6z" fill="#e56b7b"/>
+      <path d="M372 172l6-10M390 168l2-11" stroke="#9fd3ff" stroke-width="2.4" stroke-linecap="round" opacity=".8"/>
+    </g>
+    <circle class="gota" cx="420" cy="190" r="3.5" fill="#9fd3ff" style="--dx: 14px"/>
+    <circle class="gota" cx="350" cy="186" r="3" fill="#9fd3ff" style="--dx: -12px; animation-delay: -.35s"/>
+
+    <!-- Lo que sale disparado: tornillos, un ventilador, una placa, ¡una almohada! -->
+    <g class="vuela" style="--dx: -120px; --dy: -110px; --r: -300deg; animation-delay: -.2s">
+      <rect x="330" y="250" width="16" height="6" rx="2" fill="#c4ccd8"/><rect x="326" y="248" width="6" height="10" rx="2" fill="#9aa4b6"/>
+    </g>
+    <g class="vuela" style="--dx: 150px; --dy: -140px; --r: 400deg; animation-delay: -.9s">
+      <rect x="470" y="248" width="14" height="5" rx="2" fill="#c4ccd8"/><rect x="480" y="246" width="5" height="9" rx="2" fill="#9aa4b6"/>
+    </g>
+    <g class="vuela" style="--dx: -170px; --dy: -60px; --r: 540deg; animation-delay: -.5s">
+      <circle cx="380" cy="300" r="14" fill="#1d2330" stroke="#4a5670" stroke-width="2"/>
+      <path d="M380 290v20M370 300h20" stroke="#4a5670" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <g class="vuela" style="--dx: 190px; --dy: -170px; --r: -200deg; animation-delay: -1.2s">
+      <rect x="440" y="280" width="40" height="28" rx="3" fill="#2e7d4f"/>
+      <rect x="446" y="286" width="12" height="10" fill="#1a2e22"/><rect x="462" y="290" width="12" height="12" fill="#c4ccd8"/>
+      <path d="M444 282h32" stroke="#f7c35c" stroke-width="2" stroke-dasharray="2 2"/>
+    </g>
+    <g class="vuela" style="--dx: 120px; --dy: -190px; --r: 160deg; animation-delay: -.6s">
+      <rect x="470" y="260" width="46" height="24" rx="10" fill="#e4ddd0"/>
+      <path d="M476 272h34" stroke="#cfc6b6" stroke-width="2"/>
+    </g>
+    <g class="vuela" style="--dx: -60px; --dy: -200px; --r: 260deg; animation-delay: -1.4s">
+      <path d="M420 250l6 12 13 2-10 9 3 13-12-7-12 7 3-13-10-9 13-2z" fill="#f7c35c"/>
+    </g>
+    <g class="vuela" style="--dx: 70px; --dy: -120px; --r: -380deg; animation-delay: -.1s">
+      <circle cx="430" cy="300" r="4" fill="#c4ccd8"/><path d="M427 300h6" stroke="#6b768c" stroke-width="1.6"/>
+    </g>
+
+    <!-- Rayas de velocidad -->
+    <g stroke="#aab4c6" stroke-width="3" stroke-linecap="round" opacity=".7">
+      <path class="raya" d="M272 250h-26" style="--dx: -14px"/>
+      <path class="raya" d="M268 298h-30" style="--dx: -16px; animation-delay: -.2s"/>
+      <path class="raya" d="M566 262h26" style="--dx: 14px; animation-delay: -.1s"/>
+      <path class="raya" d="M570 300h30" style="--dx: 16px; animation-delay: -.3s"/>
+    </g>
+  </svg>

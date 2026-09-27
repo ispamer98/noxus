@@ -1,0 +1,1034 @@
+/* Fuentes servidas por el propio panel (latin, variables): sin peticiones a Google en cada carga. */
+@font-face { font-family: "Geist"; font-style: normal; font-weight: 300 700; font-display: swap; src: url("/fonts/geist.woff2") format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-weight: 400 600; font-display: swap; src: url("/fonts/geist-mono.woff2") format("woff2"); }
+
+/* ==========================================================================
+   NOXUS · OBSIDIANA — centro de control nocturno
+
+   Aurora cian/violeta, cristal y red de nodos. Armada, la casa tiñe el ambiente
+   de rojo. En pantallas táctiles el cristal conserva su transparencia pero no
+   difumina el lienzo, para no penalizar cada fotograma.
+   ========================================================================== */
+
+@property --nx-a1 { syntax: "<color>"; inherits: false; initial-value: rgba(62, 224, 255, 0.30); }
+@property --nx-a3 { syntax: "<color>"; inherits: false; initial-value: rgba(139, 124, 255, 0.10); }
+@property --nx-a2 { syntax: "<color>"; inherits: false; initial-value: rgba(139, 124, 255, 0.22); }
+
+:root {
+  --nx-bg: #04060b;
+  --nx-s1: rgba(255, 255, 255, 0.038);
+  --nx-s2: rgba(255, 255, 255, 0.052);
+  --nx-s3: rgba(255, 255, 255, 0.075);
+  --nx-line: rgba(255, 255, 255, 0.075);
+  --nx-line-2: rgba(255, 255, 255, 0.15);
+  --nx-line-3: rgba(255, 255, 255, 0.22);
+
+  /* Texto */
+  --nx-text: #e8eef7;
+  --nx-text-2: #b4c0d2;
+  --nx-muted: #8a97aa;
+  --nx-faint: #566277;
+
+  /* Significados (el mismo color significa siempre lo mismo) */
+  --nx-info: #3ee0ff;
+  --nx-info-rgb: 62, 224, 255;
+  --nx-lamp: #ffc24a;
+  --nx-lamp-rgb: 255, 194, 74;
+  --nx-warn: #ffa31a;
+  --nx-warn-rgb: 255, 163, 26;
+  --nx-guard: #ff4d5e;
+  --nx-guard-rgb: 255, 77, 94;
+  --nx-safe: #2ee6a6;
+  --nx-safe-rgb: 46, 230, 166;
+  --nx-violet: #8b7cff;
+  --nx-violet-rgb: 139, 124, 255;
+
+  --nx-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --nx-font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --nx-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --nx-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --nx-dock-h: 64px;
+  --nx-toast-offset: 20px;
+  color-scheme: dark;
+}
+
+/* --- Base ----------------------------------------------------------------- */
+html, body {
+  background: var(--nx-bg);
+  /* El rebote elástico de iOS arrastraba la barra de arriba hasta media
+     pantalla. Con esto la raíz no rebota (Safari iOS 16+), y además el panel
+     vive en un contenedor fijo (.nx-shell), así que la barra no se mueve
+     aunque el contenido sí rebote dentro de su propia caja. */
+  overscroll-behavior: none;
+}
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Sin zoom por doble toque: el navegador no tiene que esperar a ver si viene
+     un segundo toque antes de dar por bueno el primero. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+body { font-family: var(--nx-font); color: var(--nx-text); background: transparent !important; }
+::selection { background: rgba(var(--nx-info-rgb), 0.3); color: #fff; }
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+:focus-visible { outline: 2px solid rgba(var(--nx-info-rgb), 0.85); outline-offset: 2px; }
+
+/* Aurora sin grano ni rejilla de puntos. El JS copia a html únicamente el
+   estado armado para evitar :has() en cada recalculo de estilos. */
+html::before {
+  content: ""; position: fixed; inset: -25%; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(40% 34% at 20% 18%, var(--nx-a1), transparent 70%),
+    radial-gradient(34% 30% at 84% 88%, var(--nx-a2), transparent 72%),
+    radial-gradient(26% 22% at 70% 12%, var(--nx-a3), transparent 70%);
+  transition: --nx-a1 1.4s ease, --nx-a2 1.4s ease, --nx-a3 1.4s ease;
+  animation: nx-deriva 48s ease-in-out infinite alternate;
+  will-change: transform;
+}
+/* Armada: el foco de arriba a la izquierda vira del azul a carmesí (#dc143c) y
+   el resto del ambiente se enrojece con él, como una luz indirecta. La red de
+   nodos (nx.js) recoge esa misma luz: lo que queda cerca del foco brilla más. */
+html[data-nx-armado="true"]::before {
+  --nx-a1: rgba(220, 20, 60, 0.50);
+  --nx-a2: rgba(190, 18, 58, 0.17);
+  --nx-a3: rgba(220, 20, 60, 0.09);
+}
+@keyframes nx-deriva {
+  0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50% { transform: translate3d(4%, 3%, 0) rotate(6deg) scale(1.06); }
+  100% { transform: translate3d(-3%, 5%, 0) rotate(-4deg) scale(1.02); }
+}
+#nx-nodos { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; opacity: 0.7; }
+
+/* --- Radix: tipografía, cromo y paneles ----------------------------------- */
+:root .radix-themes {
+  --default-font-family: var(--nx-font);
+  --heading-font-family: var(--nx-font);
+  --strong-font-family: var(--nx-font);
+  --code-font-family: var(--nx-mono);
+  --cursor-button: pointer;
+  --cursor-checkbox: pointer;
+  --cursor-radio: pointer;
+  --cursor-switch: pointer;
+  --cursor-menu-item: pointer;
+  --color-background: var(--nx-bg);
+  --color-panel-solid: #0a0f18;
+  --color-panel-translucent: rgba(10, 15, 24, 0.97);
+  --color-surface: rgba(255, 255, 255, 0.03);
+  --color-overlay: rgba(4, 6, 10, 0.66);
+  font-feature-settings: "ss01", "cv11";
+}
+.radix-themes { background-color: transparent !important; }
+.rt-Heading { letter-spacing: -0.02em; text-wrap: balance; }
+code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric: tabular-nums; }
+
+/* Rótulos de sección: antes en versalitas monoespaciadas; ahora frase normal,
+   semibold y en gris. Ni tamaño ni color fijos: cada uno conserva los suyos. */
+.nx-label { font-family: var(--nx-mono) !important; text-transform: uppercase !important; letter-spacing: 0.12em !important; }
+
+/* Botones: respuesta inmediata al dedo, antes de que conteste el servidor */
+.rt-Button, .rt-IconButton { transition: transform 0.12s var(--nx-ease), background-color 0.15s ease, box-shadow 0.15s ease; }
+.rt-Button:active:not(:disabled), .rt-IconButton:active:not(:disabled) { transform: scale(0.97); }
+.rt-Button.rt-variant-solid, .rt-IconButton.rt-variant-solid { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 1px 2px rgba(0, 0, 0, 0.35); }
+.rt-Button.rt-variant-surface, .rt-IconButton.rt-variant-surface { box-shadow: inset 0 0 0 1px var(--nx-line-2); }
+.rt-BadgeRoot { font-weight: 500; letter-spacing: 0; }
+.rt-TextFieldRoot:focus-within, .rt-TextAreaRoot:focus-within, .rt-SelectTrigger:focus-visible {
+  box-shadow: 0 0 0 1px var(--accent-8), 0 0 0 4px var(--accent-a3);
+}
+/* Ventanas, menús y desplegables: panel sólido, filo fino y sombra honda */
+.rt-BaseDialogContent.rt-BaseDialogContent, .rt-PopoverContent.rt-PopoverContent, .rt-BaseMenuContent.rt-BaseMenuContent, .rt-HoverCardContent.rt-HoverCardContent {
+  box-shadow: inset 0 0 0 1px var(--nx-line-2), 0 24px 64px -16px rgba(0, 0, 0, 0.8);
+}
+.rt-BaseDialogContent { overscroll-behavior: contain; }
+.rt-TooltipContent { background: #1b2029; color: var(--nx-text); box-shadow: inset 0 0 0 1px var(--nx-line-2); }
+.rt-TooltipText { color: var(--nx-text); }
+.rt-TooltipArrow { fill: #1b2029; }
+.rt-Card { box-shadow: inset 0 0 0 1px var(--nx-line); }
+
+/* --- Carcasa: barras quietas y solo el contenido se desplaza --------------- */
+/* !important en los display: .rt-Box/.rt-Flex de Radix traen el suyo y ganan a
+   igual especificidad. Las piezas nuevas son elementos HTML sin Radix. */
+.nx-shell { position: fixed; inset: 0; display: flex; background: transparent; isolation: isolate; }
+.nx-shell, .nx-shell *, .nx-shell *::before, .nx-shell *::after, .nx-dock, .nx-dock * { box-sizing: border-box; }
+/* Un único resplandor fijo arriba, sin animar: azul en calma, rojo con la
+   casa armada. Nada de grano ni rejilla de puntos. */
+.nx-shell::before, .nx-shell::after { content: none; }
+
+.nx-main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nx-scroll {
+  flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch;
+  scroll-padding-top: 12px;
+}
+/* Centra CUALQUIER vista, tenga o no su propio max-width: las que lo llevan
+   (Equipos, Ajustes) quedan centradas y las que llenan (Mural, Registros)
+   siguen llenando. */
+.nx-stage { display: flex; justify-content: center; width: 100%; padding: 28px 32px 48px; }
+.nx-overview { display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 1180px; min-width: 0; }
+.nx-stage > * { animation: nx-aparece 0.16s ease-out both; }
+@keyframes nx-aparece { from { opacity: 0; } }
+
+/* --- Barra lateral --------------------------------------------------------- */
+.nx-sidebar {
+  position: relative; display: flex; flex-direction: column; flex: none; width: 252px; height: 100%;
+  background: rgba(7, 11, 19, 0.6); border-right: 1px solid var(--nx-line);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  transition: width 0.2s var(--nx-ease);
+  overflow: hidden;
+}
+.nx-sidebar[data-plegada="true"] { width: 72px; }
+.nx-brand { display: flex; align-items: center; gap: 11px; height: 68px; padding: 0 18px; flex: none; }
+/* La marca va CENTRADA en su pastilla: es un SVG que ya trae su fondo, así que
+   no depende de ningún display de Radix. */
+.nx-mark { display: block; width: 32px; height: 32px; flex: none; border-radius: 9px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.nx-wordmark { font-size: 19px; font-weight: 600; letter-spacing: -0.035em; color: var(--nx-text); line-height: 1; white-space: nowrap; }
+.nx-sidebar[data-plegada="true"] .nx-wordmark { display: none; }
+.nx-sidebar[data-plegada="true"] .nx-brand { justify-content: center; padding: 0; }
+.nx-sidebar::after {
+  content: ""; position: absolute; top: 0; right: 0; width: 1px; height: 100%; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(var(--nx-info-rgb), 0.45) 30%, rgba(var(--nx-violet-rgb), 0.3) 70%, transparent);
+}
+.nx-nav { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
+.nx-nav-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--nx-muted);
+  font: 500 14px/1 var(--nx-font); letter-spacing: -0.005em; text-align: left; cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-nav-item svg { flex: none; }
+.nx-nav-item:hover { background: rgba(255, 255, 255, 0.04); color: var(--nx-text); }
+.nx-nav-item:active { transform: scale(0.98); }
+.nx-nav-item[data-activo="true"] { background: linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.14), rgba(var(--nx-info-rgb), 0.02)); color: var(--nx-text); box-shadow: inset 0 0 0 1px rgba(var(--nx-info-rgb), 0.14); }
+.nx-nav-item[data-activo="true"] svg { color: var(--nx-info); filter: drop-shadow(0 0 6px rgba(var(--nx-info-rgb), 0.8)); }
+.nx-sidebar[data-plegada="true"] .nx-nav-item { justify-content: center; padding: 0; }
+.nx-sidebar[data-plegada="true"] .nx-nav-item span { display: none; }
+.nx-sidebar-pie { margin-top: auto; padding: 12px; border-top: 1px solid var(--nx-line); }
+
+/* --- Barra superior -------------------------------------------------------- */
+.nx-topbar {
+  position: relative; z-index: 40; flex: none; display: flex; align-items: center; gap: 8px;
+  height: 64px; padding: 0 20px 0 32px;
+  background: rgba(7, 11, 19, 0.5); border-bottom: 1px solid var(--nx-line);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.nx-topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(var(--nx-info-rgb), 0.6), rgba(var(--nx-violet-rgb), 0.5), transparent);
+  opacity: 0.35; animation: nx-respira-filo 5s ease-in-out infinite; }
+@keyframes nx-respira-filo { 50% { opacity: 1; } }
+.nx-title { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.025em; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-title-mark { display: none; }
+.nx-icon-btn {
+  display: inline-grid; place-items: center; width: 38px; height: 38px; flex: none;
+  border: 0; border-radius: 10px; background: transparent; color: var(--nx-muted); cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-icon-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--nx-text); }
+.nx-icon-btn:active { transform: scale(0.94); background: rgba(255, 255, 255, 0.09); }
+.nx-search {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 12px; margin-right: 6px;
+  border: 1px solid var(--nx-line-2); border-radius: 10px; background: rgba(7, 11, 19, 0.45);
+  color: var(--nx-muted); font: 400 13px/1 var(--nx-font); cursor: pointer; min-width: 200px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.nx-search:hover { border-color: var(--nx-line-3); color: var(--nx-text-2); }
+.nx-search kbd { margin-left: auto; padding: 3px 6px; border-radius: 6px; background: var(--nx-s2); border: 1px solid var(--nx-line); font: 500 11px/1 var(--nx-mono); color: var(--nx-muted); }
+.nx-clock { font: 400 13px/1 var(--nx-font); color: var(--nx-muted); font-variant-numeric: tabular-nums; white-space: pre; padding: 0 6px; }
+.nx-vivo { position: relative; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--nx-safe); flex: none; }
+.nx-vivo::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: inherit; animation: nx-ping 2.4s ease-out infinite; }
+@keyframes nx-ping { from { transform: scale(1); opacity: 0.6; } to { transform: scale(3); opacity: 0; } }
+
+/* El armado vuelve a ser un escudo solo: el color ya cuenta el estado y evita
+   gastar sitio de la barra repitiéndolo en una pastilla de texto. */
+.nx-arm-icon {
+  position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; flex: none;
+  border: 1px solid transparent; border-radius: 11px; background: transparent; cursor: pointer;
+  transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.4s ease, transform 0.12s var(--nx-ease);
+}
+.nx-arm-icon:hover { background: rgba(var(--nx-safe-rgb), 0.10); }
+.nx-arm-icon[data-armado="true"] {
+  border-color: rgba(var(--nx-guard-rgb), 0.26);
+  background: rgba(var(--nx-guard-rgb), 0.075);
+  box-shadow: inset 0 0 0 1px rgba(var(--nx-guard-rgb), 0.05), 0 0 22px -8px rgba(var(--nx-guard-rgb), 0.72);
+}
+.nx-arm-icon[data-armado="true"]::after {
+  content: ""; position: absolute; inset: -5px; pointer-events: none;
+  border: 1px solid rgba(var(--nx-guard-rgb), 0.18); border-radius: 15px;
+  animation: nx-guard-orbit 3.8s ease-in-out infinite;
+}
+.nx-arm-icon[data-armado="true"]:hover { background: rgba(var(--nx-guard-rgb), 0.13); }
+.nx-arm-icon:active { transform: scale(0.94); }
+@keyframes nx-guard-orbit { 50% { opacity: 0.36; transform: scale(1.05); } }
+
+/* Chip de "este dispositivo" */
+.nx-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; flex: none;
+  border-radius: 999px; border: 1px solid var(--nx-line-2); background: rgba(7, 11, 19, 0.45);
+  color: var(--nx-text); font: 500 13px/1 var(--nx-font); cursor: pointer;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-chip:hover { border-color: var(--nx-line-3); background: rgba(13, 21, 35, 0.62); }
+.nx-chip:active { transform: scale(0.96); }
+.nx-chip[data-vinculado="false"] { border-color: rgba(var(--nx-warn-rgb), 0.5); }
+
+/* --- Barra inferior del móvil: isla flotante -------------------------------- */
+.nx-dock {
+  position: fixed; z-index: 60; left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom));
+  display: none; align-items: center; justify-content: space-evenly; height: var(--nx-dock-h); padding: 6px;
+  border-radius: 22px; border: 1px solid var(--nx-line-2);
+  background: rgba(20, 24, 32, 0.82);
+  -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.85);
+}
+.nx-dock-item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  flex: 1; height: 100%; min-width: 0; border: 0; border-radius: 16px; background: transparent;
+  color: var(--nx-muted); font: 500 11px/1 var(--nx-font); cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-dock-item:active { transform: scale(0.92); }
+.nx-dock-item[data-activo="true"] { color: var(--nx-text); background: rgba(255, 255, 255, 0.08); }
+.nx-dock-item[data-activo="true"] svg { color: var(--nx-info); filter: drop-shadow(0 0 6px rgba(var(--nx-info-rgb), 0.75)); }
+
+/* --- Tarjetas (las ~70 que ya usan class_name="nx-card") ------------------- */
+.nx-card {
+  position: relative; isolation: isolate;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+  transition: border-color 0.25s ease, background-color 0.2s ease, box-shadow 0.35s ease, transform 0.12s var(--nx-ease);
+}
+
+/* Estado esencial del Resumen: vuelve a ser una pastilla, no una hero card. */
+.nx-status-pill {
+  display: inline-flex; align-items: center; gap: 8px; width: fit-content; min-height: 40px; padding: 0 15px;
+  border: 1px solid rgba(var(--nx-safe-rgb), 0.34); border-radius: 999px;
+  background: rgba(var(--nx-safe-rgb), 0.09); color: var(--nx-safe);
+  font: 600 14px/1 var(--nx-font); cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 22px -12px rgba(var(--nx-safe-rgb), 0.8);
+  transition: transform 0.12s var(--nx-ease), background-color 0.2s ease, box-shadow 0.25s ease;
+}
+.nx-status-pill[data-armado="true"] {
+  border-color: rgba(var(--nx-guard-rgb), 0.42); background: rgba(var(--nx-guard-rgb), 0.11); color: var(--nx-guard);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 24px -10px rgba(var(--nx-guard-rgb), 0.75);
+}
+.nx-status-pill:active:not(:disabled) { transform: scale(0.97); }
+.nx-status-pill:disabled { cursor: default; opacity: 1; }
+.nx-card::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit; opacity: 0;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), rgba(var(--nx-info-rgb), 0.09), transparent 42%);
+  transition: opacity 0.3s ease;
+}
+@media (hover: hover) {
+  .nx-card:hover::before { opacity: 1; }
+  .nx-card:hover { border-color: rgba(var(--nx-info-rgb), 0.3) !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 60px -30px rgba(var(--nx-info-rgb), 0.35); }
+}
+
+/* --- Resumen: el estado de la casa ----------------------------------------- */
+.nx-hero {
+  position: relative; overflow: hidden; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 22px;
+  padding: 24px 26px; border-radius: 20px; border: 1px solid var(--nx-line);
+  /* El halo del color del estado va en el propio fondo, como una capa más:
+     sin pseudo-elementos desplazados ni nada que el móvil tenga que componer. */
+  background:
+    radial-gradient(260px circle at 68px 50%, rgba(var(--nx-c-rgb), 0.15), transparent 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+    var(--nx-s1);
+  box-shadow: var(--nx-shadow);
+  --nx-c: var(--nx-safe); --nx-c-rgb: var(--nx-safe-rgb);
+}
+.nx-hero[data-estado="armado"] { --nx-c: var(--nx-guard); --nx-c-rgb: var(--nx-guard-rgb); border-color: rgba(var(--nx-guard-rgb), 0.28); }
+.nx-hero[data-estado="contando"] { --nx-c: var(--nx-warn); --nx-c-rgb: var(--nx-warn-rgb); border-color: rgba(var(--nx-warn-rgb), 0.3); }
+.nx-ring { position: relative; display: grid; place-items: center; width: 84px; height: 84px; flex: none; border-radius: 50%; color: var(--nx-c); }
+.nx-ring::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--nx-c) calc(var(--nx-p, 100) * 1%), rgba(255, 255, 255, 0.07) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+}
+.nx-ring::after {
+  content: ""; position: absolute; inset: 9px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, rgba(var(--nx-c-rgb), 0.22), rgba(var(--nx-c-rgb), 0.06) 70%);
+  box-shadow: inset 0 0 0 1px rgba(var(--nx-c-rgb), 0.25);
+}
+.nx-ring svg { position: relative; z-index: 1; }
+/* Armada: el anillo respira despacio. Es el único bucle con significado del panel. */
+.nx-hero[data-estado="armado"] .nx-ring::after { animation: nx-respira 3.2s ease-in-out infinite; will-change: opacity; }
+@keyframes nx-respira { 50% { opacity: 0.55; } }
+.nx-hero-text { position: relative; min-width: 0; }
+.nx-hero-title { margin: 0; font-size: 30px; line-height: 1.1; font-weight: 600; letter-spacing: -0.035em; color: var(--nx-text); text-wrap: balance; }
+.nx-hero-sub { margin: 8px 0 0; font-size: 14px; line-height: 1.45; color: var(--nx-muted); overflow-wrap: anywhere; }
+.nx-hero-sub b { color: var(--nx-warn); font-weight: 500; }
+.nx-hero-datos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.nx-dato {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045); border: 1px solid var(--nx-line); color: var(--nx-text-2);
+  font: 500 12px/1 var(--nx-font); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.nx-dato i { width: 6px; height: 6px; border-radius: 50%; background: var(--nx-safe); }
+.nx-hero-acciones { position: relative; display: flex; align-items: center; gap: 8px; }
+.nx-hero-cta {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  height: 46px; padding: 0 20px; border: 0; border-radius: 12px; cursor: pointer;
+  font: 600 15px/1 var(--nx-font); letter-spacing: -0.01em;
+  background: var(--nx-text); color: #0b0d12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 24px -12px rgba(255, 255, 255, 0.35);
+  transition: transform 0.12s var(--nx-ease), background-color 0.15s ease;
+}
+.nx-hero-cta:hover { background: #fff; }
+.nx-hero-cta:active { transform: scale(0.97); }
+.nx-hero[data-estado="armado"] .nx-hero-cta,
+.nx-hero[data-estado="contando"] .nx-hero-cta { background: var(--nx-s3); color: var(--nx-text); box-shadow: inset 0 0 0 1px var(--nx-line-3); }
+.nx-hero[data-estado="armado"] .nx-hero-cta:hover,
+.nx-hero[data-estado="contando"] .nx-hero-cta:hover { background: #262c3a; }
+/* Cuenta atrás de salida: los segundos dentro del anillo */
+.nx-ring-num { position: relative; z-index: 1; font: 600 24px/1 var(--nx-font); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--nx-warn); }
+
+/* --- Pantalla de arranque (comprobando el acceso) -------------------------- */
+.nx-boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--nx-bg); }
+.nx-boot-marca { display: grid; justify-items: center; gap: 18px; }
+.nx-boot-marca img { width: 64px; height: 64px; border-radius: 16px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 50px -18px rgba(var(--nx-lamp-rgb), 0.35); animation: nx-late 1.6s ease-in-out infinite; }
+.nx-boot-texto { font: 500 14px/1 var(--nx-font); color: var(--nx-muted); letter-spacing: -0.005em; }
+@keyframes nx-late { 50% { opacity: 0.55; transform: scale(0.97); } }
+
+/* --- Secciones y accesos rápidos ------------------------------------------- */
+.nx-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 32px; }
+.nx-section-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--nx-text); }
+.nx-ghost-btn {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 9px;
+  border: 1px solid var(--nx-line-2); background: transparent; color: var(--nx-text-2);
+  font: 500 13px/1 var(--nx-font); cursor: pointer; transition: background-color 0.15s ease, color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-ghost-btn:hover { background: rgba(255, 255, 255, 0.05); color: var(--nx-text); }
+.nx-ghost-btn:active { transform: scale(0.96); }
+
+.nx-families { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; width: 100%; align-items: start; }
+.nx-family { position: relative; border-radius: 16px; border: 1px solid var(--nx-line); background: rgba(7, 11, 19, 0.48); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: var(--nx-shadow); overflow: hidden; transition: border-color 0.25s ease, box-shadow 0.3s ease; }
+.nx-family-head {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border: 0; background: transparent;
+  color: var(--nx-text); cursor: pointer; text-align: left; font: 600 14px/1.2 var(--nx-font); letter-spacing: -0.01em;
+  transition: background-color 0.15s ease;
+}
+.nx-family-head:hover { background: rgba(var(--nx-info-rgb), 0.045); }
+.nx-family-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--nx-s2); color: var(--nx-text-2); flex: none; }
+.nx-family-count { margin-left: auto; min-width: 24px; height: 22px; padding: 0 8px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--nx-s2); color: var(--nx-muted); font: 500 12px/1 var(--nx-mono); }
+.nx-family-chev { color: var(--nx-faint); transition: transform 0.2s var(--nx-ease); flex: none; }
+.nx-family[data-abierta="true"] .nx-family-chev { transform: rotate(180deg); }
+.nx-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; padding: 0 10px 10px; }
+
+.nx-bloque { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.nx-tile {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; width: 100%; min-height: 104px; padding: 12px;
+  border-radius: 13px; border: 1px solid var(--nx-line); background: rgba(255, 255, 255, 0.035); color: var(--nx-text);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  text-align: left; cursor: pointer; font: inherit;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.12s var(--nx-ease);
+  --nx-t: var(--nx-info); --nx-t-rgb: var(--nx-info-rgb);
+}
+.nx-tile:hover { border-color: rgba(var(--nx-info-rgb), 0.42); background: rgba(var(--nx-info-rgb), 0.075); box-shadow: 0 0 28px -15px rgba(var(--nx-info-rgb), 0.8); }
+.nx-tile:active { transform: scale(0.965); }
+.nx-tile-envoltura { display: flex; min-width: 0; }
+.nx-tile[data-tono="lamp"] { --nx-t: var(--nx-lamp); --nx-t-rgb: var(--nx-lamp-rgb); }
+.nx-tile[data-tono="arm"] { --nx-t: var(--nx-guard); --nx-t-rgb: var(--nx-guard-rgb); }
+.nx-tile-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: rgba(255, 255, 255, 0.06); color: var(--nx-text-2); transition: background-color 0.18s ease, color 0.18s ease; }
+/* La única baldosa que apaga algo lleva el icono en rojo */
+.nx-tile[data-tono="danger"] .nx-tile-icon { color: var(--nx-guard); background: rgba(var(--nx-guard-rgb), 0.1); }
+.nx-tile-label { font-size: 14px; font-weight: 500; line-height: 1.25; letter-spacing: -0.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.nx-tile-meta { margin-top: -10px; font-size: 12px; color: var(--nx-muted); }
+.nx-tile-ctrl { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+.nx-tile-ctrl:empty { display: none; }
+/* Controles de Personalizar (mover y quitar): iconos de 14 px con zona táctil de 28 */
+.nx-tile-ctrl svg { box-sizing: content-box; padding: 7px; border-radius: 8px; background: var(--nx-s3); }
+/* Conmutador dibujado: dice encendido o apagado sin palabras */
+.nx-tile-switch { position: relative; display: block; width: 30px; height: 18px; margin: 6px 4px 0 0; border-radius: 999px; background: rgba(255, 255, 255, 0.14); transition: background-color 0.18s ease; }
+.nx-tile-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #cfd5df; transition: transform 0.2s var(--nx-ease), background-color 0.18s ease; }
+/* Encendido: la baldosa entera toma el color de lo que hace (una luz, cálida) */
+.nx-tile[data-activo="true"] { background: linear-gradient(180deg, rgba(var(--nx-t-rgb), 0.20), rgba(var(--nx-t-rgb), 0.055)); border-color: rgba(var(--nx-t-rgb), 0.48); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 30px -14px rgba(var(--nx-t-rgb), 0.75); }
+.nx-tile[data-activo="true"] .nx-tile-icon { background: var(--nx-t); color: #111318; }
+.nx-tile[data-activo="true"] .nx-tile-meta { color: var(--nx-t); }
+.nx-tile[data-activo="true"] .nx-tile-switch { background: var(--nx-t); }
+.nx-tile[data-activo="true"] .nx-tile-switch::after { transform: translateX(12px); background: #fff; }
+
+/* --- Plano: mesa cartográfica y telemetría lateral -------------------------
+   El contenedor del plano conserva su proporción y sus coordenadas internas:
+   marco, halo y viñeta viven fuera o en pseudo-elementos que no alteran los %
+   de los marcadores. En móvil se retiran para mantener el ancho de siempre. */
+.nx-plano-vista { width: 100%; max-width: 1120px; min-width: 0; }
+.nx-plano-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
+  align-items: start; width: 100%; min-width: 0;
+}
+.nx-plano-centro { width: 100%; max-width: 806px; min-width: 0; margin-inline: auto; }
+.nx-plano-marco { position: relative; width: 100%; isolation: isolate; }
+.nx-plano-cabecera {
+  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
+  min-height: 40px; padding: 0 2px 8px 6px;
+}
+.nx-plano-cabecera[data-editando="true"] { justify-content: space-between; }
+.nx-plano-instruccion { min-width: 0; }
+.nx-plano-lienzo { position: relative; width: 100%; isolation: isolate; }
+.nx-plano-fondo { display: none; }
+.nx-plano-lateral-der { display: grid; gap: 12px; width: 100%; min-width: 0; }
+.nx-plano-panel {
+  min-width: 0; padding: 14px; border: 1px solid var(--nx-line);
+  border-radius: 16px; background: rgba(7, 11, 19, 0.58); box-shadow: var(--nx-shadow);
+}
+.nx-plano-panel-titulo {
+  margin: 0 0 11px; color: var(--nx-text); font: 600 14px/1.2 var(--nx-font);
+  letter-spacing: -0.012em;
+}
+.nx-plano-resumen { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.nx-plano-resumen-item {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center;
+  gap: 3px 7px; min-width: 0; padding: 9px; border: 1px solid var(--nx-line);
+  border-radius: 12px; background: rgba(255, 255, 255, 0.025);
+}
+.nx-plano-resumen-icono { grid-row: 1 / 3; color: var(--nx-info); }
+.nx-plano-resumen-etiqueta { color: var(--nx-muted); font-size: 11px; line-height: 1.1; }
+.nx-plano-resumen-valor {
+  min-width: 0; overflow: hidden; color: var(--nx-text); font-size: 12px;
+  font-weight: 600; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-plano-resumen-item[data-tono="abiertos"] .nx-plano-resumen-icono { color: var(--nx-warn); }
+.nx-plano-resumen-item[data-tono="luces"] .nx-plano-resumen-icono { color: var(--nx-lamp); }
+.nx-plano-resumen[data-armado="true"] .nx-plano-resumen-item[data-tono="armado"] {
+  border-color: rgba(var(--nx-guard-rgb), 0.45); background: rgba(var(--nx-guard-rgb), 0.09);
+}
+.nx-plano-resumen[data-armado="true"] .nx-plano-resumen-item[data-tono="armado"] .nx-plano-resumen-icono { color: var(--nx-guard); }
+.nx-plano-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.nx-plano-tiles .nx-tile { min-height: 96px; }
+.nx-plano-equipos-lista { display: grid; gap: 6px; }
+.nx-plano-equipo {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  gap: 8px; min-width: 0; padding: 8px 9px; border: 1px solid var(--nx-line);
+  border-radius: 11px; background: rgba(255, 255, 255, 0.025);
+}
+.nx-plano-equipo-icono { display: grid; place-items: center; color: var(--nx-muted); }
+.nx-plano-equipo-nombre { overflow: hidden; color: var(--nx-text-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.nx-plano-equipo-estado { color: var(--nx-muted); font-size: 10px; white-space: nowrap; }
+.nx-plano-equipo[data-online="true"] .nx-plano-equipo-icono,
+.nx-plano-equipo[data-online="true"] .nx-plano-equipo-estado { color: var(--nx-safe); }
+.nx-plano-vacio { margin: 0; color: var(--nx-muted); font-size: 12px; }
+
+@media (min-width: 1100px) {
+  .nx-plano-layout:not([data-editando="true"]) {
+    grid-template-columns: minmax(0, 790px) minmax(210px, 260px);
+    justify-content: center;
+  }
+  .nx-plano-layout[data-editando="true"] { grid-template-columns: minmax(0, 790px); justify-content: center; }
+  .nx-plano-lateral-der { position: sticky; top: 12px; }
+  .nx-plano-resumen { grid-template-columns: minmax(0, 1fr); }
+  .nx-plano-tiles { grid-template-columns: minmax(0, 1fr); }
+  .nx-plano-marco {
+    padding: 8px; overflow: visible; border: 1px solid rgba(var(--nx-info-rgb), 0.28);
+    border-radius: 20px; background: rgba(7, 11, 19, 0.62);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 70px -30px rgba(0, 0, 0, 0.95), 0 0 58px -34px rgba(var(--nx-info-rgb), 0.92);
+  }
+  .nx-plano-lienzo::after {
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    border-radius: 15px; box-shadow: inset 0 0 44px 10px rgba(4, 6, 11, 0.52);
+    background: radial-gradient(ellipse at center, transparent 68%, rgba(4, 6, 11, 0.34) 100%);
+  }
+  .nx-plano-lienzo > .nx-plan-container { z-index: 1; border-radius: 15px; }
+}
+
+@media (hover: hover) and (min-width: 1024px) {
+  .nx-plano-fondo {
+    position: absolute; inset: -20px; z-index: -1; display: block; width: calc(100% + 40px);
+    height: calc(100% + 40px); border-radius: 28px; object-fit: cover;
+    opacity: 0.28; filter: blur(28px) saturate(1.18); pointer-events: none;
+  }
+}
+
+/* Modos de la casa */
+.nx-modes { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nx-modes-label { margin-right: 4px; font: 500 13px/1 var(--nx-font); color: var(--nx-muted); }
+.nx-mode {
+  display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 14px 0 11px; border-radius: 12px;
+  border: 1px solid var(--nx-line); background: rgba(7, 11, 19, 0.45); color: var(--nx-text-2); font: 500 14px/1 var(--nx-font); cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-mode:active { transform: scale(0.96); }
+.nx-mode[data-activo="true"] { background: rgba(var(--nx-info-rgb), 0.11); border-color: rgba(var(--nx-info-rgb), 0.38); color: var(--nx-text); box-shadow: 0 0 22px -13px rgba(var(--nx-info-rgb), 0.9); }
+
+/* Avisos propios apilados. Los hijos recuperan los eventos porque el contenedor
+   no debe crear una sábana invisible sobre el panel. */
+.nx-floating-notices {
+  position: fixed; right: 20px; bottom: 20px; z-index: 900; display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  width: min(440px, calc(100vw - 40px)); pointer-events: none;
+}
+.nx-floating-notice {
+  pointer-events: auto; width: 100%; padding: 14px; border-radius: 14px; border: 1px solid var(--nx-line-2);
+  background: linear-gradient(180deg, rgba(15, 22, 34, 0.94), rgba(7, 11, 19, 0.92));
+  -webkit-backdrop-filter: blur(14px) saturate(140%); backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 20px 55px -18px rgba(0, 0, 0, 0.92), 0 0 35px -24px rgba(var(--nx-info-rgb), 0.7);
+}
+.nx-notice-group { pointer-events: auto; width: 100%; max-height: min(46dvh, 420px); overflow-y: auto; }
+.nx-alert-notice { border-color: rgba(var(--nx-guard-rgb), 0.55); }
+.nx-access-notice { border-color: rgba(var(--nx-warn-rgb), 0.45); }
+.nx-notice-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.nx-notice-close { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border: 0; border-radius: 9px; background: transparent; color: var(--nx-muted); cursor: pointer; }
+.nx-notice-close:hover { color: var(--nx-text); background: rgba(255, 255, 255, 0.06); }
+.nx-arm-blockers { display: flex; flex-direction: column; gap: 12px; border-color: rgba(var(--nx-warn-rgb), 0.4); }
+.nx-countdown { display: flex; align-items: center; gap: 12px; border-color: rgba(var(--nx-warn-rgb), 0.4); }
+.nx-countdown-copy { flex: 1; min-width: 0; }
+.nx-link-notice { border-color: rgba(var(--nx-warn-rgb), 0.4); }
+
+/* --- 404 propia ------------------------------------------------------------ */
+.nx-404 {
+  position: relative; z-index: 1; width: 100%; min-height: 100dvh; padding: 24px 16px calc(28px + env(safe-area-inset-bottom));
+  display: grid; align-content: center; justify-items: center; gap: 18px; text-align: center;
+}
+.nx-404-brand { display: flex; align-items: center; gap: 10px; color: var(--nx-text); font-weight: 600; font-size: 18px; letter-spacing: -0.035em; }
+.nx-404-brand img { width: 30px; height: 30px; border-radius: 8px; }
+.nx-404-vignette { width: min(760px, 100%); border-radius: 20px; border: 1px solid var(--nx-line); background: rgba(10, 15, 24, 0.76); overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.9), 0 0 55px -35px rgba(var(--nx-info-rgb), 0.65); }
+.nx-404-vignette > div, .nx-404-vignette svg { display: block; width: 100%; height: auto; }
+.nx-404 h1 { margin: 8px 0 0; color: var(--nx-text); font-size: clamp(28px, 6vw, 44px); line-height: 1.08; letter-spacing: -0.035em; font-weight: 650; text-wrap: balance; }
+.nx-404 p { margin: 0; max-width: 520px; color: var(--nx-muted); font-size: 16px; text-wrap: pretty; }
+.nx-404 p b { color: var(--nx-text); font-weight: 600; }
+.nx-404-button { display: inline-flex; align-items: center; justify-content: center; height: 46px; padding: 0 22px; border-radius: 12px; border: 1px solid rgba(var(--nx-info-rgb), 0.4); background: rgba(var(--nx-info-rgb), 0.13); color: var(--nx-text); font: 600 15px/1 var(--nx-font); text-decoration: none; cursor: pointer; box-shadow: 0 0 28px -15px rgba(var(--nx-info-rgb), 0.85); transition: transform 0.12s ease, background-color 0.2s ease; }
+.nx-404-button:hover { background: rgba(var(--nx-info-rgb), 0.2); }
+.nx-404-button:active { transform: scale(0.97); }
+
+/* La viñeta original solo anima transform y opacity. */
+.nx-404 .v * { transform-box: fill-box; transform-origin: center; }
+.nx-404 .nube { animation: nx-404-bulle 0.5s ease-in-out infinite alternate; }
+.nx-404 .nube:nth-child(2n) { animation-duration: 0.38s; }
+.nx-404 .nube:nth-child(3n) { animation-duration: 0.44s; animation-delay: -0.2s; }
+@keyframes nx-404-bulle { to { transform: scale(1.06); } }
+.nx-404 .brazo { animation: nx-404-meneo 0.22s ease-in-out infinite alternate; }
+.nx-404 .brazo.b2 { animation-duration: 0.18s; animation-delay: -0.1s; }
+.nx-404 .brazo.b3 { animation-duration: 0.26s; animation-delay: -0.05s; }
+.nx-404 .brazo.b4 { animation-duration: 0.2s; animation-delay: -0.15s; }
+.nx-404 .brazo.b5 { animation-duration: 0.24s; }
+@keyframes nx-404-meneo { from { transform: rotate(-11deg); } to { transform: rotate(11deg); } }
+.nx-404 .cabeza { animation: nx-404-cabezazo 0.35s ease-in-out infinite alternate; }
+@keyframes nx-404-cabezazo { to { transform: translateY(-4px) rotate(-3deg); } }
+.nx-404 .vuela { animation: nx-404-vuela 1.6s cubic-bezier(0.3, 0.6, 0.4, 1) infinite; opacity: 0; }
+@keyframes nx-404-vuela { 0% { opacity: 0; transform: translate(0, 0) rotate(0); } 12% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(var(--r)); } }
+.nx-404 .gira { animation: nx-404-gira 1.1s linear infinite; }
+@keyframes nx-404-gira { to { transform: rotate(360deg); } }
+.nx-404 .silla { animation: nx-404-silla 2.4s linear infinite; }
+@keyframes nx-404-silla { 0%, 100% { transform: scaleX(1); } 25% { transform: scaleX(0.35); } 50% { transform: scaleX(-1); } 75% { transform: scaleX(-0.35); } }
+.nx-404 .gota { animation: nx-404-gota 0.7s ease-in infinite; }
+@keyframes nx-404-gota { 0% { opacity: 0; transform: translate(0, 0); } 20% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--dx), 18px); } }
+.nx-404 .led { animation: nx-404-led 0.5s steps(2) infinite; }
+.nx-404 .led:nth-of-type(2n) { animation-duration: 0.7s; }
+@keyframes nx-404-led { 50% { opacity: 0.25; } }
+.nx-404 .cursor { animation: nx-404-led 1s steps(2) infinite; }
+.nx-404 .estrella { animation: nx-404-brillo 2.6s ease-in-out infinite; }
+.nx-404 .estrella:nth-of-type(2n) { animation-delay: -1.3s; }
+@keyframes nx-404-brillo { 50% { opacity: 0.2; } }
+.nx-404 .raya { animation: nx-404-raya 0.45s ease-out infinite; }
+@keyframes nx-404-raya { from { opacity: 0; } 40% { opacity: 1; } to { opacity: 0; transform: translateX(var(--dx)); } }
+
+/* Lo que solo cabe en pantallas anchas o solo tiene sentido en el móvil */
+.nx-solo-movil { display: none !important; }
+@media (max-width: 1199px) {
+  .nx-solo-ancho { display: none !important; }
+  .nx-search { min-width: 0; }
+}
+
+/* --- Móvil ----------------------------------------------------------------- */
+@media (max-width: 767px) {
+  :root { --nx-toast-offset: calc(90px + env(safe-area-inset-bottom)); }
+  .nx-solo-movil { display: inline-grid !important; }
+  .nx-sidebar { display: none; }
+  .nx-dock { display: flex; }
+  .nx-topbar { height: 56px; padding: 0 8px 0 16px; gap: 2px; }
+  .nx-title { font-size: 18px; }
+  .nx-title-mark { display: block; width: 26px; height: 26px; border-radius: 8px; margin-right: 8px; flex: none; }
+  .nx-search, .nx-clock, .nx-vivo, .nx-solo-escritorio { display: none !important; }
+  .nx-chip { padding: 8px; height: 36px; }
+  .nx-chip .nx-chip-nombre { display: none; }
+  .nx-stage { padding: 16px 14px calc(var(--nx-dock-h) + 34px + env(safe-area-inset-bottom)); }
+  .nx-stage:has(> .nx-plano-vista) { padding-bottom: 0; }
+  .nx-plano-vista { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  .nx-plano-lateral-der { gap: 16px; }
+  .nx-plano-panel { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .nx-plano-resumen { gap: 6px; }
+  .nx-plano-resumen-item { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 9px 8px; }
+  .nx-plano-resumen-icono { grid-row: auto; }
+  .nx-plano-resumen-etiqueta { font-size: 10px; }
+  .nx-plano-resumen-valor { width: 100%; font-size: 11px; }
+  .nx-plano-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nx-plano-equipos { display: none; }
+  .nx-families { grid-template-columns: 1fr; gap: 12px; }
+  .nx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nx-modes { flex-wrap: nowrap; }
+  .nx-modes-label { display: none; }
+  .nx-mode { flex: 1 1 0; justify-content: center; height: 48px; padding: 0 8px; }
+  .nx-mode span { display: none; }
+  .nx-floating-notices { right: 12px; bottom: calc(86px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); }
+  .nx-countdown { flex-wrap: wrap; }
+  /* El fondo sigue viéndose, pero ninguna de las muchas superficies obliga a
+     Safari a volver a difuminar el canvas en cada fotograma. */
+  .nx-card, .nx-tile, .nx-family { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+}
+
+@media (hover: none) {
+  .nx-card, .nx-tile, .nx-family { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+}
+
+/* --- Menos movimiento: todo quieto ----------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html::before, .nx-topbar::after, .nx-vivo::after, .nx-arm-icon[data-armado="true"]::after, .nx-hero[data-estado="armado"] .nx-ring::after, .nx-stage > *, .nx-boot-marca img, .nx-404 .v * { animation: none !important; }
+  .nx-glyph-matrix { opacity: 0.26; }
+  .nx-404 .vuela, .nx-404 .gota { opacity: 1; }
+  .nx-sidebar { transition: none; }
+}
+
+/* --- Logo: el escudo neón de siempre, centrado en su caja ------------------ */
+@property --nx-ang { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.nx-logo { position: relative; display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px;
+  box-shadow: 0 0 24px -6px rgba(62, 224, 255, 0.7); }
+.nx-logo .nx-mark { width: 34px; height: 34px; border-radius: 11px; box-shadow: none; }
+.nx-logo::before { content: ""; position: absolute; inset: -3px; border-radius: 13px; padding: 1px; pointer-events: none;
+  background: conic-gradient(from var(--nx-ang), transparent 0 70%, #3ee0ff 85%, transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: nx-gira 6s linear infinite; }
+@keyframes nx-gira { to { --nx-ang: 360deg; } }
+.nx-title-mark { box-shadow: 0 0 18px -6px rgba(62, 224, 255, 0.75); }
+.nx-grad { background: linear-gradient(100deg, #fff 10%, #3ee0ff 55%, #8b7cff 95%); -webkit-background-clip: text; background-clip: text; color: transparent !important; }
+@media (prefers-reduced-motion: reduce) { .nx-logo::before { animation: none; } }
+
+/* --- Armada: ambiente agresivo ------------------------------------------------
+   Todo lo que era cian/violeta (líneas de las barras, activo del menú, brillo de
+   las tarjetas, bordes) se redefine a carmesí cambiando solo estas variables;
+   el foco y la red de nodos los tiñen nx.js y el degradado de html::before. */
+html[data-nx-armado="true"] {
+  --nx-info: #ff3355; --nx-info-rgb: 235, 30, 70;
+  --nx-violet: #b3123c; --nx-violet-rgb: 179, 18, 60;
+}
+html[data-nx-armado="true"] .nx-sidebar::after {
+  width: 2px; background: linear-gradient(180deg, transparent, rgba(255, 40, 80, 0.95) 25%, rgba(220, 20, 60, 0.7) 75%, transparent);
+  box-shadow: 0 0 16px 1px rgba(220, 20, 60, 0.75);
+}
+html[data-nx-armado="true"] .nx-topbar::after {
+  height: 2px; background: linear-gradient(90deg, transparent, rgba(255, 40, 80, 0.95), rgba(220, 20, 60, 0.75), transparent);
+  box-shadow: 0 0 16px 1px rgba(220, 20, 60, 0.75);
+}
+
+/* --- Plano: luces y aparatos en filas de una línea ---------------------------
+   Heredaban la baldosa vertical de 96 px del Resumen y, en la columna lateral,
+   quedaban enormes. Aquí van icono pequeño, nombre, estado e interruptor. */
+.nx-plano-tiles .nx-tile {
+  flex-direction: row; align-items: center; gap: 10px; min-height: 42px; padding: 6px 10px 6px 8px; border-radius: 11px;
+}
+.nx-plano-tiles .nx-tile-icon { width: 28px; height: 28px; border-radius: 8px; flex: none; }
+.nx-plano-tiles .nx-tile-icon svg { width: 15px; height: 15px; }
+.nx-plano-tiles .nx-tile-label { flex: 1; min-width: 0; font-size: 13px; -webkit-line-clamp: 1; }
+.nx-plano-tiles .nx-tile-meta { margin: 0; font-size: 11px; white-space: nowrap; }
+.nx-plano-tiles .nx-tile-ctrl { position: static; margin-left: 2px; }
+.nx-plano-tiles .nx-tile-switch { margin: 0; }
+/* En el móvil van dos por fila y no cabe el texto de estado: lo dice el interruptor */
+@media (max-width: 767px) { .nx-plano-tiles .nx-tile-meta { display: none; } }
+
+/* --- Menús, popovers y desplegables: fondo SÓLIDO ----------------------------
+   Los tres puntitos y los selectores dejaban ver lo de detrás (las filas, la
+   red de nodos): el CSS base de Radix los pinta translúcidos con desenfoque y
+   le gana al fondo que pone cada componente. Aquí se fuerza opaco. Los diálogos
+   quedan fuera a propósito: alguno (las cámaras) lleva su propio fondo. */
+.rt-PopoverContent, .rt-BaseMenuContent, .rt-DropdownMenuContent, .rt-ContextMenuContent,
+.rt-SelectContent, .rt-HoverCardContent {
+  position: relative; isolation: isolate; overflow: hidden;
+  background: #0b1019 !important;
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+}
+
+/* Matriz técnica dentro de las superficies opacas (la crea nx.js). La textura
+   vive dentro del menú: el fondo general nunca atraviesa el texto y los glifos
+   quedan por debajo del contenido interactivo. */
+.nx-glyph-matrix {
+  position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
+  display: block; pointer-events: none; opacity: 0.34;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.72) 58%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.72) 58%, transparent 100%);
+}
+.rt-PopoverContent > :not(.nx-glyph-matrix),
+.rt-BaseMenuContent > :not(.nx-glyph-matrix),
+.rt-DropdownMenuContent > :not(.nx-glyph-matrix),
+.rt-ContextMenuContent > :not(.nx-glyph-matrix),
+.rt-SelectContent > :not(.nx-glyph-matrix),
+.rt-HoverCardContent > :not(.nx-glyph-matrix) { position: relative; z-index: 1; }
+
+/* La misma señal visual recorre el cromo de navegación, más baja que en los
+   menús. Es un solo lienzo por barra: no multiplica animaciones por cada botón. */
+.nx-sidebar > .nx-glyph-navigation,
+.nx-topbar > .nx-glyph-navigation,
+.nx-dock > .nx-glyph-navigation { opacity: 0.24; }
+.nx-sidebar > :not(.nx-glyph-matrix),
+.nx-topbar > :not(.nx-glyph-matrix),
+.nx-dock > :not(.nx-glyph-matrix) { position: relative; z-index: 1; }
+.nx-topbar > .nx-glyph-navigation,
+.nx-dock > .nx-glyph-navigation {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-glyph-matrix { opacity: 0.26; }
+  .nx-glyph-navigation { opacity: 0.18; }
+}
+
+/* --- Háptico en iPhone: etiqueta transparente sobre el botón (ver nx.js) ------
+   El dedo toca la <label>, no el interruptor: el interruptor nativo se reserva
+   el arrastre y un scroll que empezara sobre una tarjeta no movía la página. */
+.nx-hap { position: absolute; inset: 0; margin: 0; z-index: 0; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; }
+.nx-hap > input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; margin: 0;
+  opacity: 0.01; pointer-events: none; }
+/* Los controles de mover/quitar del modo Personalizar quedan por encima de la etiqueta */
+.nx-tile-ctrl { z-index: 3; }
+
+/* ==========================================================================
+   KIOSCO · pantalla fija de una habitación (ui/pages/kiosco.py)
+   Tablet de pared: se ve a 1-2 m y se pulsa con objetivos grandes. Sin scroll
+   de la página; solo se desplaza la zona de controles.
+   ========================================================================== */
+.nx-kiosco, .nx-kiosco * { box-sizing: border-box; }
+.nx-kiosco {
+  position: fixed; inset: 0; display: flex; flex-direction: column; color: var(--nx-text);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation;
+  cursor: none; overscroll-behavior: none;
+  padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+}
+.nx-kiosco-cab { flex: none; display: flex; align-items: center; gap: 22px; padding: 16px 28px 8px; }
+.nx-kiosco-nombre { flex: 1; min-width: 0; margin: 0; font-size: 32px; font-weight: 600; letter-spacing: -0.03em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-kiosco-estado { display: inline-flex; align-items: center; gap: 9px; height: 42px; padding: 0 16px; border-radius: 999px;
+  border: 1px solid rgba(var(--nx-safe-rgb), 0.35); background: rgba(var(--nx-safe-rgb), 0.1); color: var(--nx-safe); font-size: 16px; font-weight: 600; }
+.nx-kiosco-estado[data-armado="true"] { border-color: rgba(var(--nx-guard-rgb), 0.5); background: rgba(var(--nx-guard-rgb), 0.14); color: var(--nx-guard); }
+.nx-kiosco-reloj { text-align: right; line-height: 1.1; }
+.nx-kiosco-hora { font-size: 38px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.nx-kiosco-fecha { font-size: 15px; color: var(--nx-muted); }
+
+.nx-kiosco-cuerpo { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 62fr) minmax(0, 38fr); gap: 22px; padding: 8px 24px 24px; }
+.nx-kiosco-controles { min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 24px; padding-right: 6px; }
+.nx-kiosco-h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 19px; font-weight: 600; letter-spacing: -0.015em; color: var(--nx-text); }
+.nx-kiosco-h2 svg { color: var(--nx-muted); }
+.nx-kiosco-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.nx-kiosco .nx-tile { min-height: 112px; padding: 14px; gap: 16px; border-radius: 16px; }
+.nx-kiosco .nx-tile-icon { width: 44px; height: 44px; border-radius: 13px; }
+.nx-kiosco .nx-tile-icon svg { width: 22px; height: 22px; }
+.nx-kiosco .nx-tile-label { font-size: 17px; -webkit-line-clamp: 2; }
+.nx-kiosco .nx-tile-meta { font-size: 13px; }
+.nx-kiosco .nx-tile-switch { width: 40px; height: 24px; }
+.nx-kiosco .nx-tile-switch::after { width: 20px; height: 20px; }
+.nx-kiosco .nx-tile[data-activo="true"] .nx-tile-switch::after { transform: translateX(16px); }
+.nx-kiosco-sensores { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+.nx-kiosco-sensor { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--nx-line); background: rgba(255, 255, 255, 0.03); color: var(--nx-text-2); font-size: 16px; }
+.nx-kiosco-sensor-nombre { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-kiosco-sensor-estado { font-weight: 600; color: var(--nx-safe); }
+.nx-kiosco-sensor[data-abierto="true"] { border-color: rgba(var(--nx-warn-rgb), 0.45); }
+.nx-kiosco-sensor[data-abierto="true"] .nx-kiosco-sensor-estado { color: var(--nx-warn); }
+.nx-kiosco-vacio { margin: 8px 0; color: var(--nx-muted); font-size: 17px; }
+
+.nx-kiosco-plano { align-self: start; padding: 14px; border-radius: 22px; border: 1px solid var(--nx-line); background: rgba(7, 11, 19, 0.5); box-shadow: 0 0 60px -30px rgba(var(--nx-info-rgb), 0.5); }
+.nx-kiosco-plano-cab { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.nx-kiosco-plano-cab .nx-kiosco-h2 { flex: 1; margin: 0; }
+.nx-kiosco-plano[data-colapsado="true"] .nx-plan-container { display: none; }
+.nx-kiosco-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 46px; padding: 0 16px; border-radius: 13px;
+  border: 1px solid var(--nx-line-2); background: rgba(255, 255, 255, 0.05); color: var(--nx-text); font: 600 15px/1 var(--nx-font); cursor: pointer;
+  transition: transform 0.12s var(--nx-ease), background-color 0.15s ease; }
+.nx-kiosco-btn:active { transform: scale(0.96); background: rgba(255, 255, 255, 0.1); }
+.nx-kiosco-solo-vertical { display: none; }
+
+/* Hojas a pantalla completa: mando, equipo, cámara y plano ampliado */
+.nx-kiosco-hoja { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(4, 6, 11, 0.97); padding: max(18px, env(safe-area-inset-top)) 26px max(18px, env(safe-area-inset-bottom)); }
+.nx-kiosco-hoja-cab { flex: none; display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.nx-kiosco-hoja-titulo { flex: 1; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.025em; }
+.nx-kiosco-cerrar { height: 56px; padding: 0 22px; font-size: 17px; }
+.nx-kiosco-hoja-cuerpo { flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; }
+.nx-kiosco-hoja-plano > * { width: min(100%, calc(100dvh - 130px)); }
+
+/* Vertical: el plano arriba y colapsable, y los controles debajo */
+@media (orientation: portrait) {
+  .nx-kiosco-cuerpo { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .nx-kiosco-plano { order: -1; }
+  .nx-kiosco-solo-vertical { display: inline-flex; }
+  .nx-kiosco-cab { padding: 14px 20px 6px; }
+  .nx-kiosco-nombre { font-size: 26px; }
+  .nx-kiosco-hora { font-size: 30px; }
+}
+/* Pantallas estrechas (móvil, para probar): sin el estado de la casa */
+@media (max-width: 600px) { .nx-kiosco-estado span { display: none; } .nx-kiosco-estado { padding: 0 12px; } }
+
+/* Reposo: casi negro, reloj grande, y un punto rojo tenue si la casa está armada */
+.nx-kiosco-reposo { position: fixed; inset: 0; z-index: 200; display: none; place-content: center; justify-items: center; gap: 10px; background: #000; }
+.nx-kiosco[data-reposo="1"] .nx-kiosco-reposo { display: grid; }
+.nx-kiosco-reposo-hora { font-size: clamp(90px, 20vw, 240px); font-weight: 300; letter-spacing: -0.04em; color: rgba(232, 238, 247, 0.5); }
+.nx-kiosco-reposo-fecha { font-size: clamp(18px, 3vw, 32px); color: rgba(138, 147, 163, 0.6); }
+.nx-kiosco-reposo-armado { display: none; width: 14px; height: 14px; margin-top: 18px; border-radius: 50%; background: rgba(var(--nx-guard-rgb), 0.6); box-shadow: 0 0 24px rgba(var(--nx-guard-rgb), 0.5); }
+.nx-kiosco-reposo-armado[data-armado="true"] { display: block; }
+
+/* --- Kiosco, rediseño: el plano manda y los controles son filas ---------------
+   Misma composición que la pestaña Plano del panel: el plano grande a la
+   izquierda con su marco de cristal, halo y viñeta, y a la derecha los controles
+   en paneles con filas de un solo renglón, fáciles de acertar con el dedo. */
+.nx-kiosco-cuerpo { grid-template-columns: minmax(0, 1fr) minmax(340px, 470px); gap: 26px; padding: 6px 26px 26px; }
+.nx-kiosco-plano { position: relative; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none;
+  align-self: center; justify-self: center; width: min(100%, calc(100dvh - 128px)); isolation: isolate; }
+.nx-kiosco-fondo { position: absolute; inset: -22px; z-index: -1; width: calc(100% + 44px); height: calc(100% + 44px); border-radius: 30px;
+  object-fit: cover; opacity: 0.3; filter: blur(30px) saturate(1.2); pointer-events: none; }
+.nx-kiosco-marco { position: relative; padding: 9px; border: 1px solid rgba(var(--nx-info-rgb), 0.3); border-radius: 22px; background: rgba(7, 11, 19, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 70px -30px rgba(0, 0, 0, 0.95), 0 0 64px -32px rgba(var(--nx-info-rgb), 0.95); }
+.nx-kiosco-marco::after { content: ""; position: absolute; inset: 9px; z-index: 2; pointer-events: none; border-radius: 16px;
+  box-shadow: inset 0 0 44px 10px rgba(4, 6, 11, 0.5); background: radial-gradient(ellipse at center, transparent 68%, rgba(4, 6, 11, 0.32) 100%); }
+.nx-kiosco-marco > .nx-plan-container { position: relative; z-index: 1; border-radius: 16px; }
+.nx-kiosco-ampliar { position: absolute; top: 18px; right: 18px; z-index: 3; width: 48px; height: 48px; padding: 0; background: rgba(7, 11, 19, 0.7); }
+.nx-kiosco-plano[data-colapsado="true"] .nx-kiosco-marco { display: none; }
+
+.nx-kiosco-controles { gap: 14px; padding: 0 4px 4px 0; }
+.nx-kiosco-seccion { padding: 14px; border: 1px solid var(--nx-line); border-radius: 18px; background: rgba(7, 11, 19, 0.58); box-shadow: var(--nx-shadow); }
+.nx-kiosco-h2 { margin: 0 0 10px 2px; font-size: 16px; }
+.nx-kiosco-tiles { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.nx-kiosco .nx-tile { flex-direction: row; align-items: center; gap: 14px; min-height: 64px; padding: 8px 14px 8px 10px; border-radius: 15px; }
+.nx-kiosco .nx-tile-icon { width: 42px; height: 42px; border-radius: 12px; flex: none; }
+.nx-kiosco .nx-tile-label { flex: 1; min-width: 0; font-size: 18px; -webkit-line-clamp: 1; }
+.nx-kiosco .nx-tile-meta { margin: 0; font-size: 13px; white-space: nowrap; }
+.nx-kiosco .nx-tile-ctrl { position: static; margin-left: 2px; }
+.nx-kiosco .nx-tile-switch { margin: 0; }
+
+@media (orientation: portrait) {
+  .nx-kiosco-cuerpo { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); padding: 4px 18px 18px; }
+  .nx-kiosco-plano { width: min(100%, 52dvh); }
+}
+
+/* --- Kiosco, centro de control -------------------------------------------------
+   Prioridad al plano y a las cámaras: el plano grande a la izquierda; a la
+   derecha, el mural (si está desplegado) con celdas 16:9 justas, sin bandas
+   negras, y debajo los controles en baldosas compactas de icono y nombre corto. */
+.nx-kiosco-cab { padding: 12px 28px 4px; gap: 12px; }
+.nx-kiosco-nombre { font-size: 28px; }
+.nx-kiosco-acciones { margin-left: auto; display: flex; gap: 10px; }
+.nx-kiosco-alterna[data-activo="true"] { background: rgba(var(--nx-info-rgb), 0.24); border-color: rgba(var(--nx-info-rgb), 0.65); color: #fff; }
+.nx-kiosco-sirena[data-activo="true"] { background: rgba(var(--nx-guard-rgb), 0.2); border-color: rgba(var(--nx-guard-rgb), 0.6); }
+.nx-kiosco[data-audio="bloqueado"] .nx-kiosco-sirena::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--nx-warn); box-shadow: 0 0 10px var(--nx-warn); }
+
+.nx-kiosco-cuerpo { grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); gap: 22px; padding: 6px 26px 22px; }
+.nx-kiosco-plano { width: min(100%, calc(100dvh - 120px)); align-self: center; justify-self: center; }
+.nx-kiosco-der { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.nx-kiosco-controles { flex: 1 1 0; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); grid-auto-rows: min-content;
+  align-content: start; gap: 8px; padding: 0 2px 2px 0; }
+.nx-kiosco-controles .nx-kiosco-seccion, .nx-kiosco-controles .nx-kiosco-tiles { display: contents; }
+.nx-kiosco-controles .nx-kiosco-h2 { display: none; }
+.nx-kiosco-controles .nx-kiosco-vacio { grid-column: 1 / -1; }
+.nx-kiosco-controles .nx-tile { min-height: 58px; padding: 7px 10px; gap: 10px; border-radius: 14px; }
+.nx-kiosco-controles .nx-tile-icon { width: 34px; height: 34px; border-radius: 10px; }
+.nx-kiosco-controles .nx-tile-icon svg { width: 18px; height: 18px; }
+.nx-kiosco-controles .nx-tile-label { font-size: 15px; line-height: 1.15; -webkit-line-clamp: 2; }
+.nx-kiosco-controles .nx-tile-ctrl { display: none; }
+
+.nx-mural-panel { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid rgba(var(--nx-info-rgb), 0.3); border-radius: 18px;
+  background: rgba(7, 11, 19, 0.62); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 70px -30px rgba(0, 0, 0, 0.95), 0 0 64px -34px rgba(var(--nx-info-rgb), 0.9); }
+.nx-mural-cab { flex: none; display: flex; align-items: center; gap: 10px; }
+.nx-mural-cab .nx-kiosco-h2 { flex: 1; margin: 0 0 0 4px; }
+.nx-mural-repartos { display: flex; gap: 6px; }
+.nx-mural-reparto { height: 40px; width: 44px; padding: 0; font-size: 18px; }
+.nx-mural-reparto[data-activo="true"] { background: rgba(var(--nx-info-rgb), 0.24); border-color: rgba(var(--nx-info-rgb), 0.65); color: #fff; }
+.nx-mural { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.nx-mural[data-reparto="1"] { grid-template-columns: minmax(0, 1fr); }
+.nx-mural[data-reparto="6"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.nx-mural[data-reparto="8"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.nx-mural-celda { position: relative; min-width: 0; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; border: 1px solid var(--nx-line-2); }
+.nx-mural-celda iframe { display: block; width: 100%; height: 100%; border: 0; }
+.nx-mural-espera { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--nx-muted); font-size: 15px; text-align: center; padding: 8px; }
+.nx-mural-vacia { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--nx-line-2);
+  background: rgba(255, 255, 255, 0.03); color: var(--nx-muted); font: 600 15px/1.2 var(--nx-font); cursor: pointer; }
+.nx-mural-vacia:active { background: rgba(255, 255, 255, 0.08); }
+.nx-mural-barra { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 4px; padding: 5px 6px; pointer-events: none;
+  background: linear-gradient(rgba(0, 0, 0, 0.72), transparent); color: #fff; font-weight: 600; font-size: 14px; }
+.nx-mural-barra span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-mural-barra button { pointer-events: auto; width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 11px;
+  background: rgba(7, 11, 19, 0.6); color: #fff; cursor: pointer; }
+.nx-mural[data-reparto="6"] .nx-mural-barra button, .nx-mural[data-reparto="8"] .nx-mural-barra button { width: 34px; height: 34px; }
+.nx-mural-suena { display: none; }
+.nx-mural-celda[data-sonido="1"] .nx-mural-suena { display: block; }
+.nx-mural-celda[data-sonido="1"] .nx-mural-mudo { display: none; }
+.nx-mural-lista { padding: 4px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+
+.nx-sirena-panel { width: min(520px, 100%); display: flex; flex-direction: column; gap: 12px; }
+.nx-kiosco-nota { margin: 0; color: var(--nx-muted); font-size: 15px; }
+.nx-kiosco-h3 { margin: 10px 0 0 2px; font-size: 16px; font-weight: 600; color: var(--nx-text-2); }
+.nx-opciones { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.nx-opcion { height: 56px; padding: 0 6px; }
+.nx-opcion[data-activo="true"] { background: rgba(var(--nx-info-rgb), 0.24); border-color: rgba(var(--nx-info-rgb), 0.65); color: #fff; }
+.nx-sirena-probar { height: 56px; margin-top: 6px; }
+.nx-sirena-panel [data-solo-bloqueado] { display: none; }
+.nx-kiosco[data-audio="bloqueado"] .nx-sirena-panel [data-solo-bloqueado] { display: block; color: var(--nx-warn); }
+.nx-kiosco[data-reposo="1"] .nx-mural-panel { display: none; }
+
+@media (orientation: portrait) {
+  .nx-kiosco-cuerpo { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); padding: 4px 18px 18px; }
+  .nx-kiosco-plano { width: min(100%, 36dvh); }
+  .nx-mural[data-reparto="2"] { grid-template-columns: minmax(0, 1fr); }
+  .nx-mural[data-reparto="6"], .nx-mural[data-reparto="8"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Personalización por estancia (pestaña «Estancias») */
+.nx-kiosco-cuerpo[data-sin-plano="true"] { grid-template-columns: minmax(0, 1fr); }
+.nx-kiosco-controles[data-baldosas="compactas"] { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+.nx-kiosco-controles[data-baldosas="compactas"] .nx-tile { min-height: 48px; padding: 5px 8px; }
+.nx-kiosco-controles[data-baldosas="compactas"] .nx-tile-label { font-size: 13px; }
+.nx-kiosco-controles[data-baldosas="grandes"] { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.nx-kiosco-controles[data-baldosas="grandes"] .nx-tile { min-height: 88px; padding: 12px 16px; }
+.nx-kiosco-controles[data-baldosas="grandes"] .nx-tile-icon { width: 46px; height: 46px; }
+.nx-kiosco-controles[data-baldosas="grandes"] .nx-tile-label { font-size: 19px; }
+
+/* --- Móvil: focos en las cuatro esquinas y filos de luz ----------------------
+   En la pantalla pequeña el ambiente se perdía. Dos focos fuertes en diagonal
+   (arriba-izquierda cian, abajo-derecha violeta) y dos foquitos muy tenues en
+   las otras esquinas. Cada foco "enciende" los bordes que tiene al lado: la
+   divisoria de arriba y un filo a la izquierda, dos filos abajo y a la derecha,
+   y apenas un rastro donde caen los foquitos. Armada, todo vira a carmesí solo
+   porque los colores salen de --nx-info-rgb / --nx-violet-rgb.
+   html::before mide un 150 % (inset: -25 %): 16 % / 86 % cae en la esquina de
+   la pantalla, igual que el 84 % / 88 % del foco de abajo. */
+@media (max-width: 767px) {
+  html::before {
+    --nx-a2: rgba(139, 124, 255, 0.56);
+    background:
+      radial-gradient(40% 34% at 20% 18%, var(--nx-a1), transparent 70%),
+      radial-gradient(38% 33% at 84% 88%, var(--nx-a2), transparent 72%),
+      radial-gradient(26% 22% at 70% 12%, var(--nx-a3), transparent 70%),
+      radial-gradient(24% 17% at 84% 14%, rgba(var(--nx-violet-rgb), 0.19), transparent 70%),
+      radial-gradient(24% 17% at 16% 86%, rgba(var(--nx-info-rgb), 0.17), transparent 70%);
+  }
+  html[data-nx-armado="true"]::before { --nx-a2: rgba(190, 18, 58, 0.43); }
+
+  /* Filos: fijos, detrás del contenido (z-index -1, como la aurora), en los
+     bordes de la pantalla, que las tarjetas dejan libres. El de la izquierda y
+     el de la derecha arrancan bajo la barra (56 px) para empalmar con su
+     divisoria. Cada filo lleva al lado una franja ancha y muy tenue que hace
+     de resplandor sin box-shadow. */
+  html::after {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      /* izquierda: fuerte arriba (foco cian), un rastro abajo (foquito) */
+      linear-gradient(180deg, rgba(var(--nx-info-rgb), 0.7), rgba(var(--nx-info-rgb), 0.22) 32%, transparent 58%,
+        transparent 78%, rgba(var(--nx-info-rgb), 0.12)) left 0 top 56px / 1px calc(100% - 56px) no-repeat,
+      linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.14), transparent) left 0 top 56px / 8px 34% no-repeat,
+      /* derecha: un rastro arriba (foquito), fuerte abajo (foco violeta) */
+      linear-gradient(180deg, rgba(var(--nx-violet-rgb), 0.12), transparent 22%, transparent 42%,
+        rgba(var(--nx-violet-rgb), 0.24) 68%, rgba(var(--nx-violet-rgb), 0.75)) right 0 top 56px / 1px calc(100% - 56px) no-repeat,
+      linear-gradient(270deg, rgba(var(--nx-violet-rgb), 0.16), transparent) right 0 bottom 0 / 8px 36% no-repeat,
+      /* abajo: un rastro a la izquierda (foquito), fuerte a la derecha (foco violeta) */
+      linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.12), transparent 22%, transparent 42%,
+        rgba(var(--nx-violet-rgb), 0.24) 68%, rgba(var(--nx-violet-rgb), 0.75)) left 0 bottom 0 / 100% 1px no-repeat,
+      linear-gradient(0deg, rgba(var(--nx-violet-rgb), 0.16), transparent) right 0 bottom 0 / 45% 8px no-repeat;
+  }
+
+  /* Divisoria de arriba realzada: fuerte a la izquierda, donde empalma con el
+     filo y cae el foco cian, y apenas un rastro violeta a la derecha (foquito).
+     Respira menos (nunca baja del 70 %). Armada manda su regla roja, que es
+     más específica. */
+  .nx-topbar::after {
+    background: linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.95), rgba(var(--nx-info-rgb), 0.6) 30%,
+      rgba(var(--nx-violet-rgb), 0.35) 65%, rgba(var(--nx-violet-rgb), 0.14));
+    box-shadow: 0 0 10px rgba(var(--nx-info-rgb), 0.35);
+    animation-name: nx-respira-filo-movil;
+  }
+  @keyframes nx-respira-filo-movil { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+}

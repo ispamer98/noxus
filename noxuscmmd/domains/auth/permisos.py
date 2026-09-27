@@ -6,6 +6,8 @@ conectado, esté o no el botón pintado en su pantalla. Por eso la comprobación
 de verdad va aquí dentro, llamada desde el propio manejador, y lo de la
 interfaz (ui/) es solo para no enseñar lo que no se va a poder usar.
 """
+import reflex as rx
+
 from . import store
 
 # ── Capacidades ──────────────────────────────────────────────────────────
@@ -14,6 +16,7 @@ LUCES = "luces"        # encender y apagar luces
 PUERTAS = "puertas"    # abrir accesos
 ARMAR = "armar"        # armar y desarmar, y tocar los grupos
 EQUIPOS = "equipos"    # encender/apagar ordenadores, mandos
+MANDOS = "mandos"      # pulsar mandos IR/RF o por red
 CAMARAS = "camaras"    # VER imagen: mural, CCTV, marcadores de cámara del plano
 AVISAR = "avisar"      # mandar un aviso a los móviles de la casa
 AJUSTES = "ajustes"    # configuración, dispositivos, invitaciones
@@ -37,9 +40,10 @@ AJUSTES = "ajustes"    # configuración, dispositivos, invitaciones
 #             administrador, no un aparato que espera respuesta, así que deja de
 #             salir en la lista de los que piden acceso.
 _POR_ROL = {
-    store.ADMIN: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS, AVISAR, AJUSTES},
-    store.FAMILIA: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, CAMARAS, AVISAR},
-    store.INVITADO: {VER, LUCES, EQUIPOS},
+    store.ADMIN: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, MANDOS, CAMARAS, AVISAR, AJUSTES},
+    store.FAMILIA: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, MANDOS, CAMARAS, AVISAR},
+    store.INVITADO: {VER, LUCES, EQUIPOS, MANDOS},
+    store.KIOSCO: {VER, LUCES, PUERTAS, EQUIPOS, MANDOS},
     store.PENDIENTE: set(),
     store.BLOQUEADO: set(),
 }
@@ -50,6 +54,7 @@ _NEGATIVA = {
     ARMAR: "Este dispositivo no puede armar ni desarmar la casa.",
     PUERTAS: "Este dispositivo no puede abrir accesos.",
     EQUIPOS: "Este dispositivo no puede encender ni apagar equipos.",
+    MANDOS: "Este dispositivo no puede usar mandos.",
     AJUSTES: "Solo un administrador puede cambiar la configuración.",
     LUCES: "Este dispositivo no puede tocar las luces.",
     CAMARAS: "Este dispositivo no tiene acceso a las cámaras.",
@@ -69,7 +74,26 @@ def puede_rol(rol: str, capacidad: str) -> bool:
 def puede(id_dispositivo: str, capacidad: str) -> bool:
     """La pregunta completa: mira el rol vigente del aparato, ya con su
     caducidad contada."""
-    return puede_rol(store.rol_de(id_dispositivo), capacidad)
+    rol = store.rol_de(id_dispositivo)
+    if rol == store.KIOSCO:
+        # Una ficha a medio configurar no abre ni el kiosco. Cámaras es una
+        # concesión separada y explícita porque muestra el interior de casa.
+        if not store.estancia_kiosco(id_dispositivo):
+            return False
+        if capacidad == CAMARAS:
+            return store.kiosco_puede_camaras(id_dispositivo)
+    return puede_rol(rol, capacidad)
+
+
+def entidad_permitida(id_dispositivo: str, referencia: str) -> bool:
+    """Acota las acciones de una tablet a los miembros de su estancia."""
+    if store.rol_de(id_dispositivo) != store.KIOSCO:
+        return True
+    from ..nodes import store as nodes_store
+
+    estancia = store.estancia_kiosco(id_dispositivo)
+    return bool(estancia and nodes_store.referencia_en_estancia(
+        estancia, referencia))
 
 
 def motivo(capacidad: str) -> str:
@@ -120,7 +144,7 @@ async def denegar(state, capacidad: str):
     except Exception:
         # Sin poder resolver quién es, no se deja pasar. Fallar hacia el lado
         # cerrado: esto gobierna cerraduras.
-        return rx.toast.error(motivo(capacidad), position="top-center")
+        return rx.toast.error(motivo(capacidad))
 
     if auth._tiene(capacidad):
         return None
@@ -144,4 +168,20 @@ async def denegar(state, capacidad: str):
         logs.ACCESOS, "ACCESO_DENEGADO", quien,
         f"intentó «{capacidad}» siendo {su_rol}{donde}",
     )
-    return rx.toast.error(motivo(capacidad), position="top-center")
+    return rx.toast.error(motivo(capacidad))
+
+
+async def denegar_entidad(state, capacidad: str, referencia: str):
+    """Permiso de capacidad más el límite físico de una tablet de estancia."""
+    if (no := await denegar(state, capacidad)):
+        return no
+    from .state import AuthState
+
+    try:
+        auth = await state.get_state(AuthState)
+        permitido = entidad_permitida(auth._id, referencia)
+    except Exception:
+        permitido = False
+    if permitido:
+        return None
+    return rx.toast.error("Este control no pertenece a esta habitación.")

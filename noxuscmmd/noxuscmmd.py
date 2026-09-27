@@ -24,24 +24,32 @@ rompería enlaces ya guardados (el acceso directo del móvil apunta a `/panel`,
 ver ui/pages/dashboard.py y el manifest en assets/).
 """
 import reflex as rx
+from reflex import constants
 from starlette.applications import Starlette
 
 from .domains.cameras import endpoint as fotograma_endpoint
 from .domains.cameras import fotogramas
 from .domains.devices import alexa_cloud_endpoint, alexa_cloud_sync, hue, voz
 from .domains.notifications import endpoint as aviso_endpoint
+from .domains.integrations import endpoint as integraciones_endpoint
 from .domains.automations import engine as automations_engine
 from .domains.infra import backups
 from .domains.infra import metricas
 from .domains.infra import ping_motor
 from .core.ssh_manager import SSHManager
+from .core import cronometro
+from .core.portero import PorteroDeEventos
 from .domains.nodes import planos
 from .domains.security import logs_store
 from .domains.security import presencia_motor
 from .domains.cameras import movimiento_motor
 from .domains.security import watcher
+from .ui.dashboard.state import DashboardState
 from .ui.pages.upload import upload_page
-from .ui.pages.dashboard import EVENTOS_DE_ENTRADA, dashboard_page
+from .ui.pages.kiosco import kiosco_page
+from .domains.nodes.kiosco_state import KioscoState
+from .ui.pages.dashboard import dashboard_page
+from .ui.pages.not_found import not_found_page
 
 STYLE = {
     "@keyframes pulse": {
@@ -120,27 +128,60 @@ STYLE = {
 #   - Los fotogramas que guarda la alarma: no se sirven como estático porque son
 #     imágenes del interior de la casa y hay que comprobar la sesión (ver
 #     domains/cameras/endpoint.py).
+#   - Los avisos que manda n8n al cerrar el círculo de un workflow: quien
+#     llama es un servicio, no un navegador, así que no hay cookie con la
+#     que identificarlo (ver domains/integrations/endpoint.py).
 #
 # Las dos entran por ^/api/.*$, que es la regla que el túnel ya manda al :8000.
 _api = Starlette(routes=[*aviso_endpoint.RUTAS, *fotograma_endpoint.RUTAS,
                          *planos.RUTAS,
                          *alexa_cloud_endpoint.RUTAS,
-                         *voz.RUTAS])
+                         *voz.RUTAS,
+                         *integraciones_endpoint.RUTAS])
 
 app = rx.App(
     api_transformer=_api,
-    theme=rx.theme(appearance="dark", accent_color="blue"),
+    theme=rx.theme(appearance="dark", accent_color="blue", gray_color="slate", radius="large"),
+    # Un solo origen de verdad para todos los toast. El offset usa una variable
+    # responsive de nx.css para quedar por encima de la isla móvil.
+    toaster=rx.toast.provider(
+        position="bottom-right",
+        offset="var(--nx-toast-offset)",
+        close_button=True,
+        pause_when_page_is_hidden=True,
+    ),
     style=STYLE,   # <--- Aquí inyectamos la animación
     head_components=[
+        # Sustituye a la de Reflex (que solo la pone si no hay otra, ver
+        # reflex/compiler/utils.py). viewport-fit=cover es lo que hace que
+        # env(safe-area-inset-bottom) valga algo en el iPhone: sin él vale 0 y
+        # la barra inferior no sabe dónde acaba la raya de inicio.
+        rx.el.meta(name="viewport",
+                   content="width=device-width, initial-scale=1, viewport-fit=cover"),
         rx.el.link(rel="manifest", href="/manifest.json"),
+        # Favicon: el SVG para quien lo entiende (Safari desde la 26) y el .ico
+        # con 16, 32 y 48 px para el resto. El sizes="32x32" del .ico es para
+        # que los navegadores que entienden los dos prefieran el SVG.
+        # Nombres propios con ?v=: el favicon viejo se quedaba en la caché del
+        # navegador y del iPhone bajo el nombre antiguo. /favicon.ico se
+        # conserva (con el logo nuevo) porque los navegadores lo piden solos.
+        rx.el.link(rel="icon", href="/noxus-favicon.ico?v=2", sizes="32x32"),
+        rx.el.link(rel="icon", href="/noxus-favicon.svg?v=2", type="image/svg+xml"),
         # iOS no lee los iconos del manifest: para el acceso directo de la
         # pantalla de inicio mira SOLO esto. Sin ello, el iPhone se inventa el
-        # icono con una captura de la página.
-        rx.el.link(rel="apple-touch-icon", href="/icono-192.png"),
+        # icono con una captura de la página. 180 px y a sangre: las esquinas
+        # las redondea el propio iOS.
+        rx.el.link(rel="apple-touch-icon", href="/noxus-apple-touch-icon.png?v=2"),
         # Color de la barra del navegador y de la de estado en la aplicación
         # instalada. Es BG_APP (ui/dashboard/theme.py): sin esto el móvil pinta
         # una franja blanca encima del panel, que es oscuro entero.
-        rx.el.meta(name="theme-color", content="#05070a"),
+        rx.el.meta(name="theme-color", content="#04060b"),
+        # Sistema visual «Obsidiana» (assets/nx.css): fuentes propias, carcasa,
+        # cristal y fondo vivo. El ?v= se sube al cambiar el fichero, para
+        # que ningun navegador se quede con el viejo en cache.
+        rx.el.link(rel="preload", href="/fonts/geist.woff2", custom_attrs={"as": "font"},
+                   type="font/woff2", cross_origin="anonymous"),
+        rx.el.link(rel="stylesheet", href="/nx.css?v=20260928c"),
         rx.el.meta(name="mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-status-bar-style", content="black"),
@@ -152,6 +193,10 @@ app = rx.App(
     admin_dash=False,
 )
 
+# El portero de eventos (core/portero.py): filtra en el servidor lo que puede pedir
+# cada navegador, sin depender de que cada manejador se acuerde de comprobarlo.
+app.add_middleware(PorteroDeEventos())
+
 # Tareas del CICLO DE VIDA del proceso: arrancan con la aplicación y siguen
 # aunque no haya ninguna pestaña abierta. Aquí solo va lo que no puede depender
 # de que alguien entre en la web — hasta ahora el vigilante de la alarma se
@@ -160,6 +205,10 @@ app = rx.App(
 
 # El histórico de eventos, antes de nada: la copia de seguridad de arranque va
 # unas líneas más abajo y no puede copiar un fichero que todavía no existe.
+# Cronómetro de eventos lentos (core/cronometro.py): deja en el log los que
+# pasan de 120 ms, para medir en vez de adivinar dónde se va el tiempo.
+cronometro.activar()
+
 logs_store.preparar()
 
 # Y de paso se tira lo caducado. Al arrancar y no con un temporizador porque no
@@ -214,7 +263,7 @@ app.register_lifespan_task(presencia_motor.run_forever)
 # apagada y solo mira las cámaras que se marquen (ver cameras/movimiento_motor).
 app.register_lifespan_task(movimiento_motor.run_forever)
 
-# Los eventos de entrada van como on_load y NO como on_mount del componente.
+# El evento de entrada va como on_load y NO como on_mount del componente.
 # Es a propósito y es justo al revés de lo que ponía aquí antes: Reflex reenvía
 # los on_load en CADA (re)conexión del websocket, y eso es lo que hace que una
 # pestaña que vuelve de segundo plano recupere sus bucles de refresco sin
@@ -225,8 +274,23 @@ app.register_lifespan_task(movimiento_motor.run_forever)
 # Lo que antes lo desaconsejaba —que se arrancaran bucles de más, uno por
 # conexión— ya no puede pasar: los de sesión se relevan entre ellos (ver
 # core/sesiones.py) y los de proceso siguen protegidos por su flag _STARTED.
+# DashboardState.entrar ejecuta la lista documentada en el servidor para que
+# esos arranques no ocupen decenas de viajes secuenciales por el websocket.
 app.add_page(dashboard_page, route="/", title="Noxus Control Center",
-             on_load=EVENTOS_DE_ENTRADA)
+             on_load=DashboardState.entrar)
 app.add_page(upload_page, route="/upload")
 app.add_page(dashboard_page, route="/panel", title="Noxus Control Center",
-             on_load=EVENTOS_DE_ENTRADA)
+             on_load=DashboardState.entrar)
+app.add_page(
+    not_found_page,
+    route=constants.Page404.SLUG,
+    title="Noxus · página no encontrada",
+    meta=[{"name": "robots", "content": "noindex"}],
+)
+
+# La pantalla fija de una habitación (tablet de pared). Ruta dinámica: el id de la
+# estancia va en la URL, pero un dispositivo con el rol `kiosco` solo puede abrir
+# la SUYA (KioscoState.entrar lo comprueba y lo redirige). Va por el :3000 como
+# cualquier página: no está bajo /api, así que no hay que tocar el router del VPS.
+app.add_page(kiosco_page, route="/estancia/[eid]", title="Noxus · Habitación",
+             on_load=KioscoState.entrar)

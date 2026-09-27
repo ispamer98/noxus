@@ -1,0 +1,267 @@
+{
+  "name": "Noxus · Luces",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "noxus-eventos",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "noxus-webhook-eventos",
+      "name": "Evento desde Noxus",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -260,
+        300
+      ],
+      "webhookId": "84aba90f-ad25-518a-a4a1-85d75c4c02b9",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "noxusTokenCred001",
+          "name": "Noxus token"
+        }
+      },
+      "notes": "Aqui entra TODO lo que se apunta en el registro de Noxus:\nluces, puertas, alarma, equipos... El filtro es el nodo siguiente."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "es-de-luces",
+              "leftValue": "={{ $json.body.categoria }}",
+              "rightValue": "luces",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "es-encender-o-apagar",
+              "leftValue": "={{ ['LUZ_ENCENDIDA', 'LUZ_APAGADA'].includes($json.body.accion) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "noxus-filtro-luces",
+      "name": "¿Es una orden de luz?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -20,
+        300
+      ],
+      "notes": "Solo pasan encendidos y apagados de luz.\nLUZ_CREADA / LUZ_EDITADA / LUZ_ERROR se quedan fuera a proposito."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Registro del evento + texto del aviso.\n//\n// Lo que llega de Noxus ya viene con la fecha y la hora LOCALES de la casa\n// resueltas, asi que aqui no hay que pelearse con zonas horarias.\n//\n// El objeto `registro` es la fila del evento: si manana quieres volcarla a\n// Google Sheets, a Postgres o a un Airtable, enchufa ese nodo detras de este\n// y mapea `registro` — no hace falta tocar nada mas.\n\nconst salida = [];\n\nfor (const item of $input.all()) {\n  const e = item.json.body ?? item.json;\n\n  const encendida = e.accion === 'LUZ_ENCENDIDA';\n  const verbo = encendida ? 'encendido' : 'apagado';\n\n  // ── El registro del evento ──────────────────────────────────────────\n  const registro = {\n    evento_id: e.evento_id,\n    fecha: e.fecha,\n    hora: e.hora,\n    timestamp: e.timestamp,\n    usuario: e.usuario,\n    accion: e.accion,\n    accion_legible: e.accion_legible,\n    elemento: e.elemento,\n    entidad: e.entidad,\n    categoria: e.categoria,\n    origen: e.origen,\n  };\n\n  // ── ¿Hay un equipo al que avisar? ───────────────────────────────────\n  // \"sistema\" es lo que dispara el propio panel (una automatizacion, un\n  // sensor); \"desconocido\", una pestana sin avisos activados. Ninguno de los\n  // dos es un movil al que se le pueda mandar nada.\n  // Sin los segundos: en un aviso del movil «a las 21:00» se lee, y\n  // «a las 21:00:39» solo hace ruido.\n  const hhmm = (e.hora || '').slice(0, 5);\n\n  const usuario = (e.usuario || '').trim();\n  const avisar = usuario !== '' &&\n                 !['sistema', 'desconocido'].includes(usuario.toLowerCase());\n\n  salida.push({\n    json: {\n      registro,\n      avisar,\n      destino: usuario,\n      titulo: `Luz ${encendida ? 'encendida' : 'apagada'}`,\n      mensaje: `Has ${verbo} «${e.elemento}» a las ${hhmm}.`,\n      // Un tag por luz: encender y apagar la misma lampara varias veces\n      // refresca el mismo aviso en el movil en vez de apilar diez.\n      tag: `n8n:luz:${e.entidad}`,\n      url: '/panel?vista=logs',\n    },\n  });\n}\n\nreturn salida;"
+      },
+      "id": "noxus-registrar",
+      "name": "Registrar el evento",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ],
+      "notes": "Deja el evento normalizado en `registro`.\nPara guardarlo fuera de n8n, enchufa aqui detras Sheets / Postgres / Airtable."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "hay-equipo",
+              "leftValue": "={{ $json.avisar }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "noxus-hay-equipo",
+      "name": "¿Hay equipo al que avisar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        500,
+        200
+      ],
+      "notes": "Si la luz la movio una automatizacion (usuario \"sistema\") no hay\nningun movil detras al que avisar: el evento queda registrado y ya."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://100.98.98.1:8000/api/integraciones/aviso",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ destino: $json.destino, titulo: $json.titulo, mensaje: $json.mensaje, tag: $json.tag, url: $json.url }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "noxus-avisar",
+      "name": "Avisar al equipo en Noxus",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "noxusTokenCred001",
+          "name": "Noxus token"
+        }
+      },
+      "notes": "100.98.98.1 es la IP Tailscale del servidor, fija y alcanzable desde\nel contenedor. Valen igual 172.18.0.1 y 192.168.1.x."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sin-equipo",
+              "name": "resultado",
+              "value": "=Evento registrado. Lo movio «{{ $json.destino || 'sistema' }}», que no es un equipo al que avisar.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "noxus-sin-equipo",
+      "name": "Sin equipo al que avisar",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "no-es-luz",
+              "name": "resultado",
+              "value": "=Evento «{{ $json.body.accion }}» ({{ $json.body.categoria }}) recibido, pero este workflow solo trata luces.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "noxus-ignorado",
+      "name": "No es una luz",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Evento desde Noxus": {
+      "main": [
+        [
+          {
+            "node": "¿Es una orden de luz?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es una orden de luz?": {
+      "main": [
+        [
+          {
+            "node": "Registrar el evento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No es una luz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar el evento": {
+      "main": [
+        [
+          {
+            "node": "¿Hay equipo al que avisar?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay equipo al que avisar?": {
+      "main": [
+        [
+          {
+            "node": "Avisar al equipo en Noxus",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sin equipo al que avisar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "noxus-luces-001",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

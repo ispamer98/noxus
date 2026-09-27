@@ -226,7 +226,7 @@ def comandos() -> list[dict]:
 CAPACIDAD = {
     "light.set": permisos.LUCES,
     "door.pulse": permisos.PUERTAS,
-    "ir_button.press": permisos.EQUIPOS,
+    "ir_button.press": permisos.MANDOS,
     "host.wol": permisos.EQUIPOS,
     "host.action": permisos.EQUIPOS,
     "host_button.run": permisos.EQUIPOS,

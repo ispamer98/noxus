@@ -11,7 +11,6 @@ Dos ideas que conviene tener delante al configurarlos:
 import reflex as rx
 
 from .. import theme
-from ..state import DashboardState
 from ....domains.security.retardos_state import RetardosState
 
 
@@ -53,7 +52,7 @@ def _fila_grupo(g: rx.Var) -> rx.Component:
             spacing="1", align="center",
         ),
         align="center", spacing="3", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="12px 14px",
     )
 
@@ -73,7 +72,7 @@ def _fila_elemento(e: rx.Var) -> rx.Component:
             spacing="1", align="center",
         ),
         align="center", spacing="3", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="12px 14px",
     )
 
@@ -84,9 +83,6 @@ def retardos_view() -> rx.Component:
             rx.icon("timer", size=22, color=theme.ACCENT),
             rx.heading("Retardos", size="6", color=theme.TEXT),
             rx.spacer(),
-            rx.button(rx.icon("arrow-left", size=15), "Ajustes", size="2",
-                      variant="soft",
-                      on_click=DashboardState.set_view("settings_hub")),
             align="center", spacing="2", width="100%", wrap="wrap",
         ),
         rx.text(
@@ -103,7 +99,7 @@ def retardos_view() -> rx.Component:
                 size="1", color=theme.MUTED, style={"line-height": "1.5"},
             ),
             align="start", spacing="2", width="100%",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
             border_radius="10px", padding="10px 12px",
         ),
 

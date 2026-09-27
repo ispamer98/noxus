@@ -18,7 +18,6 @@ import reflex as rx
 
 from ....domains.auth.state import AuthState
 from ..components.modos import fila_modos
-from ..components.armado import cuenta_atras_salida
 from ....domains.security.arming_state import ArmingState
 from ....domains.security.state import SecurityState
 from ....domains.security.groups_state import GroupsState
@@ -42,21 +41,37 @@ from .logs import color_de, bg_de
 _HOST_CELL_WIDTH = "92px"
 
 
-def _quick_action(icon, label, on_click, color=theme.ACCENT, trailing=None) -> rx.Component:
-    return rx.hstack(
-        rx.icon(icon, size=17, color=color, flex_shrink="0"),
-        rx.text(label, size="2", color=theme.TEXT, weight="medium"),
-        rx.spacer(),
-        trailing if trailing is not None else rx.icon("chevron-right", size=15, color=theme.MUTED, flex_shrink="0"),
+def _quick_action(icon, label, on_click, tono="", activo=False, interruptor=False,
+                  trailing=None, meta=None) -> rx.Component:
+    """Un acceso rápido del Resumen: una baldosa que se pulsa entera.
+
+    `tono` y `activo` son lo que la pinta (assets/nx.css, .nx-tile): una luz
+    encendida se ve cálida ("lamp"), un sistema armado en rojo ("arm") y una
+    acción que apaga algo lleva su icono en rojo ("danger"). Lo que no tiene
+    estado se queda en gris: el color solo aparece donde la casa está viva.
+
+    `interruptor` dibuja el conmutador de la esquina, que dice "encendido" o
+    "apagado" sin palabras (y sin tener que adivinar si la luz es «la» o «el»).
+    En modo Personalizar, esa esquina es para los controles de mover y quitar.
+
+    Es un <button> de verdad: se enfoca con el teclado y responde al dedo en el
+    acto (:active), antes de que conteste el servidor."""
+    esquina = trailing if trailing is not None else rx.fragment()
+    if interruptor:
+        esquina = rx.cond(
+            DashboardState.editing_overview,
+            esquina,
+            rx.el.span(class_name="nx-tile-switch", aria_hidden="true"),
+        )
+    return rx.el.button(
+        rx.el.span(rx.icon(icon, size=18), class_name="nx-tile-icon"),
+        rx.el.span(label, class_name="nx-tile-label"),
+        meta if meta is not None else rx.fragment(),
+        rx.el.span(esquina, class_name="nx-tile-ctrl"),
         on_click=on_click,
-        cursor="pointer",
-        align="center",
-        width="100%",
-        padding="12px 14px",
-        border_radius="10px",
-        background=theme.BG_CARD,
-        border=f"1px solid {theme.BORDER}",
-        _hover={"background": theme.BG_CARD_HOVER, "border_color": theme.BORDER_STRONG},
+        class_name="nx-tile",
+        custom_attrs={"data-tono": tono, "data-activo": activo},
+        type="button",
     )
 
 
@@ -75,12 +90,12 @@ def _stat_tile(label, value, icon, color=theme.ACCENT, icon_bg=None, controls=No
         ),
         rx.vstack(
             rx.text(
-                label, size="1", color=theme.MUTED, letter_spacing="0.06em",
-                text_transform="uppercase", weight="medium",
+                label, size="1", color=theme.MUTED, weight="medium",
                 white_space="nowrap", overflow="hidden", text_overflow="ellipsis", max_width="100%",
             ),
             rx.text(
-                value, size=rx.breakpoints(initial="3", md="4"), weight="bold", color=theme.TEXT,
+                value, class_name="nx-num",
+                size=rx.breakpoints(initial="3", md="4"), weight="bold", color=theme.TEXT,
                 white_space="nowrap", overflow="hidden", text_overflow="ellipsis", max_width="100%",
             ),
             spacing="0", align="start", min_width="0", width="100%",
@@ -88,11 +103,10 @@ def _stat_tile(label, value, icon, color=theme.ACCENT, icon_bg=None, controls=No
         controls if controls is not None else rx.fragment(),
         spacing="3",
         align="center",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
-        border_radius="12px",
+        border_radius="14px",
         padding=["12px", "12px", "16px"],
-        backdrop_filter="blur(10px)",
         flex="1",
         min_width=["135px", "150px", "200px"],
         overflow="hidden",
@@ -136,7 +150,7 @@ def _equipment_grid() -> rx.Component:
     que la rejilla no tiene que mezclar los construidos en Python con los
     reactivos — y un equipo nuevo aparece aquí sin reiniciar."""
     return rx.vstack(
-        rx.text("EQUIPOS DE LA CASA", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+        rx.text("Equipos de la casa", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
         rx.box(
             rx.flex(
                 rx.foreach(NodesState.hosts, _host_cell_from),
@@ -145,7 +159,7 @@ def _equipment_grid() -> rx.Component:
                 justify="start",
                 width="100%",
             ),
-            background=theme.BG_CARD,
+            background=theme.BG_CARD, class_name="nx-card",
             border=f"1px solid {theme.BORDER}",
             border_radius="12px",
             padding=["12px", "12px", "18px"],
@@ -420,14 +434,16 @@ def _action_arm(w) -> rx.Component:
     # A quien no puede armar no se le pinta el acceso rápido. Es solo la cara
     # visible: quien decide es el manejador, que comprueba el permiso aunque el
     # evento llegue sin haber pasado por aquí.
+    armado = SecurityState.sistema_armado
     return rx.cond(
         AuthState.puede_armar,
         _quick_action(
-            rx.cond(SecurityState.sistema_armado, "shield-off", "shield-check"),
-            rx.cond(SecurityState.sistema_armado, "Desarmar sistema", "Armar sistema"),
+            rx.cond(armado, "shield-check", "shield"),
+            rx.cond(armado, "Desarmar sistema", "Armar sistema"),
             ArmingState.pedir_armar(""),
-            color=rx.cond(SecurityState.sistema_armado, theme.DANGER, theme.SUCCESS),
+            tono="arm", activo=armado,
             trailing=_widget_controls(w),
+            meta=_meta(rx.cond(armado, "Armado", "Desarmado")),
         ),
     )
 
@@ -438,11 +454,12 @@ def _action_group(w) -> rx.Component:
     return rx.cond(
         AuthState.puede_armar,
         _quick_action(
-            rx.cond(armed, "shield-off", "shield-check"),
+            rx.cond(armed, "shield-check", "shield"),
             rx.cond(armed, "Desarmar " + w["label"].to(str), "Armar " + w["label"].to(str)),
             ArmingState.pedir_armar(gid),
-            color=rx.cond(armed, theme.DANGER, theme.SUCCESS),
+            tono="arm", activo=armed,
             trailing=_widget_controls(w),
+            meta=_meta(rx.cond(armed, "Armado", "Desarmado")),
         ),
     )
 
@@ -450,14 +467,14 @@ def _action_group(w) -> rx.Component:
 def _action_camera(w) -> rx.Component:
     return _quick_action(
         w["icon"].to(str), w["label"], DashboardState.open_window(w["target_id"].to(str)),
-        color=theme.PURPLE, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
 def _action_door(w) -> rx.Component:
     return _quick_action(
         "door-open", "Abrir " + w["label"].to(str), NodesState.open_door(w["target_id"].to(str)),
-        color=theme.WARNING, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
@@ -465,13 +482,13 @@ def _action_light(w) -> rx.Component:
     """Luces Y accesorios: comparten kind, así que el icono NO puede ser fijo.
     Sale del propio elemento (ver referencias._catalogo, que se lo pone según el
     aspecto) y solo cae en la bombilla si no trae ninguno — que es el caso de
-    las luces de siempre."""
+    las luces de siempre. Encendida, la baldosa se pinta cálida entera."""
     lid = w["target_id"].to(str)
     on = NodesState.sensor_state[lid]
     return _quick_action(
         rx.cond(w["icon"] != "", w["icon"].to(str), "lightbulb"),
         w["label"], NodesState.toggle_light(lid),
-        color=rx.cond(on, theme.WARNING, theme.MUTED), trailing=_widget_controls(w),
+        tono="lamp", activo=on, interruptor=True, trailing=_widget_controls(w),
     )
 
 
@@ -487,7 +504,7 @@ def _action_rdp(w) -> rx.Component:
     return _quick_action(
         "monitor-play", "Escritorio remoto a " + w["label"].to(str),
         HostActionsState.open_rdp(w["target_id"].to(str)),
-        color=theme.ACCENT, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
@@ -501,10 +518,10 @@ def _action_notify(w) -> rx.Component:
     El diálogo es el de components/enviar_alerta, compartido con el icono de la
     barra de arriba: el mismo formulario abierto desde dos sitios."""
     return dialogo_enviar_alerta(
-        rx.box(
+        rx.el.div(
             _quick_action("bell-ring", "Enviar alerta", rx.noop(),
-                          color=theme.WARNING, trailing=_widget_controls(w)),
-            width="100%",
+                          trailing=_widget_controls(w)),
+            class_name="nx-tile-envoltura",
         ),
     )
 
@@ -518,8 +535,8 @@ def _action_view(w) -> rx.Component:
 
 def _action_alert(w) -> rx.Component:
     return _quick_action(
-        "siren", "Ver registros de eventos", DashboardState.set_view("logs"),
-        color=theme.WARNING, trailing=_widget_controls(w),
+        "clipboard-list", "Ver registros de eventos", DashboardState.set_view("logs"),
+        trailing=_widget_controls(w),
     )
 
 
@@ -531,7 +548,7 @@ def _action_ir_button(w) -> rx.Component:
     referencias.sincronizar()."""
     return _quick_action(
         w["icon"].to(str), w["label"], NodesState.send_ir_button_combined(w["target_id"].to(str)),
-        color=theme.ACCENT, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
@@ -543,7 +560,7 @@ def _action_ir_remote(w) -> rx.Component:
     de canal): un widget por tecla llenaría el Resumen para hacer lo mismo."""
     return _quick_action(
         w["icon"].to(str), w["label"], DashboardState.open_window(w["target_id"].to(str)),
-        color=theme.ACCENT, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
@@ -554,18 +571,19 @@ def _action_host_button(w) -> rx.Component:
     return _quick_action(
         "square-mouse-pointer", w["label"],
         HostActionsState.run_button(w["target_id"].to(str)),
-        color=theme.ACCENT, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
 
 
 def _action_host_shutdown(w) -> rx.Component:
     """Apaga el equipo sin entrar en Equipos — mismo verbo que la ficha
     (HostActionsState.accion_rapida), pero avisando con un toast en vez de
-    escribirlo en una consola que desde el Resumen no está a la vista."""
+    escribirlo en una consola que desde el Resumen no está a la vista. El
+    icono va en rojo: es la única baldosa que apaga algo."""
     return _quick_action(
         "power", "Apagar " + w["label"].to(str),
         HostActionsState.accion_rapida(w["target_id"].to(str), "apagar"),
-        color=theme.DANGER, trailing=_widget_controls(w),
+        tono="danger", trailing=_widget_controls(w),
     )
 
 
@@ -574,8 +592,13 @@ def _action_host_wol(w) -> rx.Component:
     return _quick_action(
         "zap", "Encender " + w["label"].to(str),
         HostActionsState.encender_wol(w["target_id"].to(str)),
-        color=theme.SUCCESS, trailing=_widget_controls(w),
+        trailing=_widget_controls(w),
     )
+
+
+def _meta(texto) -> rx.Component:
+    """La línea pequeña bajo el nombre de la baldosa (p. ej. «Armado»)."""
+    return rx.el.span(texto, class_name="nx-tile-meta")
 
 
 _ACTION_BUILDERS = {
@@ -690,39 +713,54 @@ def _familia_seccion(family_id: str, label: str, icon: str) -> rx.Component:
     abierta = DashboardState.open_action_families.contains(family_id) | DashboardState.editing_overview
     return rx.cond(
         items.length() > 0,
-        rx.vstack(
-            rx.hstack(
-                rx.icon(icon, size=15, color=theme.ACCENT, flex_shrink="0"),
-                rx.text(label, size="2", color=theme.TEXT, weight="bold"),
-                rx.badge(items.length().to_string(), variant="soft", size="1", color_scheme="gray"),
-                rx.spacer(),
-                rx.icon(
-                    rx.cond(abierta, "chevron-up", "chevron-down"),
-                    size=16, color=theme.MUTED, flex_shrink="0",
-                ),
+        rx.el.div(
+            rx.el.button(
+                rx.el.span(rx.icon(icon, size=16), class_name="nx-family-icon"),
+                rx.el.span(label),
+                rx.el.span(items.length().to_string(), class_name="nx-family-count"),
+                rx.icon("chevron-down", size=16, class_name="nx-family-chev"),
                 on_click=DashboardState.toggle_action_family(family_id),
-                cursor="pointer",
-                align="center",
-                spacing="2",
-                width="100%",
-                padding="4px 2px",
+                class_name="nx-family-head",
+                aria_expanded=abierta,
+                type="button",
             ),
             rx.cond(
                 abierta,
-                rx.vstack(
+                rx.el.div(
                     rx.foreach(items, lambda w: _widget(w, _ACTION_BUILDERS)),
-                    spacing="2", width="100%", align="start", padding_top="2",
+                    class_name="nx-tiles",
                 ),
             ),
-            spacing="2",
-            width="100%",
-            align="start",
-            background=theme.BG_CARD,
-            border=f"1px solid {rx.cond(abierta, theme.alpha(theme.ACCENT, 0.35), theme.BORDER)}",
-            border_radius="12px",
-            padding="12px",
-            transition="border-color 0.15s ease",
+            class_name="nx-family",
+            custom_attrs={"data-abierta": abierta},
         ),
+    )
+
+
+def _cabecera_accesos() -> rx.Component:
+    """El rótulo de los accesos rápidos con su botón de Personalizar al lado:
+    editar el Resumen es cosa de esta sección, así que el lápiz vive aquí."""
+    return rx.el.div(
+        rx.el.h3("Accesos rápidos", class_name="nx-section-title"),
+        rx.cond(
+            DashboardState.editing_overview,
+            rx.hstack(
+                _add_widget_dialog(),
+                rx.button(
+                    rx.icon("check", size=14), "Listo",
+                    on_click=DashboardState.toggle_editing_overview,
+                    size="2", variant="solid", color_scheme="green",
+                ),
+                spacing="2",
+            ),
+            rx.el.button(
+                rx.icon("pencil", size=14), rx.el.span("Personalizar"),
+                on_click=DashboardState.toggle_editing_overview,
+                class_name="nx-ghost-btn",
+                type="button",
+            ),
+        ),
+        class_name="nx-section-head",
     )
 
 
@@ -734,59 +772,38 @@ def _accesos_rapidos() -> rx.Component:
     encuentran en el mismo sitio, dé igual el orden en que se fueran
     añadiendo los widgets. Es el contenido principal del Resumen: todo lo que
     de verdad se puede accionar en la casa, cabe aquí."""
-    return rx.vstack(
-        rx.text("ACCESOS RÁPIDOS", size="1", color=theme.MUTED,
-                letter_spacing="0.08em", weight="bold"),
-        rx.grid(
+    return rx.el.section(
+        _cabecera_accesos(),
+        rx.el.div(
             *[_familia_seccion(fid, label, icon) for fid, label, icon in ACTION_FAMILIES],
-            columns=rx.breakpoints(initial="1", sm="2", xl="3"),
-            gap="12px",
-            width="100%",
-            align_items="start",
+            class_name="nx-families",
         ),
-        spacing="3",
-        width="100%",
-        align="start",
+        class_name="nx-bloque",
     )
 
 
-def _barra_estado() -> rx.Component:
-    """Lo único que se ve SIEMPRE, sin recoger y sin poder quitarse: si la
-    casa está armada. Todo lo demás —incluido "qué fue lo último que pasó"—
-    es opcional y vive como widget (stat_last_event) o recogido en "Más
-    información": aquí solo va lo que se pidió que se quedara fijo."""
+def _estado_casa() -> rx.Component:
+    """Pastilla compacta que deja el estado esencial siempre a la vista.
+
+    Un invitado lo ve —así no abre una puerta sin saber que la casa está
+    armada—, pero solo responde al toque si tiene permiso. El manejador vuelve
+    a comprobarlo igualmente: la condición de aquí es presentación, no
+    seguridad."""
     armado = SecurityState.sistema_armado
-    return rx.hstack(
-        rx.hstack(
-            rx.icon(
-                rx.cond(armado, "shield-check", "shield-off"), size=16,
-                color=rx.cond(armado, theme.DANGER, theme.SUCCESS), flex_shrink="0",
-            ),
-            rx.text(
-                rx.cond(armado, "Sistema armado", "Sistema desarmado"),
-                size="2", weight="medium", color=theme.TEXT, white_space="nowrap",
-            ),
-            # Un invitado SÍ ve si la casa está armada —es lo que evita que
-            # abra una puerta sin saber lo que va a pasar— pero la pastilla no
-            # le responde al pulsarla. Enseñarle un botón que va a rechazarle
-            # sería peor que no enseñárselo.
-            on_click=rx.cond(
-                AuthState.puede_armar, ArmingState.pedir_armar(""), rx.noop()),
-            cursor=rx.cond(AuthState.puede_armar, "pointer", "default"),
-            align="center", spacing="2",
-            padding="9px 14px", border_radius="999px", flex_shrink="0",
-            background=rx.cond(armado, theme.alpha(theme.DANGER, 0.12), theme.alpha(theme.SUCCESS, 0.12)),
-            border=f"1px solid {rx.cond(armado, theme.alpha(theme.DANGER, 0.35), theme.alpha(theme.SUCCESS, 0.35))}",
-            _hover={"opacity": "0.85"},
-            title=rx.cond(
-                AuthState.puede_armar,
-                rx.cond(armado, "Pulsa para desarmar", "Pulsa para armar"),
-                rx.cond(armado, "Sistema armado", "Sistema desarmado"),
-            ),
+    return rx.el.button(
+        rx.icon(rx.cond(armado, "shield-check", "shield-off"), size=17),
+        rx.el.span(rx.cond(armado, "Sistema armado", "Sistema desarmado")),
+        on_click=rx.cond(
+            AuthState.puede_armar, ArmingState.pedir_armar(""), rx.noop()),
+        class_name="nx-status-pill",
+        type="button",
+        disabled=~AuthState.puede_armar,
+        title=rx.cond(
+            AuthState.puede_armar,
+            rx.cond(armado, "Pulsa para desarmar", "Pulsa para armar"),
+            rx.cond(armado, "Sistema armado", "Sistema desarmado"),
         ),
-        spacing="2",
-        width="100%",
-        wrap="wrap",
+        custom_attrs={"data-armado": armado},
     )
 
 
@@ -799,16 +816,15 @@ def _mas_informacion() -> rx.Component:
     editando igual (Personalizar → Añadir widget); solo cambia que empieza
     escondida."""
     abierto = DashboardState.show_overview_extra
-    return rx.vstack(
-        rx.hstack(
-            rx.icon("info", size=13, color=theme.MUTED, flex_shrink="0"),
-            rx.text("Más información", size="1", color=theme.MUTED,
-                    letter_spacing="0.06em", weight="bold"),
-            rx.spacer(),
-            rx.icon(rx.cond(abierto, "chevron-up", "chevron-down"), size=14, color=theme.MUTED),
+    return rx.el.div(
+        rx.el.button(
+            rx.el.span(rx.icon("info", size=16), class_name="nx-family-icon"),
+            rx.el.span("Más información"),
+            rx.icon("chevron-down", size=16, class_name="nx-family-chev"),
             on_click=DashboardState.toggle_overview_extra,
-            cursor="pointer",
-            align="center", spacing="2", width="100%",
+            class_name="nx-family-head",
+            aria_expanded=abierto,
+            type="button",
         ),
         rx.cond(
             abierto,
@@ -818,51 +834,23 @@ def _mas_informacion() -> rx.Component:
                     gap="12px", wrap="wrap", width="100%",
                 ),
                 _equipment_grid(),
-                spacing="4", width="100%", padding_top="3",
+                spacing="4", width="100%", padding="4px 14px 16px",
             ),
         ),
-        spacing="2",
-        width="100%",
-        align="start",
-        padding="10px 12px",
-        border_radius="10px",
-        background=theme.alpha(theme.MUTED, 0.05),
+        class_name="nx-family",
+        custom_attrs={"data-abierta": abierto},
     )
 
 
 def overview_view() -> rx.Component:
-    return rx.vstack(
-        rx.hstack(
-            rx.spacer(),
-            rx.cond(
-                DashboardState.editing_overview,
-                rx.hstack(
-                    _add_widget_dialog(),
-                    rx.button(
-                        rx.icon("check", size=14), "Listo",
-                        on_click=DashboardState.toggle_editing_overview,
-                        size="2", variant="solid", color_scheme="green",
-                    ),
-                    spacing="2",
-                ),
-                rx.button(
-                    rx.icon("pencil", size=14),
-                    on_click=DashboardState.toggle_editing_overview,
-                    size="2", variant="surface", color_scheme="gray",
-                ),
-            ),
-            width="100%",
-            align="center",
-            wrap="wrap",
-        ),
-        # La fila de modos va ENCIMA de la barra de estado y fuera de los
-        # widgets: no se puede quitar ni recolocar desde "Personalizar", igual
-        # que el armado. Es el estado de la casa, no un acceso rápido más.
+    return rx.el.div(
+        # El estado de la casa, arriba y fijo: no se puede quitar ni recolocar.
+        # La cuenta atrás vive en la pila global de avisos, visible en toda vista.
+        _estado_casa(),
+        # La fila de modos va justo debajo y fuera de los widgets, igual que el
+        # armado: es el estado de la casa, no un acceso rápido más.
         fila_modos(),
-        cuenta_atras_salida(),
-        _barra_estado(),
         _accesos_rapidos(),
         _mas_informacion(),
-        spacing="4",
-        width="100%",
+        class_name="nx-overview",
     )

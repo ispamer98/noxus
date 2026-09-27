@@ -12,7 +12,6 @@ título perdido es buscar en el sitio equivocado.
 """
 import reflex as rx
 
-from . import theme
 from .state import DashboardState
 
 # (view_id, icon, etiqueta) — lo mínimo posible, para que cualquiera —
@@ -49,122 +48,83 @@ NAV_ITEMS = [
 ]
 
 
-def _nav_item(view_id: str, icon: str, label: str) -> rx.Component:
-    # "Ajustes" se marca activo también estando DENTRO de una de las cinco
-    # pantallas de configuración que agrupa (ver DashboardState.settings_hub_
-    # active) — si no, entrar en "Equipos" desde ahí dejaría el menú entero
-    # sin ninguna fila resaltada.
-    is_active = (
+def _activo(view_id: str):
+    # "Ajustes" se marca activo también estando DENTRO de una de las pantallas
+    # de configuración que agrupa (ver DashboardState.settings_hub_active) — si
+    # no, entrar en "Alarma" desde ahí dejaría el menú entero sin ninguna fila
+    # resaltada.
+    return (
         DashboardState.settings_hub_active if view_id == "settings_hub"
         else DashboardState.active_view == view_id
     )
-    return rx.hstack(
-        rx.box(
-            width="3px",
-            height="20px",
-            border_radius="2px",
-            background=rx.cond(is_active, theme.ACCENT, "transparent"),
-            flex_shrink="0",
-        ),
-        rx.icon(
-            icon,
-            size=18,
-            color=rx.cond(is_active, theme.ACCENT, theme.MUTED),
-            flex_shrink="0",
-        ),
-        rx.cond(
-            ~DashboardState.sidebar_collapsed,
-            rx.text(
-                label,
-                size="2",
-                weight=rx.cond(is_active, "bold", "medium"),
-                color=rx.cond(is_active, theme.TEXT, theme.MUTED),
-                white_space="nowrap",
-            ),
-        ),
+
+
+def _nav_item(view_id: str, icon: str, label: str) -> rx.Component:
+    # Botones HTML de verdad y no cajas de Radix: se pueden enfocar con el
+    # teclado, y su aspecto entero (activo, pulsado, plegado) lo decide
+    # assets/nx.css con data-activo, sin pelearse con el display de .rt-Box.
+    is_active = _activo(view_id)
+    return rx.el.button(
+        rx.icon(icon, size=18),
+        rx.el.span(label),
         on_click=DashboardState.set_view(view_id),
-        cursor="pointer",
-        align="center",
-        spacing="3",
-        width="100%",
-        padding_y="10px",
-        padding_right="3",
-        border_radius="8px",
-        background=rx.cond(is_active, theme.alpha(theme.ACCENT, 0.10), "transparent"),
-        _hover={"background": theme.alpha(theme.ACCENT, 0.06)},
+        class_name="nx-nav-item",
+        custom_attrs={"data-activo": is_active},
+        aria_current=rx.cond(is_active, "page", "false"),
         title=label,
+        type="button",
+    )
+
+
+def _marca() -> rx.Component:
+    """La marca: el arco de la «n», que es también un umbral con una luz
+    encendida dentro (assets/noxus-marca.svg), y el nombre en minúsculas.
+
+    La marca es un SVG que ya trae su propia pastilla, así que va centrada por
+    construcción: antes era un icono dentro de una caja cuyo `display: grid`
+    perdía contra el `display: block` de Radix, y el icono se quedaba pegado
+    arriba."""
+    return rx.el.div(
+        # La caja del escudo lleva el brillo neón y el anillo que gira (nx.css,
+        # .nx-logo): es un <span> con display grid propio, así que el escudo
+        # queda centrado sin depender del display de las cajas de Radix.
+        rx.el.span(
+            rx.el.img(src="/noxus-marca.svg", alt="", class_name="nx-mark",
+                      width="34", height="34"),
+            class_name="nx-logo",
+        ),
+        rx.el.span("noxus", class_name="nx-wordmark nx-grad", translate="no"),
+        class_name="nx-brand",
     )
 
 
 def sidebar() -> rx.Component:
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.icon("shield-half", size=22, color=theme.ACCENT, flex_shrink="0"),
-                rx.cond(
-                    ~DashboardState.sidebar_collapsed,
-                    rx.vstack(
-                        rx.text("NOXUS", size="3", weight="bold", letter_spacing="0.12em", color=theme.TEXT),
-                        rx.text("CONTROL CENTER", size="1", color=theme.MUTED, letter_spacing="0.08em"),
-                        spacing="0",
-                    ),
-                ),
-                align="center",
-                spacing="3",
-                width="100%",
-                padding="18px 16px",
-            ),
-            rx.divider(border_color=theme.BORDER),
-            rx.vstack(
-                *[_nav_item(v, i, l) for v, i, l in NAV_ITEMS],
-                spacing="1",
-                width="100%",
-                padding="10px",
-            ),
-            rx.spacer(),
-            rx.divider(border_color=theme.BORDER),
-            rx.vstack(
-                rx.hstack(
-                    rx.icon(
-                        rx.cond(DashboardState.sidebar_collapsed, "chevrons-right", "chevrons-left"),
-                        size=16,
-                        color=theme.MUTED,
-                    ),
-                    rx.cond(
-                        ~DashboardState.sidebar_collapsed,
-                        rx.text("Colapsar", size="1", color=theme.MUTED),
-                    ),
-                    on_click=DashboardState.toggle_sidebar,
-                    cursor="pointer",
-                    spacing="3",
-                    align="center",
-                    padding="8px",
-                    width="100%",
-                    _hover={"opacity": "0.7"},
-                ),
-                spacing="1",
-                width="100%",
-                padding="10px",
-            ),
-            height="100%",
-            width="100%",
-            spacing="0",
+    # En el móvil no se pinta: la navegación pasa a la barra inferior
+    # (mobile_bottom_nav). Lo decide nx.css por ancho, no un rx.cond: así no
+    # hay que montar y desmontar nada al girar la tablet.
+    return rx.el.aside(
+        _marca(),
+        rx.el.nav(
+            *[_nav_item(v, i, l) for v, i, l in NAV_ITEMS],
+            class_name="nx-nav",
+            aria_label="Secciones",
         ),
-        width=rx.cond(DashboardState.sidebar_collapsed, "68px", "232px"),
-        min_width=rx.cond(DashboardState.sidebar_collapsed, "68px", "232px"),
-        height="100vh",
-        position="sticky",
-        top="0",
-        background=theme.BG_SIDEBAR,
-        border_right=f"1px solid {theme.BORDER}",
-        transition="width 0.16s ease, min-width 0.16s ease",
-        overflow="hidden",
-        z_index="50",
-        # En móvil la navegación pasa a la barra inferior (mobile_bottom_nav).
-        # !important: .rt-Box trae display:block incondicional en su CSS base, con más
-        # prioridad de cascada que el estilo condicional que genera Emotion — sin
-        # !important esta regla pierde y el sidebar se queda visible en cualquier ancho.
-        display=["none !important", "none !important", "block !important"],
+        rx.el.div(
+            rx.el.button(
+                rx.icon(
+                    rx.cond(DashboardState.sidebar_collapsed, "chevrons-right", "chevrons-left"),
+                    size=18,
+                ),
+                rx.el.span("Plegar menú"),
+                on_click=DashboardState.toggle_sidebar,
+                class_name="nx-nav-item",
+                title=rx.cond(DashboardState.sidebar_collapsed, "Desplegar menú", "Plegar menú"),
+                type="button",
+            ),
+            class_name="nx-sidebar-pie",
+        ),
+        class_name="nx-sidebar",
+        custom_attrs={"data-plegada": DashboardState.sidebar_collapsed},
     )
 
 
@@ -176,63 +136,25 @@ _MOBILE_SHORT_LABEL = {
 
 
 def _mobile_nav_item(view_id: str, icon: str, label: str) -> rx.Component:
-    is_active = (
-        DashboardState.settings_hub_active if view_id == "settings_hub"
-        else DashboardState.active_view == view_id
-    )
-    short_label = _MOBILE_SHORT_LABEL.get(view_id, label)
-    return rx.vstack(
-        rx.icon(icon, size=18, color=rx.cond(is_active, theme.ACCENT, theme.MUTED)),
-        rx.text(
-            short_label,
-            size="1",
-            color=rx.cond(is_active, theme.ACCENT, theme.MUTED),
-            weight=rx.cond(is_active, "bold", "medium"),
-            white_space="nowrap",
-        ),
+    is_active = _activo(view_id)
+    return rx.el.button(
+        rx.icon(icon, size=20),
+        rx.el.span(_MOBILE_SHORT_LABEL.get(view_id, label)),
         on_click=DashboardState.set_view(view_id),
-        cursor="pointer",
-        align="center",
-        justify="center",
-        spacing="1",
-        flex_shrink="0",
-        min_width="58px",
-        padding_y="2",
+        class_name="nx-dock-item",
+        custom_attrs={"data-activo": is_active},
+        aria_current=rx.cond(is_active, "page", "false"),
+        aria_label=label,
+        type="button",
     )
 
 
 def mobile_bottom_nav() -> rx.Component:
-    return rx.hstack(
+    """La isla flotante de abajo en el móvil: las mismas cinco secciones que el
+    menú lateral, repartidas a partes iguales (nx.css, .nx-dock). Es el único
+    elemento del panel con backdrop-filter, y por eso se lo puede permitir."""
+    return rx.el.nav(
         *[_mobile_nav_item(v, i, l) for v, i, l in NAV_ITEMS],
-        width="100%",
-        align="center",
-        # space-evenly, no start: con NAV_ITEMS reducido a cuatro filas, un
-        # "justify=start" con overflow_x=auto (pensado para cuando había doce y
-        # hacía falta desplazar) dejaba los iconos apelotonados a la izquierda
-        # y un hueco vacío enorme a la derecha — "descentrado". space-evenly
-        # reparte el mismo hueco entre cada icono Y entre los de los extremos y
-        # el borde de la pantalla, que es justo "el mismo espacio entre los
-        # objetos que con los laterales".
-        # El prop tipado "justify" de Radix solo admite start/center/end/
-        # between — "space-evenly" (con hueco también en los extremos, no
-        # solo entre iconos) hace falta meterlo como CSS crudo en style.
-        # El !important es necesario: igual que con "display" más abajo en
-        # este archivo, el HStack de Radix trae su propio justify-content
-        # (normal/start) en un CSS estático que Emotion inserta con MENOS
-        # prioridad que la que le tocaría — sin !important, a igual
-        # especificidad gana la regla de Radix y el menú se queda pegado a
-        # la izquierda pase lo que pase en el style.
-        style={"justify_content": "space-evenly !important"},
-        padding="8px 6px",
-        padding_bottom="calc(35px + env(safe-area-inset-bottom))",
-        background=theme.BG_SIDEBAR,
-        border_top=f"1px solid {theme.BORDER}",
-        position="fixed",
-        bottom="0",
-        left="0",
-        right="0",
-        z_index="60",
-        # !important por el mismo motivo que en sidebar(): .rt-Flex fuerza display:flex
-        # incondicional y gana la cascada si no se lo ganamos con !important.
-        display=["flex !important", "flex !important", "none !important"],
+        class_name="nx-dock",
+        aria_label="Secciones",
     )

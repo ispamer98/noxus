@@ -87,12 +87,17 @@ class CameraState(rx.State):
     @rx.var
     def url_fija_stream(self) -> str:
         modes = _STREAM_MODES_MOBILE if self.cam_mode == "mobile" else _STREAM_MODES_PC
-        return f"https://cam.noxuscmmd.uk/stream.html?src=fija&mode={modes}"
+        # Ruta relativa, no `https://cam.noxuscmmd.uk`: desde el 20/09/2026 el
+        # directo va por el MISMO dominio que el panel. Lo guarda el middleware
+        # `portero-camaras` de Traefik, que pregunta a `/api/camaras/autorizado`
+        # (domains/cameras/endpoint.py), y al ser mismo origen el navegador
+        # manda la cookie de sesion sin que haya que hacer nada.
+        return f"/cam/stream.html?src=fija&mode={modes}"
 
     @rx.var
     def url_ptz_stream(self) -> str:
         modes = _STREAM_MODES_MOBILE if self.cam_mode == "mobile" else _STREAM_MODES_PC
-        return f"https://cam.noxuscmmd.uk/stream.html?src=ptz&mode={modes}"
+        return f"/cam/stream.html?src=ptz&mode={modes}"
 
     def toggle_fija_stream(self):
         self.show_fija_stream = not self.show_fija_stream

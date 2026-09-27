@@ -122,7 +122,7 @@ _STREAM_MODES = "webrtc,mse,hls,mp4"
 
 
 def _dynamic_camera_window(cam: dict) -> rx.Component:
-    go2rtc_url = f"https://cam.noxuscmmd.uk/stream.html?src={cam['url']}&mode={_STREAM_MODES}"
+    go2rtc_url = f"/cam/stream.html?src={cam['url']}&mode={_STREAM_MODES}"
     content = rx.match(
         cam["kind"],
         (
@@ -186,6 +186,37 @@ def floating_windows_layer() -> rx.Component:
     )
 
 
+def camera_kiosco_content(cam: rx.Var) -> rx.Component:
+    """Visor embebido para la hoja del kiosco, sin enlace a otra pestaña."""
+    fija = rx.vstack(
+        video_embed_safe(CameraState.url_fija_stream),
+        width="100%", spacing="3",
+    )
+    ptz = rx.vstack(
+        video_embed_safe(CameraState.url_ptz_stream),
+        rx.text("Control PTZ", size="2", weight="bold", color=theme.TEXT),
+        ptz_control_buttons(),
+        rx.text(CameraState.cam_msg, size="1", color=theme.MUTED),
+        width="100%", spacing="3",
+    )
+    dinamica = rx.match(
+        cam["kind"],
+        ("go2rtc", video_embed_safe(
+            "/cam/stream.html?src=" + cam["url"].to(str)
+            + f"&mode={_STREAM_MODES}")),
+        ("rtsp", rx.text(
+            "Este origen RTSP no se puede reproducir en el navegador.",
+            color=theme.MUTED)),
+        video_embed_safe(cam["url"].to(str)),
+    )
+    return rx.match(
+        cam["id"],
+        ("cam_fija", fija),
+        ("cam_ptz", ptz),
+        dinamica,
+    )
+
+
 # ── Equipos en el plano ──────────────────────────────────────────────────────
 # Un ordenador colocado en el plano abre SU BOTONERA al pulsarlo, en vez de
 # encenderse o apagarse de un toque como hace una luz. El motivo es que apagar
@@ -217,7 +248,7 @@ def _equipo_window(host: rx.Var) -> rx.Component:
     content = rx.vstack(
         rx.hstack(
             rx.icon(rx.cond(host["online"], "wifi", "wifi-off"), size=14,
-                    color=rx.cond(host["online"], "#22c55e", theme.MUTED)),
+                    color=rx.cond(host["online"], theme.SUCCESS, theme.MUTED)),
             rx.text(rx.cond(host["online"], "En línea", "Sin respuesta"),
                     size="2", color=theme.TEXT),
             spacing="2", align="center",

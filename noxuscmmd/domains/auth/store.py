@@ -19,6 +19,9 @@ ARCHIVO = Path(os.getenv("DISPOSITIVOS_FILE", "dispositivos.json"))
 ADMIN = "admin"
 FAMILIA = "familia"
 INVITADO = "invitado"
+# Tablet fija vinculada a una única estancia. No es una variante de invitado:
+# puede abrir puertas y manejar equipos, pero jamás configura ni arma la casa.
+KIOSCO = "kiosco"
 # Un aparato que aparece por primera vez y al que nadie ha dado permiso
 # todavía. No es un rol con menos permisos: es no tener ninguno. Existe para
 # que el panel no quede abierto a cualquiera que sepa la dirección, que era el
@@ -30,12 +33,13 @@ PENDIENTE = "pendiente"
 # preguntaría por el móvil del vecino una vez a la semana para siempre.
 BLOQUEADO = "bloqueado"
 
-ROLES = (ADMIN, FAMILIA, INVITADO, PENDIENTE, BLOQUEADO)
+ROLES = (ADMIN, FAMILIA, INVITADO, KIOSCO, PENDIENTE, BLOQUEADO)
 
 NOMBRES_DE_ROL = {
     ADMIN: "Administrador",
     FAMILIA: "Familia",
     INVITADO: "Invitado",
+    KIOSCO: "Tablet de habitación",
     PENDIENTE: "Desconocido",
     BLOQUEADO: "Bloqueado",
 }
@@ -200,6 +204,19 @@ def rol_de(id_dispositivo: str) -> str:
     return rol if rol in ROLES else PENDIENTE
 
 
+def estancia_kiosco(id_dispositivo: str) -> str:
+    """Estancia vinculada si la ficha es realmente kiosco; vacío en otro caso."""
+    ficha = dispositivo(id_dispositivo) or {}
+    if rol_de(id_dispositivo) != KIOSCO:
+        return ""
+    return str(ficha.get("kiosco_estancia") or "")
+
+
+def kiosco_puede_camaras(id_dispositivo: str) -> bool:
+    ficha = dispositivo(id_dispositivo) or {}
+    return bool(estancia_kiosco(id_dispositivo) and ficha.get("kiosco_camaras"))
+
+
 def por_endpoint(endpoint: str) -> tuple[str, dict] | tuple[None, None]:
     """Busca el dispositivo por su suscripción push."""
     if not endpoint:
@@ -221,7 +238,8 @@ def por_nombre(nombre: str) -> tuple[str, dict] | tuple[None, None]:
 
 
 def alta(id_dispositivo: str, nombre: str = "", rol: str = PENDIENTE,
-         endpoint: str = "", caduca: float | None = None) -> dict:
+         endpoint: str = "", caduca: float | None = None,
+         nota_acceso: str = "") -> dict:
     datos = leer()
     ficha = {
         "nombre": nombre,
@@ -231,6 +249,8 @@ def alta(id_dispositivo: str, nombre: str = "", rol: str = PENDIENTE,
         "endpoint": endpoint,
         "caduca": caduca,
     }
+    if nota_acceso:
+        ficha["nota_acceso"] = nota_acceso
     datos["dispositivos"][id_dispositivo] = ficha
     escribir(datos)
     return ficha
@@ -276,6 +296,22 @@ def todos() -> list[dict]:
     datos = leer()
     lista = [{"id": i, **d} for i, d in datos["dispositivos"].items()]
     return sorted(lista, key=lambda d: d.get("visto", 0), reverse=True)
+
+
+def contar_pendientes(hasta: int | None = None) -> int:
+    """Cuenta solicitudes sin acceso y puede parar al alcanzar el tope.
+
+    El corte evita recorrer una colección que ya sabemos que está llena; se lee
+    el JSON una sola vez y nunca se mantiene un candado durante la operación.
+    """
+    cuantos = 0
+    for ficha in leer()["dispositivos"].values():
+        if ficha.get("rol", PENDIENTE) != PENDIENTE:
+            continue
+        cuantos += 1
+        if hasta is not None and cuantos >= hasta:
+            break
+    return cuantos
 
 
 # ── Siembra inicial ──────────────────────────────────────────────────────

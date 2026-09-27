@@ -55,7 +55,7 @@ def _fila(g: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="9px 11px", border_radius="10px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -220,8 +220,8 @@ def _generador_atajos() -> rx.Component:
 
 def _clave() -> rx.Component:
     return rx.vstack(
-        rx.text("CLAVE PARA EL ATAJO", size="1", color=theme.MUTED,
-                letter_spacing="0.08em", weight="bold"),
+        rx.text("Clave para el atajo", size="1", color=theme.MUTED,
+                class_name="nx-label", weight="bold"),
         rx.text(
             f"La necesita un Atajo de Siri o un cliente de la API local. Vale {DIAS_CLAVE} "
             "días y hereda los permisos de ESTE dispositivo: la clave de un "
@@ -268,8 +268,8 @@ def _clave() -> rx.Component:
                       variant="surface"),
         ),
         rx.divider(border_color=theme.BORDER),
-        rx.text("CÓMO SE MONTA EL ATAJO", size="1", color=theme.MUTED,
-                letter_spacing="0.08em", weight="bold"),
+        rx.text("Cómo se monta el atajo", size="1", color=theme.MUTED,
+                class_name="nx-label", weight="bold"),
         # El ejemplo va en texto plano y no en una captura: un atajo se monta
         # una vez y lo que hace falta es poder copiar los cuatro datos.
         rx.box(
@@ -286,7 +286,7 @@ def _clave() -> rx.Component:
                        "line-height": "1.6"},
             ),
             padding="10px", border_radius="8px", width="100%",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         ),
         rx.hstack(
             rx.text("¿No quieres montarlo campo a campo?", size="1",
@@ -300,8 +300,8 @@ def _clave() -> rx.Component:
 
 def _alexa_cloud() -> rx.Component:
     return rx.vstack(
-        rx.text("ALEXA CLOUD", size="1", color=theme.MUTED,
-                letter_spacing="0.08em", weight="bold"),
+        rx.text("Alexa Cloud", size="1", color=theme.MUTED,
+                class_name="nx-label", weight="bold"),
         rx.text(
             "Configuración técnica del enlace ya realizado. Las credenciales no "
             "se muestran ni se guardan en el navegador.",
@@ -323,8 +323,8 @@ def _alexa_cloud() -> rx.Component:
             ),
         ),
         rx.divider(border_color=theme.BORDER),
-        rx.text("ENLACE INICIAL", size="1", color=theme.MUTED,
-                letter_spacing="0.08em", weight="bold"),
+        rx.text("Enlace inicial", size="1", color=theme.MUTED,
+                class_name="nx-label", weight="bold"),
         rx.text(
             "Solo se usa si Alexa te lo pide al habilitar Noxus por primera vez. "
             "Caduca en cinco minutos y deja de servir al usarlo.",
@@ -641,7 +641,7 @@ def _tarjeta_alexa(item: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="12px", border_radius="12px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -685,7 +685,7 @@ def _catalogo_alexa() -> rx.Component:
                     size="1", color=theme.MUTED,
                 ),
                 padding="16px", width="100%", border_radius="10px",
-                background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+                background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
             ),
         ),
         _alexa_editor(),
@@ -723,7 +723,7 @@ def _desplegable(titulo: str, descripcion: str, icono: str,
         ),
         rx.box(contenido, padding="4px 14px 14px"),
         width="100%", border=f"1px solid {theme.BORDER}",
-        border_radius="12px", background=theme.BG_CARD,
+        border_radius="12px", background=theme.BG_CARD, class_name="nx-card",
     )
 
 

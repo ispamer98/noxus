@@ -34,6 +34,7 @@ consulta igual — `bus.Aviso.espera` devuelve lo mismo que esta.
 """
 import asyncio
 import inspect
+import time
 
 _app = None
 
@@ -59,7 +60,8 @@ _app = None
 # refrescaba solo: el escudo del armado se quedaba en verde con la casa
 # armada, y un cambio hecho en otro dispositivo no llegaba nunca. Con el State
 # delante, cada bucle tiene su propia clave y solo se releva a sí mismo, que
-# es lo único que este mecanismo quería evitar.
+# es lo único que este mecanismo quería evitar. Sacar ese nombre tiene truco
+# —el `self` de un bucle de fondo es un StateProxy, no el State—: ver guardia().
 #
 # Todo esto vive en el hilo del bucle de eventos —guardia() solo se llama desde
 # manejadores async—, así que un dict pelado basta: no hace falta cerrojo.
@@ -106,13 +108,35 @@ def conectada(token: str) -> bool | None:
     return token in registro
 
 
+# Cuánto se le perdona a un bucle no haber visto NUNCA su sesión conectada.
+#
+# El «antes la vio» de abajo existe porque el bucle arranca al montar la página
+# y en las primeras vueltas el token puede no constar todavía. Pero como pase
+# indefinido dejaba un agujero por el que se colaba la avería entera: si el
+# navegador se iba antes de la primera comprobación —una recarga, una pestaña
+# que se cierra al momento, el wifi que se cae—, ese bucle no había llegado a
+# verlo conectado nunca, y entonces ninguna desconexión posterior lo mataba. En
+# el arranque del 29/08/2026 se veía a las claras en el log: de dos sesiones
+# fantasma, la que llegó a estar conectada murió a los dos avisos y la otra
+# seguía mandando actualizaciones a nadie cientos de veces.
+#
+# Un minuto es de sobra: el token se registra al conectar el websocket, y el
+# on_load que arranca el bucle llega POR ese websocket, así que en la práctica
+# ya consta en la primera vuelta. Y cuando no se puede saber si está conectada
+# —no hay registro que consultar— no se cuenta el plazo: ahí se sigue
+# prefiriendo una sesión fantasma de más a cortarle el refresco a una viva.
+GRACIA = 60.0
+
+
 class Guardia:
-    """Vigila UNA sesión. Solo la da por perdida si antes la vio conectada.
+    """Vigila UNA sesión. La da por perdida al desconectarse, y también si en
+    su primer minuto de vida no llega a verla conectada ni una vez.
 
     Ese «antes la vio» importa: el bucle arranca al montar la página, y en las
     primeras vueltas el token puede no estar todavía registrado. Sin esa
     condición, cada bucle se suicidaría al nacer y ninguna pantalla se
-    refrescaría nunca.
+    refrescaría nunca. Pero con la condición a secas, un bucle que no llegara a
+    ver su sesión no moría jamás — de ahí el plazo (ver GRACIA).
     """
 
     def __init__(self, token: str, nombre: str = "", numero: int = 0):
@@ -120,6 +144,7 @@ class Guardia:
         self._nombre = nombre
         self._numero = numero
         self._vista = False
+        self._nacido = time.monotonic()
 
     @property
     def token(self) -> str:
@@ -138,7 +163,9 @@ class Guardia:
         if estado:
             self._vista = True
             return True
-        if self._vista:
+        # Desconectada: se apaga si se la llegó a ver, y también si ya se le
+        # dio su plazo de cortesía sin haberla visto nunca.
+        if self._vista or time.monotonic() - self._nacido > GRACIA:
             self._olvidar()
             return False
         return True
@@ -195,5 +222,13 @@ async def guardia(estado) -> Guardia:
             token = ""
     if not token or not quien:
         return Guardia(token)
-    nombre = f"{type(estado).__name__}.{quien}"
+    # `estado.__class__` y NO `type(estado)`: dentro de un bucle de fondo, el
+    # `self` que llega aqui no es el State, es el StateProxy con el que Reflex
+    # lo envuelve (ver reflex/state.py, "For background tasks, proxy the
+    # state"). `type()` mira el objeto de verdad y devuelve "StateProxy" para
+    # todos por igual; `__class__` lo reenvia al State envuelto, que es de
+    # quien queremos el nombre. Con `type()`, los nueve `sync_loop` volvian a
+    # compartir la clave `(token, "StateProxy.sync_loop")` y a matarse entre
+    # ellos: justo la averia que este nombre existe para evitar.
+    nombre = f"{estado.__class__.__name__}.{quien}"
     return Guardia(token, nombre, _relevar(token, nombre))

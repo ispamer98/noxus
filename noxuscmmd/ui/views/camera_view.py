@@ -50,17 +50,23 @@ def ptz_control_buttons():
 
 
 def open_in_browser_button(url: str):
-    """Abre el stream en una pestaña real del navegador. Necesario cuando la
-    cámara está detrás de Cloudflare Access: la pantalla de login de Access
-    bloquea su propio renderizado dentro de un iframe (frame-ancestors), así
-    que dentro del diálogo solo se ve una página en blanco hasta que te
-    autenticas en una pestaña normal."""
+    """Abre el stream en una pestaña real del navegador.
+
+    Antes era OBLIGATORIO: el directo vivía en `cam.noxuscmmd.uk` detrás de
+    Cloudflare Access, y la pantalla de login de Access se niega a dibujarse
+    dentro de un iframe (`frame-ancestors`), así que en el diálogo solo se veía
+    una página en blanco hasta autenticarse en una pestaña aparte.
+
+    Desde el 20/09/2026 ya no hace falta: el directo está en `/cam`, mismo
+    dominio que el panel, con la misma cookie de sesión y `X-Frame-Options:
+    SAMEORIGIN`, así que el iframe funciona. Se deja porque sigue siendo cómodo
+    ver una cámara a pantalla completa en su propia pestaña."""
     return rx.button(
         rx.icon("external-link", size=16),
         on_click=rx.call_script(f"window.open('{url}', '_blank')"),
         variant="ghost",
         size="1",
-        title="Abrir en el navegador (necesario para iniciar sesión en Cloudflare Access)",
+        title="Abrir la cámara en una pestaña aparte",
     )
 
 

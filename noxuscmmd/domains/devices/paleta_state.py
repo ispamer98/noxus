@@ -79,10 +79,9 @@ class PaletaState(rx.State):
             quien = await audit.usuario_de(self)
             ok, resumen = await modes_state.aplicar(paso["target"], quien)
             if ok:
-                return rx.toast.success(f"{comando['etiqueta']} · {resumen}",
-                                        position="top-center")
+                return rx.toast.success(f"{comando['etiqueta']} · {resumen}")
             return rx.toast.error(f"{comando['etiqueta']}: {resumen}",
-                                  position="top-center", duration=10000)
+                                  duration=10000)
 
         # Todo lo demás son pasos del despachador de siempre. El permiso se pide
         # según la familia: encender una luz no es lo mismo que armar la casa.
@@ -93,11 +92,10 @@ class PaletaState(rx.State):
             resumen = await actions.dispatch(paso)
         except Exception as e:
             return rx.toast.error(f"{comando['etiqueta']}: {e}",
-                                  position="top-center", duration=10000)
+                                  duration=10000)
         await audit.registrar(self, logs.SISTEMA, "PALETA_COMANDO",
                               f"{comando['etiqueta']} · {resumen}")
-        return rx.toast.success(resumen or comando["etiqueta"],
-                                position="top-center")
+        return rx.toast.success(resumen or comando["etiqueta"])
 
     @rx.var
     def resultados(self) -> list[dict]:

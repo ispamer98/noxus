@@ -93,8 +93,8 @@ class Snapshot:
 
 def _leer_mundo() -> tuple[dict, dict, dict, bool, str]:
     return (
-        nodes_store.get_all_sensor_states(),
-        nodes_store.get_all_host_online(),
+        nodes_store.get_all_sensor_states(real=True),
+        nodes_store.get_all_host_online(real=True),
         {g["id"]: g for g in groups_store.read_all()},
         shared_state.get_sistema_armado(),
         modes_store.activo(),

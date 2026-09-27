@@ -1,11 +1,8 @@
 """
-Barra de alertas sin confirmar, con sus dos botones.
+Alertas sin confirmar, con sus dos botones.
 
-Va en el FLUJO de la página, justo debajo de la barra superior, y no flotando
-como el aviso de vincular: una alerta de alarma sin confirmar tiene que empujar
-el contenido y verse, no quedarse en una esquina que se aprende a ignorar. Por lo
-mismo no lleva botón de cerrar — se quita confirmando o silenciando, que es
-justo la decisión que hay que tomar.
+Viven en la pila flotante común abajo a la derecha. No llevan botón de cerrar:
+se quitan confirmando o silenciando, que es la decisión que hay que tomar.
 
 Aparece en todas las vistas porque cuelga del shell del dashboard, así que da
 igual en qué pestaña estuviera el panel cuando saltó.
@@ -45,8 +42,9 @@ def _fila(a: rx.Var) -> rx.Component:
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="10px 12px",
         border_radius="10px",
-        background="rgba(239, 68, 68, 0.10)",
+        background=theme.alpha(theme.DANGER, 0.10),
         border=f"1px solid {theme.DANGER}",
+        class_name="nx-floating-notice nx-alert-notice",
     )
 
 
@@ -57,6 +55,6 @@ def banner_alertas() -> rx.Component:
             rx.foreach(AlertasState.pendientes, _fila),
             spacing="2",
             width="100%",
-            padding=["10px 14px 0", "10px 14px 0", "14px 28px 0"],
+            class_name="nx-notice-group",
         ),
     )

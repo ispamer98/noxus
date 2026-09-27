@@ -23,6 +23,7 @@ noxuscmmd/
 │   ├── access/        control de accesos
 │   ├── automations/   automatizaciones
 │   ├── notifications/ avisos push
+│   ├── integrations/  puente con n8n (webhooks de ida y vuelta)
 │   └── infra/         estado de la infraestructura
 └── ui/dashboard/  vistas y componentes — solo pintan
 ```
@@ -54,6 +55,9 @@ ni un puerto en el router.
 
 ## Documentación
 
+- [`N8N.md`](N8N.md) — el puente con n8n: qué eventos salen de la casa y
+  cómo se le deja entrar para mandar un aviso.
+- [`ALEXA_CLOUD.md`](ALEXA_CLOUD.md) — la Skill oficial de Alexa.
 - [`decisiones/`](decisiones/) — decisiones tomadas y por qué, incluida la que
   afecta a la seguridad del estado expuesto al navegador.
 - [`runbooks/`](runbooks/) — procedimientos repetibles.

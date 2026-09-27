@@ -456,7 +456,7 @@ def _host_card(host) -> rx.Component:
         ),
         rx.cond(expanded, _expand_panel(host)),
         width="100%", spacing="0",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {rx.cond(organizando, theme.ACCENT, theme.BORDER)}",
         border_radius="10px",
         padding="10px 12px",

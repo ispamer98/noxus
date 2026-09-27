@@ -15,7 +15,7 @@ VISTAS = (
     "overview", "alarm", "groups", "floor_plan", "video_wall", "cctv", "access",
     "lights", "ir_remotes", "automations", "equipment", "settings_hub", "system",
     "logs", "metricas", "voz", "usuarios", "inventario", "modos", "retardos",
-    "instalador", "presencia", "accesorios", "movimiento",
+    "instalador", "presencia", "accesorios", "movimiento", "pruebas", "estancias",
 )
 
 
@@ -76,6 +76,35 @@ class DashboardState(rx.State):
 
     def set_view(self, view: str):
         self.active_view = view
+
+    @rx.event
+    async def entrar(self):
+        """Agrupa el arranque para no bloquear los toques con viajes de red.
+
+        Los imports son locales porque la página define la lista de entrada y,
+        a su vez, importa este State para construir la interfaz.
+        """
+        from ...core.entrada import ejecutar_eventos_entrada
+        from ...domains.auth import permisos, store as auth_store
+        from ...domains.auth.state import AuthState
+        from ..pages.dashboard import (
+            EVENTOS_DE_ENTRADA,
+            EVENTOS_DE_IDENTIFICACION,
+        )
+
+        para_cliente = await ejecutar_eventos_entrada(
+            self, EVENTOS_DE_IDENTIFICACION)
+        auth = await self.get_state(AuthState)
+        # identificar ya ha devuelto la redirección a su estancia. No cargar
+        # detrás de ella estados del panel completo que la tablet nunca verá.
+        if auth._rol == auth_store.KIOSCO:
+            return para_cliente
+        # Mismo criterio que AuthState.tiene_acceso: durante el rodaje la
+        # interfaz sigue visible; con el bloqueo activo exige la capacidad VER.
+        if not auth._ve(permisos.VER):
+            return para_cliente
+        resto = EVENTOS_DE_ENTRADA[len(EVENTOS_DE_IDENTIFICACION):]
+        return para_cliente + await ejecutar_eventos_entrada(self, resto)
 
     @rx.event
     async def iniciar_secuencia_alexa(self, slot: str = "action"):
@@ -159,11 +188,19 @@ class DashboardState(rx.State):
     # "equipment" NO está aquí: tiene fila propia en el menú (ver sidebar.py).
     _EN_AJUSTES = ("alarm", "groups", "access", "cctv", "lights", "ir_remotes",
                    "automations", "system", "voz", "usuarios", "inventario", "modos", "retardos",
-                   "instalador", "presencia", "accesorios", "movimiento")
+                   "instalador", "presencia", "accesorios", "movimiento", "pruebas", "estancias")
 
     @rx.var
     def settings_hub_active(self) -> bool:
         return self.active_view in self._EN_AJUSTES or self.active_view == "settings_hub"
+
+    @rx.var
+    def en_subajustes(self) -> bool:
+        """Estamos DENTRO de una pestaña de Ajustes (no en el menú de Ajustes).
+
+        Es lo que decide si la barra superior pinta la flecha de volver.
+        """
+        return self.active_view in self._EN_AJUSTES
 
     def toggle_sidebar(self):
         self.sidebar_collapsed = not self.sidebar_collapsed

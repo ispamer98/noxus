@@ -8,7 +8,6 @@ casa, y dos sitios que se contradicen a la primera de cambio.
 import reflex as rx
 
 from .. import theme
-from ..state import DashboardState
 from ....domains.modes.state import ModesState
 
 
@@ -98,7 +97,7 @@ def _ficha(modo: rx.Var) -> rx.Component:
         rx.button(rx.icon("pencil", size=13), size="1", variant="soft",
                   on_click=ModesState.abrir_editor(modo["id"])),
         align="center", spacing="3", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="12px 14px",
     )
 
@@ -111,9 +110,6 @@ def modos_view() -> rx.Component:
             rx.spacer(),
             rx.button(rx.icon("plus", size=15), "Nuevo", size="2",
                       variant="soft", on_click=ModesState.crear),
-            rx.button(rx.icon("arrow-left", size=15), "Ajustes", size="2",
-                      variant="soft",
-                      on_click=DashboardState.set_view("settings_hub")),
             align="center", spacing="2", width="100%", wrap="wrap",
         ),
         rx.text(

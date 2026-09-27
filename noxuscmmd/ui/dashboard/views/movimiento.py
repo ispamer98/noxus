@@ -32,7 +32,7 @@ def _fila_camara(c: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="9px 11px", border_radius="10px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -55,7 +55,7 @@ def movimiento_view() -> rx.Component:
             rx.text(MovimientoState.estado_texto, size="2", color=theme.TEXT),
             align="center", spacing="3", width="100%", wrap="wrap",
             padding="11px", border_radius="10px",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         ),
 
         rx.hstack(
@@ -74,8 +74,8 @@ def movimiento_view() -> rx.Component:
         ),
 
         rx.vstack(
-            rx.text("SENSIBILIDAD", size="1", color=theme.MUTED, weight="bold",
-                    letter_spacing="0.08em"),
+            rx.text("Sensibilidad", size="1", color=theme.MUTED,
+                    weight="bold", class_name="nx-label"),
             styled_select(
                 "Sensibilidad",
                 select_content(
@@ -94,8 +94,8 @@ def movimiento_view() -> rx.Component:
         ),
 
         rx.vstack(
-            rx.text("CÁMARAS QUE SE VIGILAN", size="1", color=theme.MUTED,
-                    weight="bold", letter_spacing="0.08em"),
+            rx.text("Cámaras que se vigilan", size="1", color=theme.MUTED,
+                    class_name="nx-label", weight="bold"),
             rx.foreach(MovimientoState.camaras, _fila_camara),
             spacing="2", width="100%", align="start",
         ),

@@ -63,17 +63,17 @@ def confirm_delete_dialog(trigger: rx.Component, *, title: str, tipo: str, nombr
 
 
 def _menu_row(icon: str, label, color: str = None, **props) -> rx.Component:
+    """Acción nativa: admite teclado además de ratón y pantalla táctil."""
     color = color or theme.TEXT
-    return rx.hstack(
-        rx.icon(icon, size=14, color=color),
+    return rx.el.button(
+        rx.icon(icon, size=14, color=color, flex_shrink="0"),
         rx.text(label, size="2", color=color),
-        spacing="2",
-        align="center",
-        width="100%",
-        padding="8px 10px",
-        border_radius="7px",
-        cursor="pointer",
+        type="button", display="flex", gap="8px", align_items="center",
+        width="100%", min_height="40px", padding="8px 10px",
+        border="0", background="transparent", text_align="left",
+        font_family="inherit", border_radius="7px", cursor="pointer",
         _hover={"background": theme.alpha(theme.ACCENT, 0.08)},
+        _focus_visible={"outline": f"2px solid {theme.ACCENT}", "outline_offset": "-2px"},
         **props,
     )
 
@@ -159,7 +159,7 @@ def actions_menu(
                 # lo pulsa por ti (ver components/pulsacion_larga.py). Está aquí,
                 # en un solo sitio, y no repartida por las treinta tarjetas del
                 # panel: cualquier tarjeta con menú lo gana sin tocarla.
-                custom_attrs={"data-nx-menu": "1"},
+                custom_attrs={"data-nx-menu": "1"}, aria_label="Acciones del elemento",
             ),
         ),
         rx.popover.content(

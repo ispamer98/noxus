@@ -108,11 +108,10 @@ class ModesState(rx.State):
             nombre = next((m["nombre"] for m in self.modos if m["id"] == modo_id),
                           "el modo")
         if ok:
-            yield rx.toast.success(f"Casa en «{nombre}» · {resumen}",
-                                   position="top-center")
+            yield rx.toast.success(f"Casa en «{nombre}» · {resumen}")
         else:
             yield rx.toast.error(f"«{nombre}»: {resumen}",
-                                 position="top-center", duration=10000)
+                                 duration=10000)
 
     # ── Editor ───────────────────────────────────────────────────────────
     @rx.event
@@ -165,8 +164,7 @@ class ModesState(rx.State):
         self.editando = ""
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "MODO_EDITADO", nombre)
-        return rx.toast.success(f"Modo «{nombre}» guardado.",
-                                position="top-center")
+        return rx.toast.success(f"Modo «{nombre}» guardado.")
 
     @rx.event
     async def crear(self):
@@ -175,8 +173,7 @@ class ModesState(rx.State):
         modo = store.crear("Modo nuevo")
         self._recargar()
         self.abrir_editor(modo["id"])
-        return rx.toast.success("Modo creado. Ponle nombre y sus reglas.",
-                                position="top-center")
+        return rx.toast.success("Modo creado. Ponle nombre y sus reglas.")
 
     @rx.event
     async def borrar(self, modo_id: str):
@@ -189,7 +186,7 @@ class ModesState(rx.State):
         self._recargar()
         await audit.registrar(self, logs.SISTEMA, "MODO_BORRADO",
                               modo.get("nombre", modo_id))
-        return rx.toast.success("Modo borrado.", position="top-center")
+        return rx.toast.success("Modo borrado.")
 
 
 def _resumen_reglas(ids: list[str]) -> str:

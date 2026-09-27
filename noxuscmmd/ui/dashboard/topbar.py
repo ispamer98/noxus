@@ -48,22 +48,21 @@ VIEW_TITLES = {
     "presencia": ("Simulación de presencia", "user-round-check"),
     "accesorios": ("Accesorios", "toggle-right"),
     "movimiento": ("Detección de movimiento", "scan-eye"),
+    "pruebas": ("Pruebas", "flask-conical"),
+    "estancias": ("Estancias", "layout-panel-left"),
 }
 
 
 def _view_title() -> rx.Component:
-    return rx.box(
+    # Un h1 de verdad (uno por página): el título de la vista es lo que dice
+    # dónde se está, y así lo leen igual un lector de pantalla y una persona.
+    return rx.el.h1(
         rx.match(
             DashboardState.active_view,
-            *[
-                (view_id, rx.text(title, size=rx.breakpoints(initial="3", md="4"), weight="bold", color=theme.TEXT, white_space="nowrap", overflow="hidden", text_overflow="ellipsis"))
-                for view_id, (title, _) in VIEW_TITLES.items()
-            ],
-            rx.text("Resumen", size=rx.breakpoints(initial="3", md="4"), weight="bold", color=theme.TEXT),
+            *[(view_id, title) for view_id, (title, _) in VIEW_TITLES.items()],
+            "Resumen",
         ),
-        min_width="0",
-        overflow="hidden",
-        flex="1",
+        class_name="nx-title",
     )
 
 
@@ -78,19 +77,20 @@ def _arm_toggle_icon() -> rx.Component:
 
 
 def _arm_toggle_boton() -> rx.Component:
-    return rx.box(
+    armado = SecurityState.sistema_armado
+    return rx.el.button(
         rx.icon(
-            rx.cond(SecurityState.sistema_armado, "shield-check", "shield-off"),
-            size=20,
-            color=rx.cond(SecurityState.sistema_armado, theme.DANGER, theme.SUCCESS),
+            rx.cond(armado, "shield-check", "shield-off"), size=20,
+            color=rx.cond(armado, "#ff4d5e", "#2ee6a6"),
         ),
         on_click=ArmingState.pedir_armar(""),
-        cursor="pointer",
-        padding="8px",
-        border_radius="8px",
-        flex_shrink="0",
-        _hover={"background": rx.cond(SecurityState.sistema_armado, theme.alpha(theme.DANGER, 0.12), theme.alpha(theme.SUCCESS, 0.12))},
-        title=rx.cond(SecurityState.sistema_armado, "Sistema ARMADO — pulsa para desarmar", "Sistema DESARMADO — pulsa para armar"),
+        class_name="nx-arm-icon",
+        custom_attrs={"data-armado": armado},
+        title=rx.cond(armado, "Casa armada — pulsa para desarmar",
+                      "Casa desarmada — pulsa para armar"),
+        aria_label=rx.cond(armado, "Casa armada. Pulsa para desarmar",
+                           "Casa desarmada. Pulsa para armar"),
+        type="button",
     )
 
 
@@ -115,8 +115,8 @@ def _apariencia() -> rx.Component:
     eso tampoco pide permiso de ajustes — un invitado con una tablet tiene el
     mismo derecho a ver los botones grandes."""
     return rx.vstack(
-        rx.text("CÓMO SE VE ESTE APARATO", size="1", color=theme.MUTED,
-                letter_spacing="0.05em", weight="bold"),
+        rx.text("Cómo se ve este aparato", size="1", color=theme.MUTED,
+                weight="medium"),
         rx.hstack(
             rx.foreach(
                 AuthState.densidades_ui,
@@ -176,28 +176,25 @@ def _panel_dispositivo() -> rx.Component:
     vinculado = PushState.current_user != ""
     return rx.popover.root(
         rx.popover.trigger(
-            rx.hstack(
+            # El icono entero expresa el estado: no se reduce a un punto que se
+            # pierde de vista en la barra. La pastilla sigue siendo el ancla
+            # del mismo popover; su contenido no cambia.
+            rx.el.button(
                 rx.icon(
                     rx.cond(vinculado, "circle-user-round", "circle-user"),
                     size=20,
-                    color=rx.cond(vinculado, theme.SUCCESS, theme.WARNING),
+                    color=rx.cond(vinculado, "#2ee6a6", "#ffa31a"),
                     flex_shrink="0",
                 ),
-                rx.cond(
-                    vinculado,
-                    rx.text(PushState.current_user, size="2", color=theme.TEXT,
-                            weight="medium", white_space="nowrap",
-                            display=["none", "none", "block"]),
-                    rx.text("Sin vincular", size="2", color=theme.MUTED,
-                            white_space="nowrap", display=["none", "none", "block"]),
+                rx.el.span(
+                    rx.cond(vinculado, PushState.current_user, "Sin vincular"),
+                    class_name="nx-chip-nombre",
                 ),
-                cursor="pointer", align="center", spacing="2",
-                padding=["6px", "6px", "6px 12px"],
-                border_radius="999px", flex_shrink="0",
-                background=theme.BG_CARD,
-                border=f"1px solid {rx.cond(vinculado, theme.BORDER, theme.WARNING)}",
+                class_name="nx-chip",
+                custom_attrs={"data-vinculado": vinculado},
                 title="Este dispositivo",
-                _hover={"border_color": theme.BORDER_STRONG, "background": theme.BG_CARD_HOVER},
+                aria_label="Este dispositivo",
+                type="button",
             ),
         ),
         rx.popover.content(
@@ -233,8 +230,8 @@ def _panel_dispositivo() -> rx.Component:
                 rx.cond(
                     vinculado,
                     rx.vstack(
-                        rx.text("NOMBRE DE ESTE DISPOSITIVO", size="1", color=theme.MUTED,
-                                letter_spacing="0.05em", weight="bold"),
+                        rx.text("Nombre de este dispositivo", size="1", color=theme.MUTED,
+                                weight="medium"),
                         rx.hstack(
                             styled_input(
                                 value=PushState.nombre_nuevo,
@@ -281,89 +278,76 @@ def _panel_dispositivo() -> rx.Component:
     )
 
 
+def _boton_atras_ajustes() -> rx.Component:
+    """Flecha de volver al menu de Ajustes, en TODAS las pestañas de dentro de Ajustes.
+
+    Vive aqui, en la barra de arriba, y no en cada vista: asi sale en las pestañas que
+    decide state._EN_AJUSTES, siempre en el mismo sitio, y una pestaña nueva la tiene
+    sin acordarse de ponerla. El "atras" propio de un flujo interno (el editor de Auto,
+    el instalador) sigue siendo suyo: esta flecha va siempre al menu de Ajustes.
+    """
+    return rx.cond(
+        DashboardState.en_subajustes,
+        rx.button(
+            rx.icon("arrow-left", size=16),
+            rx.text("Ajustes", display=rx.breakpoints(initial="none", sm="inline")),
+            size="2",
+            variant="soft",
+            on_click=DashboardState.set_view("settings_hub"),
+            aria_label="Volver a Ajustes",
+            title="Volver a Ajustes",
+            flex_shrink="0",
+        ),
+    )
+
+
+def _icono_barra(icono: str, titulo: str, **props) -> rx.Component:
+    return rx.el.button(
+        rx.icon(icono, size=18),
+        class_name="nx-icon-btn",
+        title=titulo,
+        aria_label=titulo,
+        type="button",
+        **props,
+    )
+
+
 def topbar() -> rx.Component:
-    return rx.hstack(
+    # Vive FUERA del contenedor que se desplaza (ver _panel en
+    # ui/pages/dashboard.py): por eso no se mueve nunca, ni al hacer scroll ni
+    # con el rebote elástico de iOS, que antes la arrastraba a media pantalla.
+    return rx.el.header(
+        # La marca solo sale en el móvil, donde no hay barra lateral (nx.css).
+        rx.el.img(src="/noxus-marca.svg", alt="", class_name="nx-title-mark",
+                  width="26", height="26"),
+        _boton_atras_ajustes(),
         _view_title(),
         _arm_toggle_icon(),
         rx.badge(
-            rx.cond(SecurityState.puerta_abierta, "PUERTA ABIERTA", "PUERTA CERRADA"),
+            rx.cond(SecurityState.puerta_abierta, "Puerta abierta", "Puerta cerrada"),
             color_scheme=rx.cond(SecurityState.puerta_abierta, "orange", "gray"),
             variant="surface",
             size="2",
-            # !important necesario: los componentes Radix (Box/Flex/Badge...) traen su propio
-            # display incondicional en su CSS base (.rt-Badge{display:inline-flex}, etc.), que
-            # Emotion inserta con MENOS prioridad que ese CSS estático — sin !important, a igual
-            # especificidad gana la regla de Radix y el elemento se ve en todos los anchos.
-            display=["none !important", "none !important", "flex !important"],
+            class_name="nx-solo-escritorio nx-solo-ancho",
             flex_shrink="0",
         ),
-        rx.spacer(display=["none !important", "none !important", "flex !important"]),
-        rx.el.span(
-            id="nx-clock",
-            display=["none !important", "none !important", "inline !important"],
-            style={
-                "font_family": theme.FONT_MONO,
-                "font_size": "0.85rem",
-                "color": theme.MUTED,
-                "letter_spacing": "0.03em",
-                "white_space": "nowrap",
-            },
-        ),
-        # La lupa de la paleta de comandos, delante de los iconos de
-        # consulta: es la forma rapida de llegar a CUALQUIER sitio.
+        # Piloto «en vivo» junto al reloj: late mientras el panel está conectado.
+        rx.el.span(class_name="nx-vivo nx-solo-escritorio nx-solo-ancho", aria_hidden="true"),
+        rx.el.span(id="nx-clock", class_name="nx-clock nx-solo-escritorio nx-solo-ancho"),
+        # La paleta de comandos: la forma rápida de llegar a CUALQUIER sitio.
         boton_paleta(),
-        # Mandar un aviso a los moviles de la casa sin pasar por el Resumen.
-        # Mismo tratamiento gris que Registros y Metricas y no el naranja de
-        # aviso: aqui NO esta pasando nada: es una herramienta, y en la barra
-        # tiene que pesar lo mismo que sus vecinas.
-        dialogo_enviar_alerta(
-            rx.box(
-                rx.icon("bell-ring", size=18, color=theme.MUTED),
-                cursor="pointer",
-                padding="8px",
-                border_radius="8px",
-                flex_shrink="0",
-                _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
-                title="Enviar una alerta",
-            ),
-        ),
-        rx.box(
-            rx.icon("clipboard-list", size=18, color=theme.MUTED),
-            on_click=DashboardState.set_view("logs"),
-            cursor="pointer",
-            padding="8px",
-            border_radius="8px",
-            flex_shrink="0",
-            _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
-            title="Ver registros",
-        ),
-        # Métricas al lado de Registros: son las dos caras del mismo histórico —
-        # los hechos uno a uno y los hechos contados.
-        #
-        # Se ve TAMBIÉN en el móvil aunque ahí la barra vaya justa. Esconderlo
-        # dejaba la pantalla sin ninguna forma de llegar desde el teléfono, y una
-        # vista a la que solo se llega escribiendo ?vista=metricas en la barra de
-        # direcciones es una vista que no existe.
-        rx.box(
-            rx.icon("chart-line", size=18, color=theme.MUTED),
-            on_click=DashboardState.set_view("metricas"),
-            cursor="pointer",
-            padding="8px",
-            border_radius="8px",
-            flex_shrink="0",
-            _hover={"background": theme.alpha(theme.ACCENT, 0.10)},
-            title="Ver métricas",
-        ),
+        # Mandar un aviso a los móviles de la casa sin pasar por el Resumen.
+        # Pesa lo mismo que sus vecinas: aquí no está pasando nada, es una
+        # herramienta.
+        dialogo_enviar_alerta(_icono_barra("bell-ring", "Enviar una alerta")),
+        _icono_barra("clipboard-list", "Ver registros",
+                     on_click=DashboardState.set_view("logs")),
+        # Métricas al lado de Registros: son las dos caras del mismo histórico
+        # —los hechos uno a uno y los hechos contados—. Se ve TAMBIÉN en el
+        # móvil: una vista a la que solo se llega escribiendo ?vista=metricas
+        # en la barra de direcciones es una vista que no existe.
+        _icono_barra("chart-line", "Ver métricas",
+                     on_click=DashboardState.set_view("metricas")),
         _panel_dispositivo(),
-        width="100%",
-        align="center",
-        spacing="3",
-        padding=["10px 12px", "10px 12px", "14px 24px"],
-        background=theme.BG_TOPBAR,
-        border_bottom=f"1px solid {theme.BORDER}",
-        backdrop_filter="blur(12px)",
-        position="sticky",
-        top="0",
-        z_index="40",
-        overflow_x="hidden",
+        class_name="nx-topbar",
     )

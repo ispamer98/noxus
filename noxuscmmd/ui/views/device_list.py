@@ -18,7 +18,9 @@ from ...domains.devices.registry_state import RegistryState
 from ...domains.auth.state import AuthState
 from ...domains.nodes.state import NodesState
 from ...domains.nodes.host_actions_state import HostActionsState
+from ...domains.nodes.kiosco_state import KioscoState
 from ..dashboard.state import DashboardState
+from ..dashboard import theme
 from ..components.status_row import status_row
 
 VAPID_PUBLIC = _VAPID_PUBLIC
@@ -119,8 +121,8 @@ PLAN_RESET_SCRIPT = "window.__nxPlanPending = {};"
 # está pasando ahora mismo: rojo = abierto/alarma, ámbar = pulso de apertura
 # en curso. Todo lo demás (el estado EN REPOSO) es del usuario y sale del
 # selector de color del plano.
-_RED, _GREEN, _BLUE, _AMBER, _GREY = "#ef4444", "#22c55e", "#38bdf8", "#f59e0b", "#64748b"
-_PURPLE, _CYAN, _SLATE = "#a78bfa", "#22d3ee", "#cbd5e1"
+_RED, _GREEN, _BLUE, _AMBER, _GREY = theme.DANGER, theme.SUCCESS, theme.ACCENT, theme.WARNING, "#64748b"
+_PURPLE, _CYAN, _SLATE = theme.PURPLE, "#22d3ee", "#cbd5e1"
 
 # Color en reposo cuando no se ha elegido ninguno: el MISMO para sensores,
 # cámaras, puertas y luces, y neutro a propósito.
@@ -492,6 +494,40 @@ def _dynamic_light_marker(l: dict) -> rx.Component:
     )
 
 
+def _kiosco_camera_marker(c: dict) -> rx.Component:
+    icon = rx.cond(c["floor_icon"], c["floor_icon"].to(str), "video")
+    return _camera_marker(
+        c["id"].to(str), c["name"].to(str), icon,
+        c["floor_top"].to(str), c["floor_left"].to(str),
+        KioscoState.abrir_overlay("camara", c["id"]),
+        subtle=c["floor_subtle"], color=c["floor_color"].to(str),
+        color_on=c["floor_color_on"].to(str),
+    )
+
+
+def _kiosco_remote_marker(r: dict) -> rx.Component:
+    icon = rx.cond(r["floor_icon"], r["floor_icon"].to(str),
+                   r["icon"].to(str))
+    return _ir_remote_marker(
+        r["id"].to(str), r["name"].to(str), icon,
+        r["floor_top"].to(str), r["floor_left"].to(str),
+        KioscoState.abrir_overlay("mando", r["id"]),
+        subtle=r["floor_subtle"], color=r["floor_color"].to(str),
+    )
+
+
+def _kiosco_host_marker(h: dict) -> rx.Component:
+    icon = rx.cond(h["floor_icon"], h["floor_icon"].to(str),
+                   h["icon"].to(str))
+    return _host_marker(
+        h["id"].to(str), h["name"].to(str), icon, h["online"],
+        h["floor_top"].to(str), h["floor_left"].to(str),
+        KioscoState.abrir_overlay("equipo", h["id"]),
+        subtle=h["floor_subtle"], color=h["floor_color"].to(str),
+        color_on=h["floor_color_on"].to(str),
+    )
+
+
 def check_existing_subscription_event():
     """Al montar la página: recupera el nombre de este dispositivo a partir de
     la suscripción que ya tenga el navegador y, si no está vinculado, lo da de
@@ -506,23 +542,23 @@ def check_existing_subscription_event():
 # estado son genéricos (ELEMENTO_ABIERTO/CERRADO, ver domains/nodes/state.py y
 # domains/security/state.py) y esto es una simple tabla.
 _LOG_META = {
-    "ELEMENTO_ABIERTO": ("door-open", "#f97316"),
-    "ELEMENTO_CERRADO": ("door-closed", "#22c55e"),
-    "ALARMA_DISPARADA": ("triangle-alert", "#ef4444"),
-    "ARMADO": ("shield-check", "#22c55e"),
+    "ELEMENTO_ABIERTO": ("door-open", theme.WARNING),
+    "ELEMENTO_CERRADO": ("door-closed", theme.SUCCESS),
+    "ALARMA_DISPARADA": ("triangle-alert", theme.DANGER),
+    "ARMADO": ("shield-check", theme.SUCCESS),
     "DESARMADO": ("shield-off", "#64748b"),
-    "ARMADO_GRUPO": ("shield-check", "#f97316"),
+    "ARMADO_GRUPO": ("shield-check", theme.WARNING),
     "DESARMADO_GRUPO": ("shield-off", "#64748b"),
-    "GRUPO_ALERTA": ("triangle-alert", "#ef4444"),
-    "GRUPO_CERRADO": ("shield-check", "#22c55e"),
+    "GRUPO_ALERTA": ("triangle-alert", theme.DANGER),
+    "GRUPO_CERRADO": ("shield-check", theme.SUCCESS),
     # Históricas: entradas escritas antes de unificar el formato. Se mantienen
     # para que el historial antiguo se siga viendo bien.
-    "PUERTA_ABIERTA": ("door-open", "#f97316"),
-    "PUERTA_CERRADA": ("door-closed", "#22c55e"),
-    "TAMPER1_ABIERTO": ("lock-open", "#ef4444"),
-    "TAMPER1_CERRADO": ("lock", "#22c55e"),
-    "TAMPER2_ABIERTO": ("lock-open", "#ef4444"),
-    "TAMPER2_CERRADO": ("lock", "#22c55e"),
+    "PUERTA_ABIERTA": ("door-open", theme.WARNING),
+    "PUERTA_CERRADA": ("door-closed", theme.SUCCESS),
+    "TAMPER1_ABIERTO": ("lock-open", theme.DANGER),
+    "TAMPER1_CERRADO": ("lock", theme.SUCCESS),
+    "TAMPER2_ABIERTO": ("lock-open", theme.DANGER),
+    "TAMPER2_CERRADO": ("lock", theme.SUCCESS),
 }
 
 
@@ -530,7 +566,7 @@ def _log_icon(accion) -> rx.Component:
     return rx.match(
         accion,
         *[(k, rx.icon(icono, size=16, color=color)) for k, (icono, color) in _LOG_META.items()],
-        rx.icon("file-text", size=16, color="#94a3b8"),
+        rx.icon("file-text", size=16, color=theme.MUTED),
     )
 
 
@@ -611,6 +647,43 @@ def floor_plan_content():
     )
 
 
+def kiosco_floor_plan_content() -> rx.Component:
+    """El mismo plano interactivo, filtrado a los miembros de la estancia."""
+    return rx.box(
+        rx.image(
+            src=NodesState.plano_imagen_url,
+            width="100%", height="100%", object_fit="contain",
+            border_radius="12px", opacity="0.92", draggable=False,
+            pointer_events="none", user_select="none",
+            alt="Plano de la planta",
+        ),
+        rx.foreach(NodesState.kiosco_sensors_on_floor,
+                   _dynamic_sensor_marker),
+        rx.cond(
+            AuthState.puede_camaras,
+            rx.foreach(NodesState.kiosco_cameras_on_floor,
+                       _kiosco_camera_marker),
+        ),
+        rx.foreach(NodesState.kiosco_doors_on_floor, _dynamic_door_marker),
+        rx.foreach(NodesState.kiosco_lights_on_floor, _dynamic_light_marker),
+        rx.cond(
+            AuthState.puede_mandos,
+            rx.foreach(NodesState.kiosco_remotes_on_floor,
+                       _kiosco_remote_marker),
+        ),
+        rx.cond(
+            AuthState.puede_equipos,
+            rx.foreach(NodesState.kiosco_hosts_on_floor,
+                       _kiosco_host_marker),
+        ),
+        class_name="nx-plan-container nx-kiosco-plan-container",
+        position="relative", width="100%",
+        aspect_ratio=NodesState.plano_aspecto,
+        background="#080d14", border_radius="12px",
+        border="1px solid rgba(255, 255, 255, 0.08)",
+    )
+
+
 def _infra_host_row(host) -> rx.Component:
     host_id = host["id"].to(str)
     return status_row(
@@ -621,5 +694,3 @@ def _infra_host_row(host) -> rx.Component:
         on_rdp=HostActionsState.open_rdp(host_id),
         con_rdp=host["puede_rdp"],
     )
-
-

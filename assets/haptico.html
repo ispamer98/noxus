@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Háptico">
+<meta name="theme-color" content="#04060b">
+<meta name="robots" content="noindex">
+<title>Prueba háptico</title>
+<link rel="apple-touch-icon" href="/noxus-apple-touch-icon.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; padding: max(20px, env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom)); background: #04060b; color: #e8eef7; font: 16px/1.45 -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 22px; margin: 6px 0 4px; letter-spacing: -.02em; }
+  p { margin: 0 0 12px; color: #8a97aa; font-size: 14px; }
+  .caja { border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 14px; margin: 12px 0; background: rgba(255,255,255,.03); }
+  .caja b { display: block; margin-bottom: 4px; }
+  .fila { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  button.acc { position: relative; width: 100%; height: 52px; border-radius: 12px; border: 1px solid rgba(62,224,255,.5); background: rgba(62,224,255,.1); color: #e8eef7; font: 600 16px/1 inherit; }
+  /* B: el interruptor invisible ocupa todo el botón: el dedo toca el interruptor de verdad */
+  .cubre { position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0.02; z-index: 2; -webkit-appearance: auto; appearance: auto; }
+  #log { font: 12px/1.5 ui-monospace, Menlo, monospace; color: #3ee0ff; white-space: pre-wrap; min-height: 90px; }
+  .estado { font: 13px/1.5 ui-monospace, Menlo, monospace; color: #e8eef7; }
+</style>
+</head>
+<body>
+<h1>Prueba de háptico</h1>
+<p>Toca cada variante y dime en cuáles notas vibrar. No hace falta sonido: mira el iPhone en modo normal (no silencio de teclado).</p>
+
+<div class="caja"><b>Tu entorno</b><div class="estado" id="env"></div></div>
+
+<div class="caja">
+  <b>A · Interruptor nativo, toque directo</b>
+  <p>El caso oficial de iOS 18. Toca el interruptor.</p>
+  <div class="fila"><span>Interruptor A</span><input type="checkbox" switch id="a"></div>
+</div>
+
+<div class="caja">
+  <b>B · Botón con el interruptor invisible encima</b>
+  <p>Es la forma que usaría en el panel: tu dedo toca el interruptor y el botón actúa.</p>
+  <button class="acc" id="b" type="button">Botón B<input class="cubre" type="checkbox" switch id="bsw" aria-label="Botón B"></button>
+</div>
+
+<div class="caja">
+  <b>C · Botón normal que activa el interruptor por código</b>
+  <p>Documentación oficial: no confirmado. Puede no vibrar.</p>
+  <button class="acc" id="c" type="button">Botón C</button>
+  <label style="position:absolute;left:-9999px"><input type="checkbox" switch id="csw"></label>
+</div>
+
+<div class="caja">
+  <b>D · navigator.vibrate</b>
+  <p>La API estándar. En iPhone no debería vibrar.</p>
+  <button class="acc" id="d" type="button">Botón D</button>
+</div>
+
+<div class="caja"><b>Registro</b><div id="log"></div></div>
+
+<script>
+  var log = function (t) { document.getElementById('log').textContent = new Date().toLocaleTimeString() + '  ' + t + '\n' + document.getElementById('log').textContent; };
+  var ua = navigator.userAgent, m = ua.match(/OS (\d+)[_.](\d+)/);
+  document.getElementById('env').textContent =
+    'iOS: ' + (m ? m[1] + '.' + m[2] : 'no detectado') + '\n' +
+    'App instalada (standalone): ' + ((navigator.standalone === true || matchMedia('(display-mode: standalone)').matches) ? 'SÍ' : 'no, es Safari') + '\n' +
+    'navigator.vibrate existe: ' + ('vibrate' in navigator ? 'sí' : 'no') + '\n' +
+    'Interruptor nativo soportado: ' + (CSS.supports('appearance', 'auto') && 'switch' in document.createElement('input') ? 'sí' : 'no confirmado');
+  document.getElementById('a').addEventListener('change', function () { log('A · cambió el interruptor (toque directo)'); });
+  var b = document.getElementById('bsw');
+  b.addEventListener('change', function () { log('B · toque en el interruptor invisible → aquí iría la acción del botón'); });
+  document.getElementById('c').addEventListener('click', function () { log('C · clic por código sobre el interruptor'); document.getElementById('csw').click(); });
+  document.getElementById('d').addEventListener('click', function () { var r = navigator.vibrate ? navigator.vibrate(60) : 'sin API'; log('D · navigator.vibrate → ' + r); });
+</script>
+</body>
+</html>

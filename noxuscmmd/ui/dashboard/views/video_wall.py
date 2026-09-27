@@ -68,7 +68,7 @@ def _slot_empty(slot_id) -> rx.Component:
         cursor="pointer",
         display="flex", align_items="center", justify_content="center",
         width="100%", aspect_ratio=_ASPECTO,
-        background=theme.BG_CARD, border=f"1px dashed {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px dashed {theme.BORDER}",
         border_radius="10px",
         transition="border-color 0.15s ease, background 0.15s ease",
         _hover={"border_color": theme.ACCENT, "background": theme.BG_CARD_HOVER},

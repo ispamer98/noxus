@@ -8,7 +8,6 @@ import reflex as rx
 
 from .. import theme
 from ..components.form_dialog import select_content
-from ..state import DashboardState
 from ....domains.auth.admin_state import ICONOS_DISPOSITIVO, AuthAdminState
 from ....domains.auth.state import AuthState
 from ....domains.auth import store
@@ -18,6 +17,7 @@ _COLOR_ROL = {
     store.ADMIN: theme.ACCENT,
     store.FAMILIA: theme.SUCCESS,
     store.INVITADO: theme.WARNING,
+    store.KIOSCO: "#22d3ee",
     store.PENDIENTE: theme.MUTED,
     # Rojo, y distinto del gris de «Sin acceso» a propósito: los permisos de los
     # dos son los mismos —ninguno—, pero uno es «todavía no he decidido» y el
@@ -33,6 +33,7 @@ _ICONO_ROL = {
     store.ADMIN: "shield-check",
     store.FAMILIA: "users",
     store.INVITADO: "user",
+    store.KIOSCO: "tablet",
     store.PENDIENTE: "shield-question",
     store.BLOQUEADO: "ban",
 }
@@ -56,6 +57,7 @@ def _color_rol(item: rx.Var):
         (store.ADMIN, theme.ACCENT),
         (store.FAMILIA, theme.SUCCESS),
         (store.INVITADO, theme.WARNING),
+        (store.KIOSCO, "#22d3ee"),
         (store.BLOQUEADO, theme.DANGER),
         theme.MUTED,
     )
@@ -70,6 +72,7 @@ def _etiqueta_rol(item: rx.Var) -> rx.Component:
         (store.ADMIN, theme.ACCENT),
         (store.FAMILIA, theme.SUCCESS),
         (store.INVITADO, theme.WARNING),
+        (store.KIOSCO, "#22d3ee"),
         theme.MUTED,
     )
     icono = rx.match(
@@ -77,6 +80,7 @@ def _etiqueta_rol(item: rx.Var) -> rx.Component:
         (store.ADMIN, _ICONO_ROL[store.ADMIN]),
         (store.FAMILIA, _ICONO_ROL[store.FAMILIA]),
         (store.INVITADO, _ICONO_ROL[store.INVITADO]),
+        (store.KIOSCO, _ICONO_ROL[store.KIOSCO]),
         (store.BLOQUEADO, _ICONO_ROL[store.BLOQUEADO]),
         _ICONO_ROL[store.PENDIENTE],
     )
@@ -89,6 +93,7 @@ def _etiqueta_rol(item: rx.Var) -> rx.Component:
             (store.ADMIN, theme.alpha(theme.ACCENT, 0.12)),
             (store.FAMILIA, theme.alpha(theme.SUCCESS, 0.12)),
             (store.INVITADO, theme.alpha(theme.WARNING, 0.12)),
+            (store.KIOSCO, "rgba(34, 211, 238, 0.12)"),
             theme.alpha(theme.MUTED, 0.12),
         ),
         padding="3px 10px", border_radius="999px",
@@ -117,6 +122,7 @@ def _selector_rol(item: rx.Var) -> rx.Component:
             _item_rol(store.ADMIN, "Administrador"),
             _item_rol(store.FAMILIA, "Familia"),
             _item_rol(store.INVITADO, "Invitado"),
+            _item_rol(store.KIOSCO, "Tablet de habitación"),
             _item_rol(store.PENDIENTE, "Sin acceso"),
             _item_rol(store.BLOQUEADO, "Bloqueado"),
         ),
@@ -145,8 +151,45 @@ def _fila_categoria(item: rx.Var, cat: rx.Var) -> rx.Component:
 
 def _etiqueta_seccion(texto: str) -> rx.Component:
     return rx.text(texto, size="1", weight="bold", color=theme.MUTED,
-                   letter_spacing="0.05em", text_transform="uppercase",
-                   margin_top="8px")
+                   class_name="nx-label", margin_top="8px")
+
+
+def _ajustes_kiosco(item: rx.Var) -> rx.Component:
+    """Vinculación física y concesión opcional de vídeo de una tablet."""
+    return rx.cond(
+        item["es_kiosco"],
+        rx.vstack(
+            _etiqueta_seccion("Habitación fija"),
+            rx.select.root(
+                rx.select.trigger(placeholder="Elige una estancia", size="2",
+                                  width="100%"),
+                select_content(
+                    rx.foreach(
+                        AuthAdminState.estancias,
+                        lambda room: rx.select.item(
+                            room["nombre"], value=room["id"].to(str)),
+                    ),
+                ),
+                value=item["kiosco_estancia"],
+                on_change=lambda room_id: AuthAdminState.asignar_kiosco_estancia(
+                    item["id"], room_id),
+            ),
+            rx.text("Sin esta vinculación la tablet no puede abrir el kiosco.",
+                    size="1", color=theme.MUTED),
+            rx.hstack(
+                rx.checkbox(
+                    checked=item["kiosco_camaras"],
+                    on_change=lambda _: AuthAdminState.alternar_camaras_kiosco(
+                        item["id"]),
+                ),
+                rx.icon("video", size=13, color=theme.MUTED),
+                rx.text("Permitir cámaras de la habitación", size="2",
+                        color=theme.TEXT),
+                spacing="2", align="center", width="100%",
+            ),
+            spacing="2", width="100%", align="start",
+        ),
+    )
 
 
 def _celda_icono(item: rx.Var, icono: str) -> rx.Component:
@@ -183,7 +226,7 @@ def _icono_grande(item: rx.Var) -> rx.Component:
                 background=theme.WARNING, border_radius="999px",
                 padding="3px", display="flex", align_items="center",
                 justify_content="center",
-                border=f"2px solid {theme.BG_CARD}",
+                border=f"2px solid {theme.BG_WINDOW}",
             ),
         ),
         position="relative", padding="11px", border_radius="12px",
@@ -192,6 +235,7 @@ def _icono_grande(item: rx.Var) -> rx.Component:
             (store.ADMIN, theme.alpha(theme.ACCENT, 0.14)),
             (store.FAMILIA, theme.alpha(theme.SUCCESS, 0.14)),
             (store.INVITADO, theme.alpha(theme.WARNING, 0.14)),
+            (store.KIOSCO, "rgba(34, 211, 238, 0.14)"),
             (store.BLOQUEADO, theme.alpha(theme.DANGER, 0.14)),
             theme.alpha(theme.MUTED, 0.12),
         ),
@@ -203,6 +247,7 @@ def _icono_grande(item: rx.Var) -> rx.Component:
             (store.ADMIN, f"2px solid {theme.alpha(theme.ACCENT, 0.5)}"),
             (store.FAMILIA, f"2px solid {theme.alpha(theme.SUCCESS, 0.5)}"),
             (store.INVITADO, f"2px solid {theme.alpha(theme.WARNING, 0.5)}"),
+            (store.KIOSCO, "2px solid rgba(34, 211, 238, 0.5)"),
             (store.BLOQUEADO, f"2px solid {theme.alpha(theme.DANGER, 0.5)}"),
             f"2px solid {theme.alpha(theme.MUTED, 0.4)}",
         ),
@@ -222,6 +267,7 @@ def _panel_permisos(item: rx.Var) -> rx.Component:
         ),
         _etiqueta_seccion("Rol"),
         _selector_rol(item),
+        _ajustes_kiosco(item),
         rx.cond(
             item["tiene_avisos"] == "sí",
             rx.fragment(
@@ -285,7 +331,7 @@ def _fila_dispositivo(item: rx.Var) -> rx.Component:
             ),
         ),
         spacing="2", width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {rx.cond(item['pide_acceso'], theme.alpha(theme.WARNING, 0.5), theme.BORDER)}",
         border_radius="12px", padding="12px 14px",
     )
@@ -310,13 +356,13 @@ def _fila_invitacion(item: rx.Var) -> rx.Component:
                     font_family=theme.FONT_MONO),
             rx.spacer(),
             rx.button("Copiar enlace", size="1", variant="soft",
-                      on_click=AuthAdminState.copiar_enlace(item["codigo"])),
+                      on_click=AuthAdminState.copiar_enlace(item["referencia"])),
             rx.button("Retirar", size="1", variant="soft", color_scheme="red",
-                      on_click=AuthAdminState.revocar(item["codigo"])),
+                      on_click=AuthAdminState.revocar(item["referencia"])),
             spacing="2", width="100%", align="center", wrap="wrap",
         ),
         spacing="2", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="12px 14px",
     )
 
@@ -348,7 +394,7 @@ def _aviso_bloqueo() -> rx.Component:
             flex_shrink="0",
         ),
         align="center", spacing="3", width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {rx.cond(AuthAdminState.bloqueo_activo, theme.alpha(theme.SUCCESS, 0.4), theme.alpha(theme.WARNING, 0.4))}",
         border_radius="12px", padding="14px 16px",
     )
@@ -381,7 +427,7 @@ def _crear_invitacion() -> rx.Component:
             spacing="2", width="100%", align="center", wrap="wrap",
         ),
         spacing="2", width="100%",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="14px 16px",
     )
 
@@ -392,11 +438,6 @@ def usuarios_view() -> rx.Component:
             rx.icon("users", size=22, color=theme.ACCENT),
             rx.heading("Dispositivos y accesos", size="6", color=theme.TEXT),
             rx.spacer(),
-            rx.button(
-                rx.icon("arrow-left", size=15), "Ajustes", size="2",
-                variant="soft",
-                on_click=DashboardState.set_view("settings_hub"),
-            ),
             align="center", spacing="3", width="100%",
         ),
         rx.text(
@@ -434,7 +475,7 @@ def usuarios_view() -> rx.Component:
                     color=theme.TEXT),
             rx.text(AuthState.nombre_rol, size="1", color=theme.MUTED),
             align="center", spacing="2", width="100%",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
             border_radius="12px", padding="12px 14px",
         ),
 

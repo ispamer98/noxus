@@ -124,7 +124,7 @@ def _rule_card(regla: rx.Var) -> rx.Component:
         spacing="3",
         width="100%",
         align="start",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {rx.cond(activa, theme.BORDER, theme.BORDER)}",
         border_radius="12px",
         padding="14px",
@@ -164,7 +164,7 @@ def _folder_section(carpeta: rx.Var) -> rx.Component:
             rx.hstack(
                 rx.icon("folder", size=14, color=theme.MUTED),
                 rx.text(carpeta["name"], size="1", weight="bold", color=theme.MUTED,
-                        letter_spacing="0.08em", text_transform="uppercase"),
+                        class_name="nx-label"),
                 rx.spacer(),
                 rx.icon("trash-2", size=13, color=theme.MUTED, cursor="pointer",
                         on_click=AutomationsState.delete_folder(carpeta["id"]),
@@ -215,8 +215,8 @@ def _lista() -> rx.Component:
                     rx.vstack(
                         rx.cond(
                             AutomationsState.folders.length() > 0,
-                            rx.text("SIN CARPETA", size="1", weight="bold", color=theme.MUTED,
-                                    letter_spacing="0.08em"),
+                            rx.text("Sin carpeta", size="1", weight="bold",
+                                    color=theme.MUTED, class_name="nx-label"),
                         ),
                         rx.foreach(AutomationsState.rules_sin_carpeta, _rule_card),
                         spacing="3",
@@ -457,7 +457,7 @@ def _bloque(numero: str, titulo: str, ayuda: str, icono: str, filas, seccion: st
         spacing="3",
         width="100%",
         align="start",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="14px",
         padding="16px",

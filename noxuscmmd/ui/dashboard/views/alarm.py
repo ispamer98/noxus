@@ -190,11 +190,10 @@ def _sensor_card(sid: str, kind: str, node_id: str | None, topic: str,
         spacing="3",
         align="start",
         width="100%",
-        background=rx.cond(isolated, theme.alpha(theme.MUTED, 0.04), theme.BG_CARD),
+        background=rx.cond(isolated, theme.alpha(theme.MUTED, 0.04), theme.BG_CARD), class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         opacity=rx.cond(isolated, "0.7", "1"),
     )
 
@@ -241,7 +240,7 @@ def _master_arm_card() -> rx.Component:
         width="100%",
         align="center",
         spacing="3",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=rx.cond(
             armed,
             f"1px solid {theme.alpha(theme.DANGER, 0.4)}",
@@ -249,7 +248,6 @@ def _master_arm_card() -> rx.Component:
         ),
         border_radius="12px",
         padding="16px",
-        backdrop_filter="blur(10px)",
         wrap="wrap",
     )
 
@@ -328,11 +326,10 @@ def _dynamic_sensor_card(sensor: dict) -> rx.Component:
         spacing="3",
         align="start",
         width="100%",
-        background=rx.cond(isolated, theme.alpha(theme.MUTED, 0.04), theme.BG_CARD),
+        background=rx.cond(isolated, theme.alpha(theme.MUTED, 0.04), theme.BG_CARD), class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         opacity=rx.cond(isolated, "0.7", "1"),
     )
 
@@ -401,7 +398,7 @@ def _host_node_card(host_id: str, ip: str) -> rx.Component:
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="10px",
         padding="10px 14px",
@@ -433,7 +430,7 @@ def _node_card(node: dict) -> rx.Component:
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="10px",
         padding="10px 14px",
@@ -555,7 +552,7 @@ def _elemento_vigilado(e: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%",
         padding="8px 10px", border_radius="10px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
     )
 
@@ -576,8 +573,8 @@ def _camaras_de_los_elementos() -> rx.Component:
         AuthState.puede_ajustes,
         rx.vstack(
             rx.hstack(
-                rx.text("CÁMARA POR ELEMENTO", size="1", color=theme.MUTED,
-                        letter_spacing="0.08em", weight="bold"),
+                rx.text("Cámara por elemento", size="1", color=theme.MUTED,
+                        class_name="nx-label", weight="bold"),
                 rx.spacer(),
                 width="100%", align="center", padding_top="3",
             ),
@@ -600,7 +597,7 @@ def alarm_view() -> rx.Component:
     return rx.vstack(
         _master_arm_card(),
         rx.hstack(
-            rx.text("NODOS", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Nodos", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_node_dialog(),
             width="100%",
@@ -614,7 +611,7 @@ def alarm_view() -> rx.Component:
             width="100%",
         ),
         rx.hstack(
-            rx.text("SENSORES", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Sensores", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_sensor_dialog(),
             width="100%",
@@ -627,7 +624,7 @@ def alarm_view() -> rx.Component:
         ],
         rx.foreach(NodesState.sensors, _dynamic_sensor_card),
         _camaras_de_los_elementos(),
-        hidden_entities_card("SENSORES", hidden_sensors),
+        hidden_entities_card("Sensores ocultos", hidden_sensors),
         spacing="3",
         width="100%",
     )

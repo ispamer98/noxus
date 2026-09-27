@@ -11,10 +11,13 @@ de un rx.foreach sin pasarlo por .to(str) revienta al compilar el frontend
 y la vista solo las coloca.
 """
 from datetime import datetime
+import json
+import secrets
 
 import reflex as rx
 
 from . import permisos, store
+from ..nodes import store as nodes_store
 from ..notifications import categorias
 from ..security import audit, logs
 from ...core import bus, sesiones
@@ -81,19 +84,43 @@ def _queda(marca: float | None) -> str:
 class AuthAdminState(rx.State):
     dispositivos: list[dict] = []
     invitaciones: list[dict] = []
+    estancias: list[dict] = []
     bloqueo_activo: bool = False
 
-    # Lo último creado, para poder enseñar el enlace una sola vez.
-    codigo_nuevo: str = ""
+    # Los códigos reales nunca son estado público: Reflex sincroniza todas las
+    # vars públicas por websocket aunque la vista no llegue a pintarlas. La UI
+    # recibe referencias opacas y los eventos autorizados las resuelven aquí.
+    _codigos_invitacion: dict[str, str] = {}
 
     # Formulario de invitación
     horas_invitacion: str = "4"
     nota_invitacion: str = ""
 
     @rx.event
-    def on_load(self):
+    async def on_load(self):
+        if not await self._puede_cargar_ajustes():
+            self._vaciar()
+            return
         self._recargar()
         return AuthAdminState.vigilar_desconocidos
+
+    async def _puede_cargar_ajustes(self) -> bool:
+        """Comprueba el permiso real, incluso durante el modo de rodaje."""
+        from .state import AuthState
+
+        try:
+            auth = await self.get_state(AuthState)
+        except Exception:
+            return False
+        return auth._tiene(permisos.AJUSTES)
+
+    def _vaciar(self) -> None:
+        """Retira del websocket cualquier dato administrativo ya cargado."""
+        self.dispositivos = []
+        self.invitaciones = []
+        self.estancias = []
+        self.bloqueo_activo = False
+        self._codigos_invitacion = {}
 
     @rx.event(background=True)
     async def vigilar_desconocidos(self):
@@ -116,6 +143,9 @@ class AuthAdminState(rx.State):
         while True:
             try:
                 async with self:
+                    if not await self._puede_cargar_ajustes():
+                        self._vaciar()
+                        return
                     self._recargar()
                 if not await aviso.espera(guardia, 3.0):
                     return
@@ -126,6 +156,10 @@ class AuthAdminState(rx.State):
 
     def _recargar(self):
         self.bloqueo_activo = store.estricto()
+        self.estancias = [
+            {"id": room["id"], "nombre": room.get("name") or room["id"]}
+            for room in nodes_store.list_rooms()
+        ]
         self.dispositivos = [
             {
                 "id": d["id"],
@@ -144,6 +178,9 @@ class AuthAdminState(rx.State):
                 "tiene_avisos": "sí" if d.get("endpoint") else "no",
                 "es_admin": store.rol_de(d["id"]) == store.ADMIN,
                 "sin_acceso": store.rol_de(d["id"]) == store.PENDIENTE,
+                "es_kiosco": store.rol_de(d["id"]) == store.KIOSCO,
+                "kiosco_estancia": d.get("kiosco_estancia") or "",
+                "kiosco_camaras": bool(d.get("kiosco_camaras")),
                 # ¿Está llamando a la puerta AHORA? Ver
                 # AuthState._avisar_de_desconocido: es una marca de la ficha, no
                 # el rol, justo para que el aviso no vuelva a salir cada vez que
@@ -167,18 +204,29 @@ class AuthAdminState(rx.State):
             }
             for d in store.todos()
         ]
-        self.invitaciones = [
-            {
-                "codigo": i["codigo"],
+        anteriores = {
+            codigo: referencia
+            for referencia, codigo in self._codigos_invitacion.items()
+        }
+        codigos: dict[str, str] = {}
+        invitaciones = []
+        for i in store.invitaciones_vivas():
+            codigo = i["codigo"]
+            referencia = anteriores.get(codigo) or secrets.token_urlsafe(9)
+            while referencia in codigos:
+                referencia = secrets.token_urlsafe(9)
+            codigos[referencia] = codigo
+            invitaciones.append({
+                "referencia": referencia,
                 "rol_nombre": store.NOMBRES_DE_ROL.get(i.get("rol", ""), i.get("rol", "")),
                 "caduca": _fecha(i.get("caduca")),
                 "queda": _queda(i.get("caduca")),
                 "nota": i.get("nota") or "",
                 "creada_por": i.get("creada_por") or "?",
                 "usada": "sí" if i.get("usada_por") else "sin usar",
-            }
-            for i in store.invitaciones_vivas()
-        ]
+            })
+        self._codigos_invitacion = codigos
+        self.invitaciones = invitaciones
 
     @rx.var
     def desconocidos(self) -> list[dict]:
@@ -215,7 +263,7 @@ class AuthAdminState(rx.State):
             return no
         antes = store.dispositivo(id_dispositivo)
         if not antes:
-            return rx.toast.error("Ese dispositivo ya no está.", position="top-center")
+            return rx.toast.error("Ese dispositivo ya no está.")
         # Al cambiar el rol a mano se quita la caducidad: subir a alguien de
         # invitado a familia y que se le siga cayendo el acceso a la hora sería
         # justo lo contrario de lo que se acaba de pedir.
@@ -223,7 +271,16 @@ class AuthAdminState(rx.State):
         # llamada, sea la que sea: darle acceso, dejarlo sin acceso o bloquearlo.
         # Lo que no puede pasar es que el aviso siga preguntando algo que ya se
         # ha contestado.
-        store.actualizar(id_dispositivo, rol=rol, caduca=None, pide_acceso=False)
+        campos = {}
+        if rol in (store.ADMIN, store.FAMILIA, store.INVITADO, store.KIOSCO):
+            # Aceptar la solicitud la responde: el motivo que escribió quien
+            # pedía entrar ya no sirve y no debe quedarse en la ficha. Si se
+            # rechaza o se deja pendiente, sí se conserva (ayuda a decidir).
+            campos["nota_acceso"] = ""
+        if rol != store.KIOSCO:
+            campos.update(kiosco_estancia="", kiosco_camaras=False)
+        store.actualizar(id_dispositivo, rol=rol, caduca=None,
+                         pide_acceso=False, **campos)
         self._recargar()
         await audit.registrar(
             self, logs.ACCESOS, "ROL_CAMBIADO",
@@ -233,7 +290,40 @@ class AuthAdminState(rx.State):
         )
         return rx.toast.success(
             f"{antes.get('nombre') or 'El dispositivo'} pasa a "
-            f"{store.NOMBRES_DE_ROL.get(rol, rol)}.", position="top-center")
+            f"{store.NOMBRES_DE_ROL.get(rol, rol)}.")
+
+    @rx.event
+    async def asignar_kiosco_estancia(self, id_dispositivo: str, room_id: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        ficha = store.dispositivo(id_dispositivo)
+        validas = {room["id"] for room in nodes_store.list_rooms()}
+        if ficha is None or ficha.get("rol") != store.KIOSCO:
+            return rx.toast.error("Ese dispositivo no es una tablet de habitación.")
+        if room_id not in validas:
+            return rx.toast.error("Esa estancia ya no existe.")
+        store.actualizar(id_dispositivo, kiosco_estancia=room_id)
+        self._recargar()
+        await audit.registrar(
+            self, logs.ACCESOS, "KIOSCO_ESTANCIA_CAMBIADA",
+            f"{ficha.get('nombre') or id_dispositivo}: {room_id}",
+        )
+
+    @rx.event
+    async def alternar_camaras_kiosco(self, id_dispositivo: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        ficha = store.dispositivo(id_dispositivo)
+        if ficha is None or ficha.get("rol") != store.KIOSCO:
+            return
+        nuevo = not bool(ficha.get("kiosco_camaras"))
+        store.actualizar(id_dispositivo, kiosco_camaras=nuevo)
+        self._recargar()
+        await audit.registrar(
+            self, logs.ACCESOS, "KIOSCO_CAMARAS_CAMBIADAS",
+            f"{ficha.get('nombre') or id_dispositivo}: "
+            f"{'permitidas' if nuevo else 'retiradas'}",
+        )
 
     @rx.event
     async def alternar_categoria(self, id_dispositivo: str, categoria: str):
@@ -277,10 +367,22 @@ class AuthAdminState(rx.State):
             return no
         d = store.dispositivo(id_dispositivo) or {}
         store.eliminar(id_dispositivo)
+        # La ficha y la suscripción de avisos son dos ficheros distintos: si
+        # solo se borraba la ficha, la suscripción se quedaba con su nombre y al
+        # volver a instalar la app dar el MISMO nombre fallaba con «ya hay otro
+        # dispositivo llamado…». Se van las dos: la del endpoint de la ficha y
+        # cualquiera con ese nombre (los nombres de suscripción son únicos, así
+        # que una con el mismo nombre es del mismo aparato).
+        from ..notifications import suscriptores
+        nombre = d.get("nombre") or ""
+        for sub in suscriptores.leer():
+            if (d.get("endpoint") and sub.get("endpoint") == d["endpoint"]) or (
+                    nombre and sub.get("nombre_usuario") == nombre):
+                suscriptores.eliminar(sub["endpoint"])
         self._recargar()
         await audit.registrar(self, logs.ACCESOS, "DISPOSITIVO_ELIMINADO",
                               d.get("nombre") or id_dispositivo)
-        return rx.toast.success("Dispositivo eliminado.", position="top-center")
+        return rx.toast.success("Dispositivo eliminado.")
 
     @rx.event
     async def alternar_bloqueo(self):
@@ -291,7 +393,7 @@ class AuthAdminState(rx.State):
             return rx.toast.error(
                 "No hay ningún administrador: si se activa ahora, nadie podría "
                 "volver a entrar aquí. Pon admin a un dispositivo primero.",
-                position="top-center", duration=10000)
+                duration=10000)
         store.poner_estricto(nuevo)
         self._recargar()
         # Que esta misma sesión vea el cambio sin recargar la página: la
@@ -302,8 +404,7 @@ class AuthAdminState(rx.State):
             self, logs.ACCESOS, "ROL_CAMBIADO",
             "permisos EN VIGOR" if nuevo else "permisos en rodaje")
         return rx.toast.success(
-            "Permisos en vigor." if nuevo else "Permisos en rodaje.",
-            position="top-center")
+            "Permisos en vigor." if nuevo else "Permisos en rodaje.")
 
     # ── Invitaciones ─────────────────────────────────────────────────────
     @rx.event
@@ -321,40 +422,45 @@ class AuthAdminState(rx.State):
         try:
             horas = float((self.horas_invitacion or "").replace(",", "."))
         except ValueError:
-            return rx.toast.error("Pon cuántas horas dura, en números.",
-                                  position="top-center")
+            return rx.toast.error("Pon cuántas horas dura, en números.")
         if horas <= 0:
-            return rx.toast.error("La invitación tiene que durar algo.",
-                                  position="top-center")
+            return rx.toast.error("La invitación tiene que durar algo.")
 
         quien = await audit.usuario_de(self)
-        codigo = store.crear_invitacion(horas=horas, creada_por=quien,
-                                        nota=self.nota_invitacion.strip())
-        self.codigo_nuevo = codigo
+        store.crear_invitacion(horas=horas, creada_por=quien,
+                               nota=self.nota_invitacion.strip())
         self.nota_invitacion = ""
         self._recargar()
         logs.registrar(logs.ACCESOS, "INVITACION_CREADA", quien,
                        f"{horas:g} h" + (f" — {self.nota_invitacion}" if self.nota_invitacion else ""))
-        return rx.toast.success("Invitación creada. Copia el enlace y mándalo.",
-                                position="top-center")
+        return rx.toast.success("Invitación creada. Copia el enlace y mándalo.")
 
     @rx.event
-    async def revocar(self, codigo: str):
-        if (no := await permisos.denegar(self, permisos.AJUSTES)):
-            return no
+    async def revocar(self, referencia: str):
+        if not await self._puede_cargar_ajustes():
+            self._vaciar()
+            return rx.toast.error(permisos.motivo(permisos.AJUSTES))
+        codigo = self._codigos_invitacion.get(referencia, "")
+        if not codigo:
+            return rx.toast.error("Esa invitación ya no está disponible.")
         store.revocar_invitacion(codigo)
-        if self.codigo_nuevo == codigo:
-            self.codigo_nuevo = ""
         self._recargar()
         await audit.registrar(self, logs.ACCESOS, "INVITACION_REVOCADA",
                               "también se retira el acceso que hubiera dado")
-        return rx.toast.success("Invitación retirada.", position="top-center")
+        return rx.toast.success("Invitación retirada.")
 
     @rx.event
-    def copiar_enlace(self, codigo: str):
+    async def copiar_enlace(self, referencia: str):
         """El enlace se arma EN EL NAVEGADOR con su propia dirección: el
         servidor no sabe por qué nombre se le llega."""
+        if not await self._puede_cargar_ajustes():
+            self._vaciar()
+            return rx.toast.error(permisos.motivo(permisos.AJUSTES))
+        codigo = self._codigos_invitacion.get(referencia, "")
+        if not codigo:
+            return rx.toast.error("Esa invitación ya no está disponible.")
         return rx.call_script(
             "navigator.clipboard.writeText("
-            f"window.location.origin + '/panel?invitacion={codigo}')"
+            "window.location.origin + '/panel?invitacion=' + "
+            f"{json.dumps(codigo)})"
         )

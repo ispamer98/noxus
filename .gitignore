@@ -65,3 +65,14 @@ fotogramas/
 # casa real, así que fuera del repositorio y servidos por una ruta que comprueba
 # la sesión — nunca como estático. (room.png, el de siempre, sigue en assets/.)
 planos/
+.aider*
+# Capturas, mapas y configuraciones locales de pruebas físicas: contienen
+# detalles de la instalación real y este repositorio es público.
+noxus-luz-real.json
+noxus-puerta-prueba.json
+FOTOS CONEXIONADO*/
+MAPA/
+auditoria/
+
+# Bloqueo de escritura de los JSON en vivo (se crea en marcha)
+*.json.lock

@@ -21,7 +21,7 @@ from ..devices import mqtt_bus, registry, ir_bus
 from ..devices.registry_state import RegistryState
 from ..security import audit, groups_store, logs
 from ..infra.state import InfraState
-from ...core import bus
+from ...core import bus, pruebas
 from ...core import sesiones
 
 _STARTED = False
@@ -42,6 +42,41 @@ _FLOOR_DEFAULT_ICONS = {
 }
 
 _SENSOR_KIND_ICONS = {"door": "door-closed", "tamper": "lock", "pir": "radar"}
+
+_ROOM_FAMILIES = (
+    ("lights", "Luces y aparatos", "lightbulb"),
+    ("doors", "Puertas", "door-open"),
+    ("ir_remotes", "Mandos", "gamepad-2"),
+    ("hosts", "Equipos", "server"),
+    ("cameras", "Cámaras", "video"),
+    ("factory_cameras", "Cámaras integradas", "cctv"),
+    ("sensors", "Sensores", "radar"),
+    ("factory_sensors", "Sensores integrados", "shield-check"),
+)
+
+
+def _build_room_catalog(data: dict, room_id: str,
+                        seleccionadas: set[str]) -> list[dict]:
+    """Catálogo común del editor, con refs colección:id y sin duplicados."""
+    secciones = []
+    automaticas = {
+        f"lights:{item['id']}" for item in data["lights"]
+        if item.get("room_id") == room_id
+    }
+    for coleccion, etiqueta, icono in _ROOM_FAMILIES:
+        opciones = []
+        for item in data[coleccion]:
+            ref = f"{coleccion}:{item['id']}"
+            if ref in seleccionadas or ref in automaticas:
+                continue
+            opciones.append({
+                "label": item.get("name") or item.get("label") or item["id"],
+                "value": ref,
+            })
+        if opciones:
+            secciones.append({"label": etiqueta, "icon": icono,
+                              "options": opciones})
+    return secciones
 
 
 def _build_floor_catalog(data: dict, plano_actual: str = "",
@@ -570,6 +605,8 @@ class NodesState(rx.State):
     doors: list[dict] = []
     lights: list[dict] = []
     cameras: list[dict] = []
+    factory_sensors: list[dict] = []
+    factory_cameras: list[dict] = []
     hosts: list[dict] = []
     rooms: list[dict] = []
     widgets: list[dict] = []
@@ -596,6 +633,19 @@ class NodesState(rx.State):
     ir_remotes: list[dict] = []
     floor_catalog: list[dict] = []
     widget_catalog: list[dict] = []
+
+    # Editor de miembros de una estancia. Solo se rellena al abrirlo desde
+    # Ajustes; un navegador sin ese permiso no recibe el catálogo completo.
+    room_editor_open: bool = False
+    room_editor_id: str = ""
+    room_editor_name: str = ""
+    room_editor_entities: list[str] = []
+    room_entity_picker_open: bool = False
+    room_entity_query: str = ""
+    room_entity_catalog: list[dict] = []
+
+    # Selección de la página kiosco. Vacío fuera de /estancia/[eid].
+    kiosco_room_id: str = ""
 
     sensor_state: dict[str, bool] = {}
     host_online: dict[str, bool] = {}
@@ -689,12 +739,14 @@ class NodesState(rx.State):
         self.doors = data["doors"]
         self.lights = data["lights"]
         self.cameras = data["cameras"]
+        self.factory_sensors = data["factory_sensors"]
+        self.factory_cameras = data["factory_cameras"]
         self.hosts = [_host_para_ui(h) for h in data["hosts"]]
         self.rooms = data["rooms"]
         self.ir_remotes = [_remote_para_ui(r) for r in data["ir_remotes"]]
         self.widgets = sorted(data["overview_widgets"], key=lambda w: w.get("order", 0))
-        self.sensor_state = data["sensor_states"]
-        self.host_online = data["host_online"]
+        self.sensor_state = pruebas.aplicar_sensores(data["sensor_states"])
+        self.host_online = pruebas.aplicar_equipos(data["host_online"])
         self.floor_catalog = _build_floor_catalog(data, self.plano_actual,
                                                   self._nombres_plano)
         self.widget_catalog = _build_widget_catalog(data)
@@ -967,6 +1019,304 @@ class NodesState(rx.State):
         store.delete_room(room_id)
         self._reload()
         await self._log(logs.SISTEMA, "ESTANCIA_ELIMINADA", nombre)
+
+    def _catalogo_estancia(self) -> None:
+        datos = store.read_all()
+        self.room_entity_catalog = _build_room_catalog(
+            datos, self.room_editor_id, set(self.room_editor_entities))
+
+    @rx.event
+    async def open_room_editor(self, room_id: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        room = next((r for r in store.list_rooms() if r["id"] == room_id), None)
+        if room is None:
+            return rx.toast.error("Esa estancia ya no existe.")
+        self.room_editor_id = room_id
+        self.room_editor_name = room.get("name", "")
+        self.room_editor_entities = list(room.get("entidades") or [])
+        self.room_entity_query = ""
+        self.room_editor_open = True
+        self._catalogo_estancia()
+
+    @rx.event
+    def close_room_editor(self):
+        self.room_editor_open = False
+        self.room_entity_picker_open = False
+
+    @rx.event
+    def room_editor_open_change(self, abierto: bool):
+        if not abierto:
+            self.close_room_editor()
+
+    @rx.event
+    def set_room_editor_name(self, valor: str):
+        self.room_editor_name = valor
+
+    @rx.event
+    async def save_room_editor(self):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        nombre = self.room_editor_name.strip()
+        if not nombre:
+            return rx.toast.error("La estancia necesita un nombre.")
+        if store.update_room(self.room_editor_id, nombre,
+                             self.room_editor_entities) is None:
+            return rx.toast.error("Esa estancia ya no existe.")
+        self._reload()
+        self.room_editor_open = False
+        await self._log(logs.SISTEMA, "ESTANCIA_EDITADA", nombre)
+        return rx.toast.success("Estancia guardada.")
+
+    @rx.event
+    async def open_room_entity_picker(self):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        self.room_entity_query = ""
+        self._catalogo_estancia()
+        self.room_entity_picker_open = True
+
+    @rx.event
+    def close_room_entity_picker(self):
+        self.room_entity_picker_open = False
+
+    @rx.event
+    def room_entity_picker_open_change(self, abierto: bool):
+        if not abierto:
+            self.room_entity_picker_open = False
+
+    @rx.event
+    def set_room_entity_query(self, valor: str):
+        self.room_entity_query = valor
+
+    @rx.var
+    def room_entity_catalog_filtrado(self) -> list[dict]:
+        consulta = self.room_entity_query.strip().lower()
+        if not consulta:
+            return self.room_entity_catalog
+        salida = []
+        for section in self.room_entity_catalog:
+            opciones = [o for o in section["options"]
+                        if consulta in o["label"].lower()]
+            if opciones:
+                salida.append({**section, "options": opciones})
+        return salida
+
+    @rx.event
+    async def add_room_entity(self, referencia: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        validas = {
+            opcion["value"]
+            for section in _build_room_catalog(
+                store.read_all(), self.room_editor_id,
+                set(self.room_editor_entities))
+            for opcion in section["options"]
+        }
+        if referencia not in validas:
+            return
+        self.room_editor_entities = [*self.room_editor_entities, referencia]
+        self.room_entity_picker_open = False
+        self._catalogo_estancia()
+
+    @rx.event
+    async def remove_room_entity(self, referencia: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        self.room_editor_entities = [
+            ref for ref in self.room_editor_entities if ref != referencia]
+        self._catalogo_estancia()
+
+    @rx.var
+    def room_editor_members(self) -> list[dict]:
+        datos = store.read_all()
+        automaticas = {
+            f"lights:{item['id']}" for item in datos["lights"]
+            if item.get("room_id") == self.room_editor_id
+        }
+        explicitas = set(self.room_editor_entities)
+        salida = []
+        for coleccion, etiqueta, _icono in _ROOM_FAMILIES:
+            for item in datos[coleccion]:
+                ref = f"{coleccion}:{item['id']}"
+                if ref not in automaticas and ref not in explicitas:
+                    continue
+                salida.append({
+                    "ref": ref,
+                    "nombre": item.get("name") or item.get("label") or item["id"],
+                    "familia": etiqueta,
+                    "automatico": ref in automaticas,
+                })
+        return salida
+
+    def _abrir_estancia(self, room_id: str) -> bool:
+        """Fija habitación y planta sin exponer un setter invocable al cliente."""
+        datos = store.read_all()
+        if not any(r["id"] == room_id for r in datos["rooms"]):
+            self.kiosco_room_id = ""
+            return False
+        self.kiosco_room_id = room_id
+        refs = store.referencias_estancia(room_id, datos)
+        puntuacion = {p["id"]: 0 for p in datos["planos"]}
+        for ref in refs:
+            coleccion, _, entity_id = ref.partition(":")
+            for item in datos.get(coleccion, []):
+                if item.get("id") != entity_id:
+                    continue
+                for plano_id in (item.get("posiciones") or {}):
+                    if plano_id in puntuacion:
+                        puntuacion[plano_id] += 1
+        principal = (store.plano_principal(datos) or {}).get("id", "")
+        if puntuacion:
+            self.plano_actual = max(
+                puntuacion, key=lambda pid: (puntuacion[pid], pid == principal))
+        else:
+            self.plano_actual = ""
+        self._refrescar(datos)
+        return True
+
+    def _vaciar_kiosco(self) -> None:
+        """Retira de esta sesión cualquier foto previa de la casa."""
+        self.kiosco_room_id = ""
+        self.nodes = []
+        self.sensors = []
+        self.factory_sensors = []
+        self.doors = []
+        self.lights = []
+        self.cameras = []
+        self.factory_cameras = []
+        self.hosts = []
+        self.rooms = []
+        self.ir_remotes = []
+        self.planos = []
+        self.sensor_state = {}
+        self.host_online = {}
+
+    @rx.var
+    def kiosco_room_name(self) -> str:
+        return next((r.get("name", r["id"]) for r in self.rooms
+                     if r["id"] == self.kiosco_room_id), "Estancia")
+
+    @rx.var
+    def kiosco_ref_ids(self) -> list[str]:
+        return sorted(store.referencias_estancia(self.kiosco_room_id))
+
+    def _sala_kiosco(self) -> dict:
+        return next((r for r in self.rooms if r["id"] == self.kiosco_room_id), {})
+
+    def _miembros_kiosco(self, coleccion: str,
+                         items: list[dict]) -> list[dict]:
+        """Los miembros de la estancia de esta tablet, ya personalizados: sin los
+        ocultos, con su etiqueta y en el orden elegido (pestaña «Estancias»)."""
+        refs = set(self.kiosco_ref_ids)
+        sala = self._sala_kiosco()
+        personalizado = sala.get("personalizado") or {}
+        orden = sala.get("orden") or []
+        salida = []
+        for item in items:
+            ref = f"{coleccion}:{item['id']}"
+            if ref not in refs:
+                continue
+            ficha = personalizado.get(ref) or {}
+            if ficha.get("oculto"):
+                continue
+            copia = dict(item)
+            if ficha.get("etiqueta"):
+                copia["name"] = ficha["etiqueta"]
+            copia["_pos"] = orden.index(ref) if ref in orden else len(orden)
+            salida.append(copia)
+        salida.sort(key=lambda c: c["_pos"])
+        return salida
+
+    @rx.var
+    def kiosco_sirena(self) -> dict[str, str]:
+        """La sirena de esta tablet, leída de la ficha de la estancia: así lo que
+        se cambia desde la pestaña Estancias llega en vivo. `prueba` es un
+        número que cambia cada vez que alguien pulsa «Probar en la tablet»."""
+        sala = self._sala_kiosco()
+        g = sala.get("sirena") or {}
+        return {
+            "activa": "1" if g.get("activa") else "0",
+            "sonido": g.get("sonido") if g.get("sonido") in store.SIRENA_SONIDOS else "sirena",
+            "volumen": g.get("volumen") if g.get("volumen") in store.SIRENA_VOLUMENES else "75",
+            "prueba": str(sala.get("sirena_prueba", 0)),
+        }
+
+    @rx.var
+    def kiosco_pantalla(self) -> dict[str, str]:
+        """Qué muestra la pantalla de esta estancia. Textos «1»/«0» y no
+        booleanos: es lo que sirve tal cual para los data-atributos del CSS."""
+        g = self._sala_kiosco().get("pantalla") or {}
+        p = store.ESTANCIA_PANTALLA
+        baldosas = g.get("baldosas")
+        out = {k: ("1" if g.get(k, p[k]) else "0")
+               for k in ("plano", "camaras", "sirena", "hora")}
+        out["baldosas"] = baldosas if baldosas in store.ESTANCIA_BALDOSAS else p["baldosas"]
+        return out
+
+    @rx.var
+    def kiosco_lights(self) -> list[dict]:
+        return [{**item, "is_on": self.sensor_state.get(item["id"], False)}
+                for item in self._miembros_kiosco("lights", self.lights)]
+
+    @rx.var
+    def kiosco_doors(self) -> list[dict]:
+        return [{**item, "is_open": self.sensor_state.get(item["id"], False)}
+                for item in self._miembros_kiosco("doors", self.doors)]
+
+    @rx.var
+    def kiosco_sensors(self) -> list[dict]:
+        items = self._miembros_kiosco("sensors", self.sensors)
+        items += self._miembros_kiosco("factory_sensors", self.factory_sensors)
+        return [{**item, "is_open": self.sensor_state.get(item["id"], False)}
+                for item in items]
+
+    @rx.var
+    def kiosco_remotes(self) -> list[dict]:
+        return self._miembros_kiosco("ir_remotes", self.ir_remotes)
+
+    @rx.var
+    def kiosco_hosts(self) -> list[dict]:
+        botones: dict[str, list[dict]] = {}
+        for boton in store.read_all().get("host_buttons", []):
+            botones.setdefault(boton["host_id"], []).append(boton)
+        # La tablet es un centro de control, no de estado: solo recibe los equipos
+        # sobre los que se puede actuar y nunca si están en línea (`online` fijo
+        # para que los marcadores del plano no lo delaten).
+        return [{**item, "online": True, "botones": botones.get(item["id"], [])}
+                for item in self._miembros_kiosco("hosts", self.hosts)
+                if item.get("mac") or item.get("user")
+                or botones.get(item["id"])]
+
+    @rx.var
+    def kiosco_cameras(self) -> list[dict]:
+        return (self._miembros_kiosco("cameras", self.cameras)
+                + self._miembros_kiosco("factory_cameras",
+                                        self.factory_cameras))
+
+    @rx.var
+    def kiosco_lights_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_lights)
+
+    @rx.var
+    def kiosco_doors_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_doors)
+
+    @rx.var
+    def kiosco_sensors_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_sensors)
+
+    @rx.var
+    def kiosco_remotes_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_remotes)
+
+    @rx.var
+    def kiosco_hosts_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_hosts)
+
+    @rx.var
+    def kiosco_cameras_on_floor(self) -> list[dict]:
+        return self._en_plano(self.kiosco_cameras)
 
     # ── Enganche al MQTTBus (arrancado por SecurityState.on_load) ─────────
     @rx.event(background=True)
@@ -1292,7 +1642,8 @@ class NodesState(rx.State):
         async with self:
             # Dentro del `async with` porque en un evento de fondo es donde se
             # puede tocar el estado — y consultar quién es esta sesión lo es.
-            if (no := await permisos.denegar(self, permisos.PUERTAS)):
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.PUERTAS, f"doors:{door_id}")):
                 return no
             door = next((d for d in self.doors if d["id"] == door_id), None)
             if door is None:
@@ -1535,7 +1886,8 @@ class NodesState(rx.State):
         disco y dale la vuelta» que pueden leer el mismo valor y pedir lo mismo
         las dos veces."""
         async with self:
-            if (no := await permisos.denegar(self, permisos.LUCES)):
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.LUCES, f"lights:{light_id}")):
                 return no
             light = next((l for l in self.lights if l["id"] == light_id), None)
             if light is None:
@@ -1822,6 +2174,10 @@ class NodesState(rx.State):
         Var es la copia decorada que arma _reload() en cada sesión, así que una
         tecla aprendida en otra pestaña no se podía disparar desde esta hasta
         recargar la página."""
+        async with self:
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.MANDOS, f"ir_remotes:{remote_id}")):
+                return no
         etiqueta = ""
         fallo = ""
         try:
@@ -2158,8 +2514,7 @@ class NodesState(rx.State):
         if (no := await permisos.denegar(self, permisos.AJUSTES)):
             return no
         if not files:
-            return rx.toast.error("No llegó ningún fichero.",
-                                  position="top-center")
+            return rx.toast.error("No llegó ningún fichero.")
         for file in files:
             datos = await file.read()
             # En el log, para poder distinguir «no llegó» de «llegó y falló»: el
@@ -2169,12 +2524,12 @@ class NodesState(rx.State):
             try:
                 imagen, ancho, alto = planos.guardar(file.name, datos)
             except ValueError as e:
-                return rx.toast.error(str(e), position="top-center")
+                return rx.toast.error(str(e))
             nuevo = store.add_plano(Path(file.name).stem, imagen, ancho, alto)
             await self._log(logs.SISTEMA, "PLANO_CREADO",
                             f"{nuevo['nombre']} · {ancho}x{alto}")
         self._reload()
-        return rx.toast.success("Plano añadido.", position="top-center")
+        return rx.toast.success("Plano añadido.")
 
     @rx.event
     def plano_rechazado(self):
@@ -2184,7 +2539,7 @@ class NodesState(rx.State):
         return rx.toast.error(
             "Ese fichero no lo acepta el navegador. Tiene que ser una imagen "
             "PNG, JPG o WebP de menos de 12 MB.",
-            position="top-center", duration=8000,
+            duration=8000,
         )
 
     @rx.event
@@ -2218,8 +2573,7 @@ class NodesState(rx.State):
         imagen = store.delete_plano(plano_id)
         if not imagen:
             return rx.toast.error(
-                "No se puede quitar el único plano que queda.",
-                position="top-center")
+                "No se puede quitar el único plano que queda.")
         # La imagen se borra DESPUÉS de que el plano ya no esté guardado: si se
         # borrara antes y fallara la escritura, quedaría un plano apuntando a una
         # imagen que no existe.
@@ -2241,15 +2595,13 @@ class NodesState(rx.State):
         coleccion, _, entity_id = ref.partition(":")
         if not store.duplicar_en_plano(coleccion, entity_id, origen,
                                        self.plano_actual):
-            return rx.toast.error("Ese elemento ya no está en el otro plano.",
-                                  position="top-center")
+            return rx.toast.error("Ese elemento ya no está en el otro plano.")
         nombre = self._nombre_elemento(entity_id)
         self._reload()
         await self._log(logs.SISTEMA, "PLANO_ELEMENTO_DUPLICADO",
                         f"{nombre} · traído de "
                         f"{self._nombres_plano.get(origen, origen)}")
-        return rx.toast.success(f"«{nombre}» copiado aquí, en el mismo sitio.",
-                                position="top-center")
+        return rx.toast.success(f"«{nombre}» copiado aquí, en el mismo sitio.")
 
     @rx.event
     async def duplicar_a_plano(self, ref: str, destino: str):
@@ -2260,15 +2612,13 @@ class NodesState(rx.State):
         coleccion, _, entity_id = ref.partition(":")
         if not store.duplicar_en_plano(coleccion, entity_id, self.plano_actual,
                                       destino):
-            return rx.toast.error("Ese elemento no está en este plano.",
-                                  position="top-center")
+            return rx.toast.error("Ese elemento no está en este plano.")
         nombre_destino = next((p["nombre"] for p in self.planos
                                if p["id"] == destino), destino)
         self._reload()
         await self._log(logs.SISTEMA, "PLANO_ELEMENTO_DUPLICADO",
                         f"{self._nombre_elemento(entity_id)} · a {nombre_destino}")
-        return rx.toast.success(f"Copiado a «{nombre_destino}».",
-                                position="top-center")
+        return rx.toast.success(f"Copiado a «{nombre_destino}».")
 
     @rx.var
     def otros_planos(self) -> list[dict]:
@@ -2336,6 +2686,14 @@ class NodesState(rx.State):
             {**l, "is_on": self.sensor_state.get(l["id"], False)}
             for l in self._en_plano(self.lights)
         ]
+
+    @rx.var
+    def luces_encendidas_en_plano(self) -> int:
+        """Contador visual del plano; no crea otro estado ni decide acciones."""
+        return sum(
+            1 for luz in self._en_plano(self.lights)
+            if self.sensor_state.get(luz["id"], False)
+        )
 
     @rx.var
     def hosts_on_floor(self) -> list[dict]:

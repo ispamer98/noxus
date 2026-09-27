@@ -4,7 +4,8 @@ Salud del sistema: las cinco piezas de las que depende que la casa funcione.
 Existe porque hasta ahora todas fallaban en silencio. Si el motor de
 automatizaciones se para, las reglas dejan de ejecutarse y el panel sigue
 enseñándolas como activas. Si go2rtc se cae, el mural sale en negro y parece un
-problema de la cámara. Si el túnel se cae, desde dentro de casa todo va bien.
+problema de la cámara. Si se cae la puerta a internet, desde dentro de casa todo
+va bien y desde fuera no hay panel.
 Cada una de esas averías se ha notado antes por sus consecuencias —«esto ya no
 hace lo que hacía»— y no por el sitio donde estaba el problema.
 
@@ -112,30 +113,60 @@ async def _go2rtc() -> dict:
         return {"estado": MAL, "detalle": f"{type(e).__name__}: {e}"}
 
 
-async def _tunel() -> dict:
-    """El túnel de Cloudflare, que es lo único que hace que el panel exista
-    desde fuera de casa.
+async def _puerta() -> dict:
+    """La puerta a internet: el VPS que publica el panel.
 
-    Se pregunta a systemd y no al dominio a propósito: pedir la página desde
-    aquí saldría por el túnel y volvería, así que un fallo de DNS o de la nube de
-    Cloudflare se contaría como «el túnel está caído» cuando el túnel está
-    perfectamente. Lo que esta pantalla puede afirmar es si el proceso de esta
-    máquina está en pie."""
-    unidad = os.getenv("TUNEL_UNIDAD", "cloudflared-noxus")
+    Desde el 20 de septiembre de 2026 el panel NO sale por un túnel de
+    Cloudflare, sino por el VPS `noxus-vps`, que termina el TLS y reenvía a esta
+    casa por Tailscale. Así que aquí ya no vale preguntarle a systemd por un
+    proceso local: el proceso está fuera.
+
+    Se miran DOS cosas, y el detalle dice cuál falló, que es lo único que sirve
+    para actuar:
+
+      1. ¿Llego al VPS por Tailscale? Un TCP contra su 443. Si esto falla, o el
+         VPS está caído o Tailscale no está levantando el enlace, y no hay panel
+         desde fuera por mucho que esta casa funcione.
+      2. ¿Funciona el camino entero? Se pide `/ping` al dominio público, que
+         sale a internet y vuelve: DNS, VPS, Tailscale y este backend.
+
+    Si la 1 va y la 2 no, el problema está en el DNS o en la fibra de casa, no
+    en el VPS. Esa distinción es justo la que antes no se podía hacer.
+    """
+    vps = os.getenv("VPS_TAILSCALE", "100.98.98.10")
+    dominio = os.getenv("PANEL_URL", "https://panel.noxuscmmd.uk").rstrip("/")
+
+    # 1. ¿Está el VPS ahí?
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "systemctl", "is-active", unidad,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
-        salida, _ = await asyncio.wait_for(proc.communicate(), timeout=ESPERA)
-        estado = (salida or b"").decode().strip()
-        if estado == "active":
-            return {"estado": BIEN, "detalle": f"{unidad} activo"}
-        return {"estado": MAL, "detalle": f"{unidad}: {estado or 'desconocido'}"}
+        fut = asyncio.open_connection(vps, 443)
+        lector, escritor = await asyncio.wait_for(fut, timeout=ESPERA)
+        escritor.close()
+        try:
+            await escritor.wait_closed()
+        except Exception:
+            pass
     except asyncio.TimeoutError:
-        return {"estado": AVISO, "detalle": "systemctl no respondió"}
+        return {"estado": MAL,
+                "detalle": f"el VPS {vps}:443 no responde en {ESPERA:g} s (Tailscale o VPS caído)"}
     except Exception as e:
-        return {"estado": AVISO, "detalle": f"no se pudo comprobar: {e}"}
+        return {"estado": MAL, "detalle": f"no se llega al VPS {vps}:443 — {type(e).__name__}"}
+
+    # 2. ¿Funciona el camino completo, tal y como lo ve un móvil?
+    try:
+        tiempo = aiohttp.ClientTimeout(total=ESPERA)
+        async with aiohttp.ClientSession(timeout=tiempo) as sesion:
+            async with sesion.get(f"{dominio}/ping") as r:
+                if r.status != 200:
+                    return {"estado": MAL,
+                            "detalle": f"VPS en pie, pero {dominio} responde {r.status}"}
+        return {"estado": BIEN, "detalle": f"VPS {vps} en pie · {dominio} responde"}
+    except asyncio.TimeoutError:
+        return {"estado": AVISO,
+                "detalle": f"VPS {vps} en pie, pero {dominio} no responde en {ESPERA:g} s "
+                           "(mira el DNS o la fibra)"}
+    except Exception as e:
+        return {"estado": AVISO,
+                "detalle": f"VPS {vps} en pie; {dominio} falla: {type(e).__name__}"}
 
 
 async def _disco() -> dict:
@@ -178,7 +209,7 @@ COMPROBACIONES = (
      "entera de nada ni puede accionar nada."),
     ("go2rtc", "Servidor de vídeo", "video", _go2rtc,
      "Sin él, el mural sale en negro y parece un problema de las cámaras."),
-    ("tunel", "Túnel de Cloudflare", "globe", _tunel,
+    ("puerta", "Puerta a internet (VPS)", "globe", _puerta,
      "Lo único que hace que el panel exista desde fuera de casa."),
     ("disco", "Disco", "hard-drive", _disco,
      "Aquí viven el histórico, las copias y los fotogramas."),

@@ -129,7 +129,8 @@ class HostActionsState(rx.State):
         async with self:
             # Una consola SSH sobre un equipo de la casa: el permiso se
             # comprueba aquí, no en el botón que la pinta.
-            if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.EQUIPOS, f"hosts:{host_id}")):
                 return no
             cmd = self.console_input.get(host_id, "").strip()
             if not cmd:
@@ -161,7 +162,8 @@ class HostActionsState(rx.State):
         # En dos pasos porque esto es un generador: el permiso se consulta
         # dentro del contexto de estado y el aviso se emite con yield.
         async with self:
-            no = await permisos.denegar(self, permisos.EQUIPOS)
+            no = await permisos.denegar_entidad(
+                self, permisos.EQUIPOS, f"hosts:{host_id}")
         if no:
             yield no
             return
@@ -169,7 +171,7 @@ class HostActionsState(rx.State):
         clave = host_id + ":" + accion
         if resolve_ssh(host_id) is None:
             yield rx.toast.error(f"{nombre} no tiene usuario SSH configurado.",
-                                 position="top-center", duration=6000)
+                                 duration=6000)
             return
         async with self:
             self.running[clave] = True
@@ -181,10 +183,10 @@ class HostActionsState(rx.State):
             self.running[clave] = False
             await audit.registrar(self, logs.EQUIPOS, _ACCIONES_LOG.get(accion, "ACCION_EQUIPO"), nombre)
         if res.startswith("ERROR"):
-            yield rx.toast.error(f"{nombre}: {res[:200]}", position="top-center", duration=10000)
+            yield rx.toast.error(f"{nombre}: {res[:200]}", duration=10000)
         else:
             yield rx.toast.success(f"{nombre}: {res[:200] or 'hecho'}",
-                                   position="top-center", duration=10000)
+                                   duration=10000)
 
     # ── Accesos rápidos del Resumen ──────────────────────────────────────
     # Mismos verbos que accion_generica/wake_pc, pero avisan con un TOAST en
@@ -195,23 +197,24 @@ class HostActionsState(rx.State):
     @rx.event(background=True)
     async def accion_rapida(self, host_id: str, accion: str):
         async with self:
-            no = await permisos.denegar(self, permisos.EQUIPOS)
+            no = await permisos.denegar_entidad(
+                self, permisos.EQUIPOS, f"hosts:{host_id}")
         if no:
             yield no
             return
         nombre = self._nombre_equipo(host_id)
         if resolve_ssh(host_id) is None:
             yield rx.toast.error(f"{nombre} no tiene usuario SSH configurado.",
-                                 position="top-center", duration=6000)
+                                 duration=6000)
             return
         try:
             await operations.host_action(host_id, accion)
         except operations.OperationError as e:
-            yield rx.toast.error(f"{nombre}: {e}", position="top-center", duration=6000)
+            yield rx.toast.error(f"{nombre}: {e}", duration=6000)
             return
         await audit.registrar(self, logs.EQUIPOS, _ACCIONES_LOG.get(accion, "ACCION_EQUIPO"), nombre)
         etiqueta = {"apagar": "apagándose", "reiniciar": "reiniciándose"}.get(accion, accion)
-        yield rx.toast.success(f"{nombre} está {etiqueta}", position="top-center", duration=4000)
+        yield rx.toast.success(f"{nombre} está {etiqueta}", duration=4000)
 
     @rx.event(background=True)
     async def encender_wol(self, host_id: str):
@@ -219,7 +222,8 @@ class HostActionsState(rx.State):
         solo el PC de siempre (operations.wake_host, a diferencia del viejo
         InfraState.wake_pc que llevaba la MAC incrustada en el código)."""
         async with self:
-            no = await permisos.denegar(self, permisos.EQUIPOS)
+            no = await permisos.denegar_entidad(
+                self, permisos.EQUIPOS, f"hosts:{host_id}")
         if no:
             yield no
             return
@@ -227,11 +231,11 @@ class HostActionsState(rx.State):
         try:
             await asyncio.to_thread(operations.wake_host, host_id)
         except operations.OperationError as e:
-            yield rx.toast.error(f"{nombre}: {e}", position="top-center", duration=6000)
+            yield rx.toast.error(f"{nombre}: {e}", duration=6000)
             return
         await audit.registrar(self, logs.EQUIPOS, "EQUIPO_ENCENDIDO_WOL", nombre)
         yield rx.toast.success(f"Señal de encendido enviada a {nombre}",
-                               position="top-center", duration=4000)
+                               duration=4000)
 
     # ── Escritorio remoto ────────────────────────────────────────────────
     # Los dos abren la sesión en el equipo de QUIEN PULSA, no en el servidor —
@@ -244,7 +248,8 @@ class HostActionsState(rx.State):
         "Lanzar desde": por SSH en otro equipo (lo fiable) o pasándole la
         dirección al navegador de quien pulsa (lo que se pueda)."""
         async with self:
-            if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.EQUIPOS, f"hosts:{host_id}")):
                 yield no
                 return
             host = nodes_store.find_host_by_id(host_id)
@@ -263,13 +268,13 @@ class HostActionsState(rx.State):
             yield rx.toast.error(
                 "El equipo desde el que se debe abrir la sesión ya no existe o "
                 "no tiene usuario SSH configurado.",
-                position="top-center", duration=8000,
+                duration=8000,
             )
             return
-        if not nodes_store.get_all_host_online().get(lanzador_id, False):
+        if not nodes_store.get_all_host_online(real=True).get(lanzador_id, False):
             yield rx.toast.warning(
                 f"{lanzador['name']} está apagado o fuera de la VPN.",
-                position="top-center", duration=6000,
+                duration=6000,
             )
             return
 
@@ -283,18 +288,19 @@ class HostActionsState(rx.State):
             yield rx.toast.success(
                 f"Escritorio remoto abierto en {lanzador['name']} — "
                 f"doble clic en {host['name']} para entrar.",
-                position="top-center", duration=6000,
+                duration=6000,
             )
         else:
             yield rx.toast.error(
                 f"No se pudo abrir en {lanzador['name']}: {salida[:180]}",
-                position="top-center", duration=10000,
+                duration=10000,
             )
 
     @rx.event
     async def download_rdp(self, host_id: str):
         """Descarga el .rdp — plan B de toda la vida, para abrirlo a mano."""
-        if (no := await permisos.denegar(self, permisos.EQUIPOS)):
+        if (no := await permisos.denegar_entidad(
+                self, permisos.EQUIPOS, f"hosts:{host_id}")):
             return no
         host = nodes_store.find_host_by_id(host_id)
         problema = self._problema_rdp(host, host_id)
@@ -318,13 +324,12 @@ class HostActionsState(rx.State):
         if host is None or not (host.get("rdp_user") or "").strip() or not (host.get("ip") or "").strip():
             return rx.toast.error(
                 "Este equipo no tiene escritorio remoto configurado.",
-                position="top-center",
-            )
-        if not nodes_store.get_all_host_online().get(host_id, False):
+                )
+        if not nodes_store.get_all_host_online(real=True).get(host_id, False):
             aviso = f"{host['name']} está apagado o sin conexión."
             if host.get("mac"):
                 aviso += " Prueba a encenderlo con Wake on LAN y espera un momento."
-            return rx.toast.warning(aviso, position="top-center", duration=6000)
+            return rx.toast.warning(aviso, duration=6000)
         return None
 
     # ── Botones personalizados (CRUD) ────────────────────────────────────
@@ -371,13 +376,14 @@ class HostActionsState(rx.State):
         también el aro de carga del otro. Y el resultado sale por TOAST, no
         por self.console_output — esa consola está recogida por defecto y un
         resultado que nadie ve no sirve de nada."""
-        async with self:
-            no = await permisos.denegar(self, permisos.EQUIPOS)
-        if no:
-            yield no
-            return
         btn = operations.find("host_buttons", button_id)
         if btn is None:
+            return
+        async with self:
+            no = await permisos.denegar_entidad(
+                self, permisos.EQUIPOS, f"hosts:{btn['host_id']}")
+        if no:
+            yield no
             return
         async with self:
             self.running[button_id] = True
@@ -388,7 +394,7 @@ class HostActionsState(rx.State):
         async with self:
             self.running[button_id] = False
         if out.startswith("ERROR"):
-            yield rx.toast.error(f"{btn['label']}: {out[:200]}", position="top-center", duration=10000)
+            yield rx.toast.error(f"{btn['label']}: {out[:200]}", duration=10000)
         else:
             yield rx.toast.success(f"{btn['label']}: {out[:200] or 'hecho'}",
-                                   position="top-center", duration=10000)
+                                   duration=10000)

@@ -18,7 +18,7 @@ un «../../etc/passwd» no pasa de ahí. La validación está en ese módulo y n
 a propósito — es la misma que hace falta en cualquier sitio que resuelva un
 nombre, y repetirla es como se acaba olvidando en uno.
 """
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from ..auth import permisos, sessions, store as auth_store
@@ -66,4 +66,42 @@ async def ver_fotograma(request):
     )
 
 
-RUTAS = [Route("/api/fotograma/{nombre}", ver_fotograma, methods=["GET"])]
+async def autorizado_camaras(request):
+    """Portero para el proxy inverso: `GET /api/camaras/autorizado`.
+
+    No devuelve nada util. Solo dice `204` si quien pregunta puede ver camaras,
+    y `401`/`403` si no. Lo llama el middleware **ForwardAuth** de Traefik antes
+    de dejar pasar a `/cam`, que es go2rtc.
+
+    POR QUE EXISTE. Hasta el 20/09/2026 el directo vivia en
+    `cam.noxuscmmd.uk` y lo protegia **Cloudflare Access**. Al salir de
+    Cloudflare, esa puerta desaparece, y go2rtc **no trae autenticacion propia
+    que herede quien es cada uno**. Sin esto, publicar el directo seria dejar las
+    camaras del interior de la casa colgando de internet con la URL por toda
+    llave.
+
+    Se reutiliza la sesion del panel a proposito: el directo pasa a estar en
+    `panel.noxuscmmd.uk/cam`, o sea **el mismo origen**, asi que el navegador
+    manda la cookie sin que haya que inventar nada. Ni segunda contrasena, ni
+    token en la URL, ni otra lista de quien puede que.
+
+    Pide **CAMARAS**, el mismo permiso que el mural y que los fotogramas. Un
+    INVITADO entra al panel pero no ve el salon en directo.
+
+    Responde 204 y no 200 porque no hay cuerpo que devolver, y asi ni siquiera
+    hay que pensar en que se cachea.
+    """
+    id_dispositivo = _quien(request)
+    if not id_dispositivo:
+        return Response(status_code=401)
+    if not permisos.puede(id_dispositivo, permisos.CAMARAS):
+        return Response(status_code=403)
+    return Response(status_code=204)
+
+
+RUTAS = [
+    Route("/api/fotograma/{nombre}", ver_fotograma, methods=["GET"]),
+    # El portero del directo. GET y HEAD: ForwardAuth de Traefik usa el mismo
+    # metodo que la peticion original, y el navegador manda HEAD para el video.
+    Route("/api/camaras/autorizado", autorizado_camaras, methods=["GET", "HEAD"]),
+]

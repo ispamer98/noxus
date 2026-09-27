@@ -64,17 +64,14 @@ class DeshacerState(rx.State):
         self._ultimo = {}
         tipo, datos = hecho.get("tipo", ""), hecho.get("datos") or {}
         if not tipo:
-            return rx.toast.info("Ya no hay nada que deshacer.",
-                                 position="top-center")
+            return rx.toast.info("Ya no hay nada que deshacer.")
         try:
             texto = _REVERSIONES[tipo](datos)
         except KeyError:
-            return rx.toast.error("Esto no se puede deshacer.",
-                                  position="top-center")
+            return rx.toast.error("Esto no se puede deshacer.")
         except Exception as e:
-            return rx.toast.error(f"No se pudo deshacer: {e}",
-                                  position="top-center")
-        return rx.toast.success(texto, position="top-center")
+            return rx.toast.error(f"No se pudo deshacer: {e}")
+        return rx.toast.success(texto)
 
 
 # ── Cómo se revierte cada cosa ───────────────────────────────────────────────
@@ -92,8 +89,10 @@ def _reponer_en_plano(datos: dict) -> str:
 
 def _reponer_panel(datos: dict) -> str:
     ficha = datos["panel"]
-    nodes_store.add_panel(ficha["titulo"], ficha["forma"], ficha["medida"],
-                          ficha["dias"], ficha["color"])
+    nodes_store.add_panel(
+        ficha["titulo"], ficha["forma"], ficha["medida"], ficha["dias"], ficha["color"],
+        **{campo: ficha[campo] for campo in nodes_store.OPCIONES_PANEL if campo in ficha},
+    )
     return f"Panel «{ficha['titulo']}» recuperado."
 
 

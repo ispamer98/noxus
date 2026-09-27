@@ -81,7 +81,7 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
             subs = json.load(f)
         payload = json.dumps({
             "title": titulo, "body": mensaje,
-            "icon": "/icono.png", "badge": "/icono.png",
+            "icon": "/noxus-icon.png", "badge": "/noxus-icon.png",
             # Los lee assets/sw.js. Un dispositivo con el service worker viejo
             # los ignora sin romperse: sigue enseñando título y cuerpo igual.
             # Sin tag, uno único por envío — ver el docstring.

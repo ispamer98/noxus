@@ -18,7 +18,7 @@ def _fila_plan(a: rx.Var) -> rx.Component:
         rx.text(a["que"], size="2", color=theme.TEXT),
         align="center", spacing="3", width="100%",
         padding="7px 11px", border_radius="8px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -38,7 +38,7 @@ def _fila_luz(l: rx.Var) -> rx.Component:
         ),
         align="center", spacing="3", width="100%", wrap="wrap",
         padding="9px 11px", border_radius="10px",
-        background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+        background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
     )
 
 
@@ -61,12 +61,12 @@ def presencia_view() -> rx.Component:
             rx.text(PresenciaState.estado_texto, size="2", color=theme.TEXT),
             align="center", spacing="3", width="100%", wrap="wrap",
             padding="11px", border_radius="10px",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         ),
 
         rx.vstack(
-            rx.text("LO QUE HA APRENDIDO", size="1", color=theme.MUTED,
-                    weight="bold", letter_spacing="0.08em"),
+            rx.text("Lo que ha aprendido", size="1", color=theme.MUTED,
+                    class_name="nx-label", weight="bold"),
             rx.text(PresenciaState.resumen, size="1", color=theme.TEXT),
             rx.cond(
                 PresenciaState.descartados > 0,
@@ -103,15 +103,15 @@ def presencia_view() -> rx.Component:
                         size="1", color=theme.MUTED,
                     ),
                     padding="14px", border_radius="10px", width="100%",
-                    background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+                    background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
                 ),
             ),
             spacing="2", width="100%", align="start",
         ),
 
         rx.vstack(
-            rx.text("LUCES QUE PUEDEN ENCENDERSE", size="1", color=theme.MUTED,
-                    weight="bold", letter_spacing="0.08em"),
+            rx.text("Luces que pueden encenderse", size="1", color=theme.MUTED,
+                    class_name="nx-label", weight="bold"),
             rx.text(
                 "Solo las que marques. La del dormitorio suele ser justo la que "
                 "no interesa que se encienda sola.",

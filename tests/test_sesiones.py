@@ -8,6 +8,8 @@ perdían. Ver noxuscmmd/core/sesiones.py.
 """
 import asyncio
 
+import wrapt
+
 from tests.comun import Caso
 
 from noxuscmmd.core import sesiones
@@ -30,6 +32,27 @@ def ejecutar() -> list[Caso]:
         c.revisar("sesión conectada sigue viva", g.sigue(), True)
         del registro["viva"]
         c.revisar("sesión que se fue se da por perdida", g.sigue(), False)
+
+        # El agujero por el que se colaban los bucles inmortales: si el
+        # navegador se va ANTES de la primera comprobación —una recarga, una
+        # pestaña que se cierra al momento—, el guardia no llegó a verlo
+        # conectado nunca, y sin plazo eso era un pase vitalicio. Se le sigue
+        # dando cuerda al recién nacido, pero solo su minuto.
+        nunca = sesiones.Guardia("nunca-llego")
+        c.revisar("recién nacido sin ver la sesión, se le da cuerda",
+                  nunca.sigue(), True)
+        nunca._nacido -= sesiones.GRACIA + 1
+        c.revisar("pasado el plazo sin verla nunca, se apaga",
+                  nunca.sigue(), False)
+
+        # Pero el plazo NO cuenta cuando no se puede saber si está conectada:
+        # ahí se prefiere una sesión fantasma de más a cortar una viva.
+        sesiones._token_to_socket = lambda: None
+        ciego = sesiones.Guardia("sin-registro")
+        ciego._nacido -= sesiones.GRACIA + 1
+        c.revisar("sin registro que consultar, el plazo no mata a nadie",
+                  ciego.sigue(), True)
+        sesiones._token_to_socket = lambda: registro
 
         # Los dos casos en los que no se puede saber: nunca se mata un bucle por
         # no saber, se prefiere una sesión fantasma de más.
@@ -55,7 +78,7 @@ def ejecutar() -> list[Caso]:
             bucle.close()
     finally:
         sesiones._token_to_socket = original
-    return [c, _relevos()]
+    return [c, _relevos(), _nombre_del_bucle()]
 
 
 def _relevos() -> Caso:
@@ -108,6 +131,80 @@ def _relevos() -> Caso:
         sesiones._relevar("t", "vigilar")
         c.revisar("y no le afecta que arranquen otros", suelto.sigue(), True)
     finally:
+        sesiones._token_to_socket = original
+        sesiones._relevos.clear()
+    return c
+
+
+# ── El nombre que compone guardia() ──────────────────────────────────────────
+# Reflex entrega a un `@rx.event(background=True)` un StateProxy, no el State
+# (reflex/state.py: "For background tasks, proxy the state"). El proxy es un
+# wrapt.ObjectProxy: `type()` ve el proxy y `__class__` ve lo envuelto. De ahi
+# sale el fallo que esto cubre — con `type()`, los nueve `sync_loop` del panel
+# compartian la clave `(token, "StateProxy.sync_loop")`, se relevaban entre
+# ellos y sobrevivia UNO: el escudo del armado no cambiaba al pulsarlo, ni el
+# resto de pantallas se enteraban de nada hasta recargar.
+class _SesionFalsa:
+    client_token = "t"
+
+
+class _RouterFalso:
+    session = _SesionFalsa()
+
+
+class _StateFalso:
+    router = _RouterFalso()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+class _OtroStateFalso(_StateFalso):
+    pass
+
+
+class _ProxyFalso(wrapt.ObjectProxy):
+    """Lo mismo que hace reflex.istate.proxy.StateProxy: envolver el State."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+
+def _nombre_del_bucle() -> Caso:
+    c = Caso("Sesiones: el nombre del bucle sale del State, no del proxy")
+    registro = {"t": object()}
+    original = sesiones._token_to_socket
+    sesiones._token_to_socket = lambda: registro
+    bucle = asyncio.new_event_loop()
+    try:
+        async def sync_loop(estado):
+            return await sesiones.guardia(estado)
+
+        # Con el State pelado (un bucle que no fuera background).
+        bucle.run_until_complete(sync_loop(_StateFalso()))
+        c.cierto("el nombre lleva el State delante",
+                 ("t", "_StateFalso.sync_loop") in sesiones._relevos)
+
+        # Y con el proxy, que es lo que llega de verdad en un bucle de fondo.
+        primero = bucle.run_until_complete(sync_loop(_ProxyFalso(_StateFalso())))
+        c.cierto("envuelto en el proxy, el nombre es el mismo",
+                 ("t", "_StateFalso.sync_loop") in sesiones._relevos)
+        c.revisar("y no cuela el nombre del proxy",
+                  ("t", "_ProxyFalso.sync_loop") in sesiones._relevos, False)
+
+        # Lo que importa: dos States distintos con el bucle llamado igual NO se
+        # relevan entre si aunque los dos lleguen envueltos.
+        bucle.run_until_complete(sync_loop(_ProxyFalso(_OtroStateFalso())))
+        c.revisar("otro State con el mismo nombre de bucle no apaga al primero",
+                  primero.sigue(), True)
+    finally:
+        bucle.close()
         sesiones._token_to_socket = original
         sesiones._relevos.clear()
     return c

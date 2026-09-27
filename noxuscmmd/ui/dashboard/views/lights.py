@@ -152,11 +152,10 @@ def _light_card(light: dict) -> rx.Component:
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         wrap="wrap",
     )
 
@@ -294,7 +293,7 @@ def lights_view() -> rx.Component:
     sin_estancia = NodesState.lights_by_room.get("_none", [])
     return rx.vstack(
         rx.hstack(
-            rx.text("LUCES", size="1", color=theme.MUTED, letter_spacing="0.08em", weight="bold"),
+            rx.text("Luces", size="1", color=theme.MUTED, weight="bold", class_name="nx-label"),
             rx.spacer(),
             _add_room_dialog(),
             _add_light_dialog(),
@@ -310,7 +309,8 @@ def lights_view() -> rx.Component:
                 rx.cond(
                     sin_estancia.length() > 0,
                     rx.vstack(
-                        rx.text("SIN ESTANCIA", size="2", weight="bold", color=theme.TEXT, letter_spacing="0.03em"),
+                        rx.text("Sin estancia", size="2", weight="bold",
+                                color=theme.TEXT, class_name="nx-label"),
                         rx.vstack(rx.foreach(sin_estancia, _light_card), spacing="2", width="100%"),
                         spacing="2", width="100%",
                     ),

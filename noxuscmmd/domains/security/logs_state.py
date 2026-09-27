@@ -71,6 +71,8 @@ PERSONALIZADO = "personalizado"
 # registro, y un equipo que se cae sale con SU icono, no con un servidor
 # genérico igual para todos.
 _META = {
+    "INTENTO_ACCESO": ("scan-eye", "aviso"),
+    "SOLICITUD_ACCESO": ("user-round-check", "ok"),
     # Aperturas y cierres — lo más visual del registro, iconos de puerta.
     "ELEMENTO_ABIERTO": ("door-open", "aviso"),
     "ELEMENTO_CERRADO": ("door-closed", "ok"),

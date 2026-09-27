@@ -47,7 +47,7 @@ def _bloque(icon: str, titulo: str, descripcion: str, cuerpo: rx.Component,
         spacing="3",
         width="100%",
         align="start",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding=["14px", "14px", "18px"],
@@ -90,7 +90,7 @@ def _fila_copia(copia: dict) -> rx.Component:
         width="100%",
         padding="9px 11px",
         border_radius="9px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
     )
 
@@ -238,7 +238,7 @@ def _pieza(p: rx.Var) -> rx.Component:
         ),
         align="start", spacing="3", width="100%",
         padding="10px 12px", border_radius="10px",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
     )
 

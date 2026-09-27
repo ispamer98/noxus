@@ -19,10 +19,12 @@ security/audit.py, que es por dónde deberían pasar los States: aquí no se
 puede, porque para saberlo hace falta el State de la sesión.
 """
 from . import logs_store
+from ..integrations import n8n
 
 # (id, etiqueta, icono) — este orden es el de los filtros de la pestaña
 # Registros, así que va de lo más "de seguridad" a lo más administrativo.
 CATEGORIAS = (
+    ("acceso_app", "Acceso a la app", "log-in"),
     ("alarma", "Alarma", "siren"),
     ("grupos", "Grupos", "layers"),
     ("puertas", "Puertas", "door-open"),
@@ -39,8 +41,8 @@ IDS_CATEGORIAS = tuple(c[0] for c in CATEGORIAS)
 # Constantes para los sitios que registran, para no repartir literales sueltos
 # por todos los States (una errata en uno dejaría eventos en una categoría
 # fantasma que ningún filtro enseña).
-(ALARMA, GRUPOS, PUERTAS, LUCES, SENSORES, CCTV, ACCESOS, EQUIPOS, SISTEMA,
- AUTOMATIZACIONES) = IDS_CATEGORIAS
+(ACCESO_APP, ALARMA, GRUPOS, PUERTAS, LUCES, SENSORES, CCTV, ACCESOS,
+ EQUIPOS, SISTEMA, AUTOMATIZACIONES) = IDS_CATEGORIAS
 
 # Acciones de antes de que existieran las categorías. El orden importa:
 # ARMADO_GRUPO empieza por "ARMADO", así que los de grupo van primero.
@@ -126,6 +128,8 @@ _ETIQUETAS = {
     # Sesiones, roles e invitaciones (domains/auth). Van con tildes puestas a
     # mano como el resto: el nombre de la acción viaja sin ellas.
     "ACCESO_DENEGADO": "Acceso denegado",
+    "INTENTO_ACCESO": "Intento de acceso a la app",
+    "SOLICITUD_ACCESO": "Solicitud de acceso a la app",
     "DISPOSITIVO_IDENTIFICADO": "Dispositivo identificado",
     "DISPOSITIVO_RECONOCIDO": "Dispositivo reconocido por sus avisos",
     "DISPOSITIVO_NUEVO": "Dispositivo nuevo sin acceso",
@@ -151,6 +155,9 @@ _ETIQUETAS = {
     "MODO_BORRADO": "Modo borrado",
     "INVENTARIO_EDITADO": "Ficha del inventario editada",
     "INVENTARIO_ANADIDO": "Elemento añadido al inventario",
+    # El apunte que deja n8n cuando manda un aviso desde un workflow
+    # (ver domains/integrations/endpoint.py).
+    "AVISO_N8N": "Aviso enviado desde n8n",
     # Tablero de métricas: los paneles y qué equipos guardan histórico.
     "PANEL_METRICA_CREADO": "Panel de métricas creado",
     "PANEL_METRICA_EDITADO": "Panel de métricas editado",
@@ -286,11 +293,41 @@ def registrar(categoria: str, accion: str, usuario: str = "sistema",
     if categoria not in IDS_CATEGORIAS:
         categoria = SISTEMA
     try:
-        return logs_store.registrar(categoria, accion, usuario, detalle, grupo,
-                                    entidad)
+        nuevo = logs_store.registrar(categoria, accion, usuario, detalle, grupo,
+                                     entidad)
     except Exception as e:
         print(f"❌ Error escribiendo log: {e}")
         return 0
+    # Y de aquí sale hacia n8n, si está configurado. Va DESPUÉS de guardar y
+    # solo si se guardó: lo que se descartó por repetido no es un hecho nuevo,
+    # y un webhook no puede contar algo que el registro de la casa no cuenta.
+    # No levanta ni bloquea — ver integrations/n8n.py.
+    if nuevo:
+        n8n.emitir(evento_id=nuevo, categoria=categoria, accion=accion,
+                   accion_legible=etiqueta_accion(accion),
+                   usuario=usuario or "sistema", detalle=detalle, grupo=grupo,
+                   entidad=entidad)
+    return nuevo
+
+
+def registrar_limitado(clave: str, ventana: float, categoria: str, accion: str,
+                       usuario: str = "sistema", detalle: str = "",
+                       grupo: str = "", entidad: str = "") -> int:
+    """Como :func:`registrar`, con una ventana antispam solo en memoria."""
+    if categoria not in IDS_CATEGORIAS:
+        categoria = SISTEMA
+    try:
+        nuevo = logs_store.registrar_limitado(
+            clave, ventana, categoria, accion, usuario, detalle, grupo, entidad)
+    except Exception as e:
+        print(f"❌ Error escribiendo log limitado: {e}")
+        return 0
+    if nuevo:
+        n8n.emitir(evento_id=nuevo, categoria=categoria, accion=accion,
+                   accion_legible=etiqueta_accion(accion),
+                   usuario=usuario or "sistema", detalle=detalle, grupo=grupo,
+                   entidad=entidad)
+    return nuevo
 
 
 def registrar_log(accion: str, usuario: str, detalle: str = "", grupo: str = "") -> int:

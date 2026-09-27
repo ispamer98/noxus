@@ -129,11 +129,10 @@ def _camera_card(entity_id: str, default_icon: str, window_id: str, accent: str)
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         wrap="wrap",
     )
 
@@ -175,11 +174,10 @@ def _dynamic_camera_card(cam: dict) -> rx.Component:
         spacing="3",
         align="center",
         width="100%",
-        background=theme.BG_CARD,
+        background=theme.BG_CARD, class_name="nx-card",
         border=f"1px solid {theme.BORDER}",
         border_radius="12px",
         padding="14px",
-        backdrop_filter="blur(10px)",
         wrap="wrap",
     )
 
@@ -278,7 +276,7 @@ def cctv_view() -> rx.Component:
             width="100%",
         ),
         rx.text(CameraState.cam_msg, size="1", color=theme.MUTED),
-        hidden_entities_card("CÁMARAS", hidden_cams),
+        hidden_entities_card("Cámaras ocultas", hidden_cams),
         spacing="3",
         width="100%",
         max_width="720px",

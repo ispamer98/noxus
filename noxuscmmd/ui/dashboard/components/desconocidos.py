@@ -1,10 +1,8 @@
 """
-Barra de «hay un dispositivo desconocido pidiendo entrar».
+Aviso de «hay un dispositivo desconocido pidiendo entrar».
 
-Va en el flujo, debajo de la barra superior y junto a la de alertas, por el mismo
-motivo: una decisión de acceso a la casa no puede quedarse en una lista de una
-pantalla de configuración que nadie mira. Se resuelve desde donde aparece, con
-los dos botones que hacen falta y nada más — dar acceso o bloquear.
+Va en la pila flotante común, visible en todas las vistas. Se resuelve desde
+donde aparece con los dos botones que hacen falta: dar acceso o bloquear.
 
 «Dar acceso» pone rol de INVITADO, que es el mínimo: puede mirar el panel y las
 cosas lógicas, pero no abre puertas, no arma la casa y no ve las cámaras. Subirlo
@@ -57,6 +55,7 @@ def _fila(d: rx.Var) -> rx.Component:
         padding="10px 12px", border_radius="10px",
         background=theme.alpha(theme.WARNING, 0.10),
         border=f"1px solid {theme.WARNING}",
+        class_name="nx-floating-notice nx-access-notice",
     )
 
 
@@ -66,6 +65,6 @@ def banner_desconocidos() -> rx.Component:
         rx.vstack(
             rx.foreach(AuthAdminState.desconocidos, _fila),
             spacing="2", width="100%",
-            padding=["10px 14px 0", "10px 14px 0", "14px 28px 0"],
+            class_name="nx-notice-group",
         ),
     )

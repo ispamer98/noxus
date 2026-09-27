@@ -123,11 +123,10 @@ class AlertasState(rx.State):
         self._recargar()
         if ficha is None:
             # Otro se ha adelantado. No es un error: es lo que se busca.
-            return rx.toast.info("Ya estaba confirmada.", position="top-center")
+            return rx.toast.info("Ya estaba confirmada.")
         logs.registrar(logs.ALARMA, "ALERTA_CONFIRMADA", quien,
                        f"{ficha['titulo']} — desde la aplicación")
-        return rx.toast.success("Confirmado. Deja de repetirse.",
-                                position="top-center")
+        return rx.toast.success("Confirmado. Deja de repetirse.")
 
     @rx.event
     async def silenciar(self, clave: str):
@@ -142,8 +141,7 @@ class AlertasState(rx.State):
         logs.registrar(logs.ALARMA, "ALERTA_SILENCIADA", quien,
                        f"{int(MINUTOS_SILENCIO)} minutos sin avisar de esto — "
                        f"desde la aplicación")
-        return rx.toast.success(f"Silenciado {int(MINUTOS_SILENCIO)} minutos.",
-                                position="top-center")
+        return rx.toast.success(f"Silenciado {int(MINUTOS_SILENCIO)} minutos.")
 
     @rx.var
     def hay_pendientes(self) -> bool:

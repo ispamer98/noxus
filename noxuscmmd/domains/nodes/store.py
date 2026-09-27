@@ -22,9 +22,10 @@ import re
 import time
 import unicodedata
 import uuid
+from datetime import datetime
 from pathlib import Path
 
-from ...core import bus
+from ...core import bus, pruebas
 
 ARCHIVO = Path(os.getenv("NODOS_FILE", "nodos_dinamicos.json"))
 
@@ -159,6 +160,15 @@ def _apply_defaults(data: dict) -> dict:
     _migrar_equipos(data)
     for k in _COLLECTIONS:
         data.setdefault(k, [])
+    for room in data["rooms"]:
+        # Las luces conservan room_id por compatibilidad. El resto de cosas de
+        # una estancia se referencia como "colección:id", la misma identidad
+        # inequívoca que usa el catálogo del plano.
+        entidades = room.get("entidades")
+        room["entidades"] = list(dict.fromkeys(
+            ref for ref in (entidades if isinstance(entidades, list) else [])
+            if isinstance(ref, str) and ":" in ref
+        ))
     data.setdefault("sensor_states", {})
     data.setdefault("host_online", {})
     vw = data.get("video_wall")
@@ -311,11 +321,12 @@ def _mutate(mutator):
     set_host_online_bulk cada 10s), la que escribe última machaca los cambios
     de la otra. Medido antes de este arreglo: 8 de 60 posiciones perdidas con
     un escritor concurrente."""
-    with open(ARCHIVO, "a+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    ARCHIVO.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = ARCHIVO.with_suffix(ARCHIVO.suffix + ".lock")
+    with open(lock_path, "a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
-            f.seek(0)
-            content = f.read().strip()
+            content = ARCHIVO.read_text(encoding="utf-8").strip() if ARCHIVO.exists() else ""
             try:
                 data = json.loads(content) if content else {}
             except Exception:
@@ -327,27 +338,29 @@ def _mutate(mutator):
             # forma canónica ya en esta misma escritura, no en la siguiente.
             # Es idempotente, así que pasarlo dos veces no cambia nada más.
             _apply_defaults(data)
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
+            # El cerrojo vive en un fichero estable: bloquear el JSON y luego
+            # reemplazarlo dejaría a otro proceso bloqueando el inodo antiguo.
+            # Así todas las mutaciones se serializan y el lector solo puede ver
+            # el fichero anterior o el nuevo, nunca media escritura.
+            tmp = ARCHIVO.with_suffix(ARCHIVO.suffix + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as salida:
+                json.dump(data, salida, indent=2, ensure_ascii=False)
+                salida.write("\n")
+                salida.flush()
+                os.fsync(salida.fileno())
+            os.replace(tmp, ARCHIVO)
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     bus.publicar(bus.ENTIDADES)
     return result
 
 
 def _write(data: dict) -> None:
-    with open(ARCHIVO, "a+" if ARCHIVO.exists() else "w+") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    def _reemplazar(actual):
+        actual.clear()
+        actual.update(data)
+
+    _mutate(_reemplazar)
 
 
 def read_all() -> dict:
@@ -941,7 +954,36 @@ def list_rooms() -> list[dict]:
 
 
 def add_room(name: str) -> dict:
-    return _add("rooms", "room", {"name": name})
+    return _add("rooms", "room", {"name": name, "entidades": []})
+
+
+def update_room(room_id: str, name: str, entidades: list[str]) -> dict | None:
+    """Actualiza nombre y miembros explícitos en una sola escritura atómica."""
+    limpias = list(dict.fromkeys(
+        ref for ref in entidades if isinstance(ref, str) and ":" in ref
+    ))
+    return _update("rooms", room_id, {
+        "name": (name or "").strip(),
+        "entidades": limpias,
+    })
+
+
+def referencias_estancia(room_id: str, data: dict | None = None) -> set[str]:
+    """Miembros efectivos: luces por room_id más las refs añadidas a mano."""
+    datos = data if data is not None else _read()
+    room = next((r for r in datos["rooms"] if r.get("id") == room_id), None)
+    if room is None:
+        return set()
+    refs = {
+        f"lights:{light['id']}" for light in datos["lights"]
+        if light.get("room_id") == room_id
+    }
+    refs.update(room.get("entidades") or [])
+    return refs
+
+
+def referencia_en_estancia(room_id: str, referencia: str) -> bool:
+    return referencia in referencias_estancia(room_id)
 
 
 def delete_room(room_id: str) -> None:
@@ -1114,8 +1156,11 @@ def set_sensor_state(entity_id: str, value: bool) -> None:
     bus.publicar(bus.SENSORES)
 
 
-def get_all_sensor_states() -> dict:
-    return _read().get("sensor_states", {})
+def get_all_sensor_states(real: bool = False) -> dict:
+    """`real=True` ignora los valores forzados de core/pruebas.py: lo usan las
+    automatizaciones y todo lo que actúa sobre la casa."""
+    datos = _read().get("sensor_states", {})
+    return datos if real else pruebas.aplicar_sensores(datos)
 
 
 # ── Estado en vivo de ping de equipos extra ──────────────────────────────────
@@ -1134,8 +1179,9 @@ def set_host_online_bulk(updates: dict) -> None:
     bus.publicar(bus.EQUIPOS)
 
 
-def get_all_host_online() -> dict:
-    return _read().get("host_online", {})
+def get_all_host_online(real: bool = False) -> dict:
+    datos = _read().get("host_online", {})
+    return datos if real else pruebas.aplicar_equipos(datos)
 
 
 # ── Botones de acción personalizados por host ────────────────────────────────
@@ -1640,36 +1686,85 @@ def familia_de(kind: str) -> str:
 # es que aquí cada ficha lleva además QUÉ mide y en qué forma, porque la gracia
 # de esta pantalla es que la monte cada uno con lo que le interese.
 #
-# Una ficha de panel:
-#   {"id", "titulo", "forma": "linea"|"barras_hora"|"barras_dia",
-#    "medida": "<clave de serie>" o "<grupo de acciones>", "dias": 7,
-#    "color": "accent"|"warning"|"purple"|"success"|"danger", "orden": 0}
-#
-# `medida` es una cadena y no una estructura a propósito: el catálogo de lo que
-# se puede medir lo construye infra/metricas_state.py leyendo lo que la casa ha
-# registrado de verdad, así que aquí no hay que saber nada de categorías ni de
-# acciones — solo guardar la elección.
-FORMAS_PANEL = ("linea", "barras_hora", "barras_dia")
+# La presentación, el intervalo y la operación se guardan por separado. Las
+# fichas anteriores siguen funcionando sin escribir una migración en el JSON:
+# normalizar_panel completa sus opciones al leerlas.
+FORMAS_PANEL = ("linea", "area", "barras", "donut", "circular",
+                "barras_hora", "barras_dia")
 COLORES_PANEL = ("accent", "warning", "purple", "success", "danger")
+AGRUPACIONES_PANEL = ("dia", "hora", "hora_dia", "intervalo")
+OPERACIONES_PANEL = ("media", "minimo", "maximo", "ultimo", "conteo")
+PERIODOS_PANEL = ("relativo", "personalizado")
+ANCHOS_PANEL = ("normal", "amplio")
+OPCIONES_PANEL = ("agrupacion", "intervalo_minutos", "operacion", "periodo",
+                  "desde", "hasta", "franja", "hora_desde", "hora_hasta", "ancho")
+_ENUMS_PANEL = {
+    "forma": FORMAS_PANEL, "color": COLORES_PANEL,
+    "agrupacion": AGRUPACIONES_PANEL, "operacion": OPERACIONES_PANEL,
+    "periodo": PERIODOS_PANEL, "ancho": ANCHOS_PANEL,
+}
+
+
+def _fecha_panel(valor) -> str:
+    """Los datetime-local del formulario no llevan zona: rige el reloj local."""
+    try:
+        fecha = datetime.fromisoformat(str(valor))
+        return fecha.isoformat(timespec="minutes") if fecha.tzinfo is None else ""
+    except (ValueError, TypeError):
+        return ""
+
+
+def _hora_panel(valor) -> str:
+    texto = str(valor)
+    return texto if re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", texto) else "00:00"
+
+
+def normalizar_panel(panel: dict) -> dict:
+    """Completa una ficha, incluida la antigua, sin modificarla ni escribir disco."""
+    salida = dict(panel)
+    forma = panel.get("forma", "barras_dia")
+    salida["forma"] = forma if forma in FORMAS_PANEL else "barras_dia"
+    serie = str(panel.get("medida", "")).startswith("serie:")
+    agrupacion = ("hora" if serie else
+                  "hora_dia" if forma == "barras_hora" else "dia")
+    defaults = {
+        "color": "accent", "agrupacion": agrupacion,
+        "operacion": "media" if serie else "conteo",
+        "periodo": "relativo", "ancho": "normal",
+    }
+    for campo, defecto in defaults.items():
+        valor = panel.get(campo, defecto)
+        salida[campo] = valor if valor in _ENUMS_PANEL[campo] else defecto
+    salida["dias"] = min(365, _entero(panel.get("dias", 7), por_defecto=7, minimo=1))
+    salida["intervalo_minutos"] = min(1440, _entero(
+        panel.get("intervalo_minutos", 60), por_defecto=60, minimo=5))
+    salida["franja"] = panel.get("franja") is True
+    for campo in ("desde", "hasta"):
+        salida[campo] = _fecha_panel(panel.get(campo, ""))
+    for campo in ("hora_desde", "hora_hasta"):
+        salida[campo] = _hora_panel(panel.get(campo, "00:00"))
+    return salida
 
 
 def list_paneles() -> list[dict]:
-    return sorted(_read()["metricas_paneles"], key=lambda p: p.get("orden", 0))
+    return [normalizar_panel(panel) for panel in
+            sorted(_read()["metricas_paneles"], key=lambda p: p.get("orden", 0))]
 
 
 def add_panel(titulo: str, forma: str, medida: str, dias: int = 7,
-              color: str = "accent") -> dict:
+              color: str = "accent", **opciones) -> dict:
     def _apply(data):
-        item = {
+        item = normalizar_panel({
             "id": _new_id("panel"),
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "titulo": titulo.strip() or "Sin título",
-            "forma": forma if forma in FORMAS_PANEL else "barras_dia",
+            "forma": forma,
             "medida": medida,
-            "dias": _entero(dias, por_defecto=7, minimo=1),
-            "color": color if color in COLORES_PANEL else "accent",
+            "dias": dias,
+            "color": color,
             "orden": len(data["metricas_paneles"]),
-        }
+            **{k: v for k, v in opciones.items() if k in OPCIONES_PANEL},
+        })
         data["metricas_paneles"].append(item)
         return item
 
@@ -1677,29 +1772,25 @@ def add_panel(titulo: str, forma: str, medida: str, dias: int = 7,
 
 
 def update_panel(panel_id: str, campos: dict) -> dict | None:
-    """Cambia los campos que se le pasen y deja el resto como estaban.
-
-    Se filtra lo que llega: esto lo alimenta un formulario de la web, y una
-    clave inventada acabaría guardada en el fichero de la casa para siempre."""
-    permitidos = {"titulo", "forma", "medida", "dias", "color"}
+    """Actualiza solo campos conocidos y conserva las elecciones no editadas."""
+    permitidos = {"titulo", "forma", "medida", "dias", "color", *OPCIONES_PANEL}
 
     def _apply(data):
         for panel in data["metricas_paneles"]:
             if panel["id"] != panel_id:
                 continue
+            actual = normalizar_panel(panel)
             for clave, valor in campos.items():
                 if clave not in permitidos:
                     continue
-                if clave == "dias":
-                    panel["dias"] = _entero(valor, por_defecto=7, minimo=1)
-                elif clave == "forma":
-                    panel["forma"] = valor if valor in FORMAS_PANEL else panel["forma"]
-                elif clave == "color":
-                    panel["color"] = valor if valor in COLORES_PANEL else panel["color"]
-                elif clave == "titulo":
-                    panel["titulo"] = str(valor).strip() or panel["titulo"]
-                else:
-                    panel["medida"] = str(valor)
+                if clave in _ENUMS_PANEL and valor not in _ENUMS_PANEL[clave]:
+                    continue
+                if clave == "titulo":
+                    valor = str(valor).strip() or actual["titulo"]
+                elif clave == "medida":
+                    valor = str(valor)
+                actual[clave] = valor
+            panel.update(normalizar_panel(actual))
             return panel
         return None
 
@@ -1926,5 +2017,163 @@ def move_widget(widget_id: str, direction: int) -> None:
             return
         neighbour = same_family[new_idx]
         target["order"], neighbour["order"] = neighbour["order"], target["order"]
+
+    _mutate(_apply)
+
+
+# ── Mural de cámaras de una estancia (tablet de pared) ───────────────────────
+# Cada estancia recuerda su propio reparto y qué cámara va en cada hueco, dentro
+# de su ficha (`mural`). Es independiente del Mural del panel: cambiarlo desde
+# la tablet no toca el de la app. Repartos: n.º de huecos. `activo` es si el
+# panel del mural está desplegado junto al plano.
+MURAL_ESTANCIA_REPARTOS = ("1", "2", "4", "6", "8")
+
+
+def get_room_mural(room_id: str) -> dict:
+    sala = next((r for r in _read()["rooms"] if r.get("id") == room_id), None)
+    guardado = (sala or {}).get("mural") or {}
+    reparto = guardado.get("layout")
+    if reparto not in MURAL_ESTANCIA_REPARTOS:
+        reparto = "4"
+    huecos = {
+        str(k): v for k, v in (guardado.get("slots") or {}).items()
+        if str(k).isdigit() and int(k) < int(reparto) and isinstance(v, str)
+    }
+    return {"layout": reparto, "slots": huecos, "activo": bool(guardado.get("activo"))}
+
+
+def set_room_mural(room_id: str, layout: str, slots: dict[str, str],
+                   activo: bool = False) -> None:
+    if layout not in MURAL_ESTANCIA_REPARTOS:
+        return
+
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") == room_id:
+                sala["mural"] = {
+                    "layout": layout,
+                    "activo": bool(activo),
+                    "slots": {k: v for k, v in slots.items()
+                              if k.isdigit() and int(k) < int(layout)},
+                }
+
+    _mutate(_apply)
+
+
+# ── Sirena de la tablet de una estancia ──────────────────────────────────────
+# La tablet suena mientras haya una alerta de alarma sin confirmar. Qué suena y
+# a qué volumen se guarda en la ficha de la estancia (`sirena`). El sonido lo
+# genera el navegador (assets/nx.js), así que aquí solo van los nombres.
+SIRENA_SONIDOS = ("sirena", "pitido", "alarma", "timbre")
+SIRENA_VOLUMENES = ("25", "50", "75", "100")
+
+
+def get_room_sirena(room_id: str) -> dict:
+    sala = next((r for r in _read()["rooms"] if r.get("id") == room_id), None)
+    g = (sala or {}).get("sirena") or {}
+    return {
+        "activa": bool(g.get("activa")),
+        "sonido": g.get("sonido") if g.get("sonido") in SIRENA_SONIDOS else "sirena",
+        "volumen": g.get("volumen") if g.get("volumen") in SIRENA_VOLUMENES else "75",
+    }
+
+
+def set_room_sirena(room_id: str, activa: bool, sonido: str, volumen: str) -> None:
+    if sonido not in SIRENA_SONIDOS or volumen not in SIRENA_VOLUMENES:
+        return
+
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") == room_id:
+                sala["sirena"] = {"activa": bool(activa), "sonido": sonido,
+                                  "volumen": volumen}
+
+    _mutate(_apply)
+
+
+# ── Personalización de una estancia (pestaña «Estancias») ────────────────────
+# Todo vive en la ficha de la estancia: `pantalla` (qué muestra su tablet),
+# `personalizado` (por miembro: oculto y etiqueta) y `orden` (refs en el orden
+# en que se pintan). Ocultar un miembro NO lo saca de la estancia: sigue siendo
+# suyo (y la tablet puede actuar sobre él), solo deja de pintarse.
+ESTANCIA_PANTALLA = {"plano": True, "camaras": True, "sirena": True,
+                     "hora": True, "baldosas": "normales"}
+ESTANCIA_BALDOSAS = ("compactas", "normales", "grandes")
+
+
+def get_room_pantalla(room_id: str) -> dict:
+    sala = next((r for r in _read()["rooms"] if r.get("id") == room_id), None)
+    guardado = (sala or {}).get("pantalla") or {}
+    out = dict(ESTANCIA_PANTALLA)
+    for clave, defecto in ESTANCIA_PANTALLA.items():
+        valor = guardado.get(clave, defecto)
+        if clave == "baldosas":
+            out[clave] = valor if valor in ESTANCIA_BALDOSAS else defecto
+        else:
+            out[clave] = bool(valor)
+    return out
+
+
+def set_room_pantalla(room_id: str, clave: str, valor) -> None:
+    if clave not in ESTANCIA_PANTALLA:
+        return
+    if clave == "baldosas":
+        if valor not in ESTANCIA_BALDOSAS:
+            return
+    else:
+        valor = bool(valor)
+
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") == room_id:
+                sala.setdefault("pantalla", {})[clave] = valor
+
+    _mutate(_apply)
+
+
+def set_room_miembro(room_id: str, ref: str, oculto: bool | None = None,
+                     etiqueta: str | None = None) -> None:
+    """Oculta o renombra un miembro SOLO en la pantalla de esa estancia."""
+    if ":" not in ref:
+        return
+
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") != room_id:
+                continue
+            ficha = sala.setdefault("personalizado", {}).setdefault(ref, {})
+            if oculto is not None:
+                ficha["oculto"] = bool(oculto)
+            if etiqueta is not None:
+                limpia = " ".join(str(etiqueta).split())[:40]
+                if limpia:
+                    ficha["etiqueta"] = limpia
+                else:
+                    ficha.pop("etiqueta", None)
+            if not ficha.get("oculto") and not ficha.get("etiqueta"):
+                sala["personalizado"].pop(ref, None)
+
+    _mutate(_apply)
+
+
+def set_room_orden(room_id: str, refs: list[str]) -> None:
+    limpias = [r for r in dict.fromkeys(refs) if isinstance(r, str) and ":" in r]
+
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") == room_id:
+                sala["orden"] = limpias
+
+    _mutate(_apply)
+
+
+def probar_sirena(room_id: str) -> None:
+    """Pide a la tablet de esa estancia que suene unos segundos. La tablet lo
+    nota porque cambia este número (assets/nx.js, data-prueba); al cargar la
+    página el valor que ya había no suena."""
+    def _apply(data):
+        for sala in data["rooms"]:
+            if sala.get("id") == room_id:
+                sala["sirena_prueba"] = int(time.time() * 1000)
 
     _mutate(_apply)

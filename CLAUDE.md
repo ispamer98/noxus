@@ -6,6 +6,13 @@ real**. Un fallo aqui se nota en el mundo fisico, no en una pantalla.
 Servicio `noxus-panel` (front :3000, back :8000) → https://panel.noxuscmmd.uk
 Repo `ispamer98/noxus` — **PUBLICO**.
 
+**Desde el 2026-09-20 el panel NO sale por el tunel de Cloudflare.** Lo publica
+el VPS `noxus-vps` (`187.7.25.129`), que termina el TLS y reenvia a esta casa por
+Tailscale: lo que empiece por `/api`, `/_event`, `/_upload`, `/ping`, `/_health`
+o `/_all_routes` va al **:8000**, y el resto al **:3000**. Si anades una ruta HTTP
+propia **fuera de `/api/`**, hay que tocar tambien el router del VPS o caera en
+el frontend y dara 404. Todo en la skill `migracion-hostinger`.
+
 ## Estructura
 
 ```
@@ -43,6 +50,12 @@ Python del venv: **3.11**. Nunca `python3` suelto.
   (`domains/cameras/fotogramas.py`): imagenes del interior de la casa. Estan en
   `.gitignore` y **no** se sirven como estatico — van por
   `/api/fotograma/<nombre>`, que comprueba la sesion. No las muevas a `assets/`.
+- `rxconfig.py` lleva `cors_allowed_origins=["https://panel.noxuscmmd.uk"]`
+  (desde el 2026-09-20). Reflex trae `*` por defecto, que deja a cualquier web
+  lanzar peticiones contra el panel desde el navegador de quien la visite. Al
+  panel se entra **siempre** por ese dominio, nunca por `http://192.168.1.x:3000`;
+  si algun dia vuelve el acceso por IP de la LAN, hay que anadir ese origen o
+  dejara de funcionar.
 - `rxconfig.py` lleva `state_auto_setters=False` (desde la fase 1): ya **no** se
   genera un `set_<var>` por cada var publica, asi que ningun navegador puede
   escribir en el estado por una via que no hayas escrito tu. Si una var necesita

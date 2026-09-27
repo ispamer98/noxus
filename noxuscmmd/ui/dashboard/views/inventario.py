@@ -9,7 +9,6 @@ es justo el camino que rompe el frontend en esta versión de Reflex.
 import reflex as rx
 
 from .. import theme
-from ..state import DashboardState
 from ....domains.inventory.state import InventoryState
 from ....domains.inventory import catalogo
 
@@ -243,9 +242,6 @@ def inventario_view() -> rx.Component:
             rx.spacer(),
             rx.button(rx.icon("refresh-cw", size=15), "Actualizar", size="2",
                       variant="soft", on_click=InventoryState.actualizar),
-            rx.button(rx.icon("arrow-left", size=15), "Ajustes", size="2",
-                      variant="soft",
-                      on_click=DashboardState.set_view("settings_hub")),
             align="center", spacing="2", width="100%", wrap="wrap",
         ),
         rx.text(
@@ -263,7 +259,7 @@ def inventario_view() -> rx.Component:
             rx.button("Limpiar fichas huérfanas", size="1", variant="soft",
                       color_scheme="gray", on_click=InventoryState.limpiar),
             align="center", spacing="2", width="100%",
-            background=theme.BG_CARD, border=f"1px solid {theme.BORDER}",
+            background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
             border_radius="10px", padding="10px 12px",
         ),
         rx.cond(
