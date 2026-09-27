@@ -979,13 +979,14 @@ html[data-nx-armado="true"] .nx-topbar::after {
 
 /* --- Móvil: focos en las cuatro esquinas y filos de luz ----------------------
    En la pantalla pequeña el ambiente se perdía. Dos focos fuertes en diagonal
-   (arriba-izquierda cian, abajo-derecha violeta) y dos foquitos muy tenues en
+   (arriba-izquierda cian, abajo-derecha violeta) y dos foquitos más suaves en
    las otras esquinas. Cada foco "enciende" los bordes que tiene al lado: la
    divisoria de arriba y un filo a la izquierda, dos filos abajo y a la derecha,
-   y apenas un rastro donde caen los foquitos. Armada, todo vira a carmesí solo
+   y un filo más suave donde caen los foquitos. Armada, todo vira a carmesí solo
    porque los colores salen de --nx-info-rgb / --nx-violet-rgb.
-   html::before mide un 150 % (inset: -25 %): 16 % / 86 % cae en la esquina de
-   la pantalla, igual que el 84 % / 88 % del foco de abajo. */
+   html::before mide un 150 % (inset: -25 %): los foquitos van en 80 % / 25 %
+   y 20 % / 75 %, que en pantalla caen DENTRO de la esquina. En la esquina
+   exacta quedaban detrás de la barra o del dock y no se veían. */
 @media (max-width: 767px) {
   html::before {
     --nx-a2: rgba(139, 124, 255, 0.56);
@@ -993,8 +994,8 @@ html[data-nx-armado="true"] .nx-topbar::after {
       radial-gradient(40% 34% at 20% 18%, var(--nx-a1), transparent 70%),
       radial-gradient(38% 33% at 84% 88%, var(--nx-a2), transparent 72%),
       radial-gradient(26% 22% at 70% 12%, var(--nx-a3), transparent 70%),
-      radial-gradient(24% 17% at 84% 14%, rgba(var(--nx-violet-rgb), 0.19), transparent 70%),
-      radial-gradient(24% 17% at 16% 86%, rgba(var(--nx-info-rgb), 0.17), transparent 70%);
+      radial-gradient(30% 20% at 80% 25%, rgba(var(--nx-violet-rgb), 0.36), transparent 70%),
+      radial-gradient(30% 20% at 20% 75%, rgba(var(--nx-info-rgb), 0.30), transparent 70%);
   }
   html[data-nx-armado="true"]::before { --nx-a2: rgba(190, 18, 58, 0.43); }
 
@@ -1008,25 +1009,27 @@ html[data-nx-armado="true"] .nx-topbar::after {
     background:
       /* izquierda: fuerte arriba (foco cian), un rastro abajo (foquito) */
       linear-gradient(180deg, rgba(var(--nx-info-rgb), 0.7), rgba(var(--nx-info-rgb), 0.22) 32%, transparent 58%,
-        transparent 78%, rgba(var(--nx-info-rgb), 0.12)) left 0 top 56px / 1px calc(100% - 56px) no-repeat,
+        transparent 66%, rgba(var(--nx-info-rgb), 0.5)) left 0 top 56px / 1px calc(100% - 56px) no-repeat,
       linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.14), transparent) left 0 top 56px / 8px 34% no-repeat,
+      linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.1), transparent) left 0 bottom 0 / 8px 26% no-repeat,
       /* derecha: un rastro arriba (foquito), fuerte abajo (foco violeta) */
-      linear-gradient(180deg, rgba(var(--nx-violet-rgb), 0.12), transparent 22%, transparent 42%,
+      linear-gradient(180deg, rgba(var(--nx-violet-rgb), 0.5), transparent 32%, transparent 42%,
         rgba(var(--nx-violet-rgb), 0.24) 68%, rgba(var(--nx-violet-rgb), 0.75)) right 0 top 56px / 1px calc(100% - 56px) no-repeat,
       linear-gradient(270deg, rgba(var(--nx-violet-rgb), 0.16), transparent) right 0 bottom 0 / 8px 36% no-repeat,
+      linear-gradient(270deg, rgba(var(--nx-violet-rgb), 0.1), transparent) right 0 top 56px / 8px 26% no-repeat,
       /* abajo: un rastro a la izquierda (foquito), fuerte a la derecha (foco violeta) */
-      linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.12), transparent 22%, transparent 42%,
+      linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.5), transparent 32%, transparent 42%,
         rgba(var(--nx-violet-rgb), 0.24) 68%, rgba(var(--nx-violet-rgb), 0.75)) left 0 bottom 0 / 100% 1px no-repeat,
       linear-gradient(0deg, rgba(var(--nx-violet-rgb), 0.16), transparent) right 0 bottom 0 / 45% 8px no-repeat;
   }
 
   /* Divisoria de arriba realzada: fuerte a la izquierda, donde empalma con el
-     filo y cae el foco cian, y apenas un rastro violeta a la derecha (foquito).
+     filo y cae el foco cian, y un tramo violeta más suave a la derecha (foquito).
      Respira menos (nunca baja del 70 %). Armada manda su regla roja, que es
      más específica. */
   .nx-topbar::after {
     background: linear-gradient(90deg, rgba(var(--nx-info-rgb), 0.95), rgba(var(--nx-info-rgb), 0.6) 30%,
-      rgba(var(--nx-violet-rgb), 0.35) 65%, rgba(var(--nx-violet-rgb), 0.14));
+      rgba(var(--nx-violet-rgb), 0.3) 60%, rgba(var(--nx-violet-rgb), 0.55));
     box-shadow: 0 0 10px rgba(var(--nx-info-rgb), 0.35);
     animation-name: nx-respira-filo-movil;
   }

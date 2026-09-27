@@ -181,7 +181,7 @@ app = rx.App(
         # que ningun navegador se quede con el viejo en cache.
         rx.el.link(rel="preload", href="/fonts/geist.woff2", custom_attrs={"as": "font"},
                    type="font/woff2", cross_origin="anonymous"),
-        rx.el.link(rel="stylesheet", href="/nx.css?v=20260928c"),
+        rx.el.link(rel="stylesheet", href="/nx.css?v=20260928d"),
         rx.el.meta(name="mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-status-bar-style", content="black"),
