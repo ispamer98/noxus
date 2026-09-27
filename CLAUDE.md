@@ -30,7 +30,7 @@ La logica va en `domains/<x>/state.py`. `ui/` no toma decisiones de negocio.
 ```bash
 .venv/bin/python -m pyflakes noxuscmmd/     # comprobacion rapida
 journalctl -u noxus-panel -n 50 --no-pager  # logs
-sudo systemctl restart noxus-panel          # AVISA ANTES: el panel esta en uso
+sudo systemctl restart noxus-panel          # al terminar cada cambio, sin preguntar (dilo en una linea)
 ```
 
 Python del venv: **3.11**. Nunca `python3` suelto.
