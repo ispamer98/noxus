@@ -231,6 +231,10 @@ async def set_light(light_id: str, on: bool | None = None, *,
         try:
             if por_mando:
                 await _enviar_por_mando(light, nuevo)
+            elif light.get("kind") == store.ACT_DOS_RELES:
+                # Dos relés: uno enciende y otro apaga, cada uno con su pulso.
+                await _pulsar_dos_reles(light, ssh, nuevo,
+                                        float(light.get("pulse_seconds", 1) or 1))
             else:
                 await _enviar_a_rele(light, nuevo, ssh)
         except Exception as e:
@@ -240,6 +244,42 @@ async def set_light(light_id: str, on: bool | None = None, *,
                 await on_failed(nuevo, e)
             raise OperationError(str(e)) from e
         return nuevo
+
+
+# ── Actuación con dos relés ─────────────────────────────────────────────────
+def _segundo_rele(item: dict) -> dict:
+    """La ficha vista como su SEGUNDO relé: mismo nodo, pero con el pin y el
+    topic del otro. Así el transporte (`_enviar_a_rele`) no tiene que saber que
+    existen dos."""
+    return {**item, "pin": item.get("pin2", ""), "topic_cmd": item.get("topic_cmd2", "")}
+
+
+def _tipo(item: dict) -> str:
+    return item.get("kind") or store.ACT_RELE
+
+
+def _comprobar_dos_reles(item: dict) -> None:
+    if not item.get("pin") or not item.get("pin2"):
+        raise NotConfigured(
+            f'A «{item.get("name", item.get("id"))}» le falta el pin de uno de '
+            f'sus dos relés — edítalo y rellena los dos.')
+
+
+async def _pulsar_dos_reles(item: dict, ssh: SSHSpec | None, primero: bool, segundos: float) -> None:
+    """Pulso en uno de los dos relés (`primero`=True: el 1º, si no el 2º).
+
+    ENCLAVAMIENTO: antes de activar uno se apaga el otro, y al acabar (o si se
+    corta a mitad) se apaga el que se activó. Los dos relés de un motor NUNCA
+    pueden estar activos a la vez: sería mandarle a la vez abrir y cerrar."""
+    _comprobar_dos_reles(item)
+    este = item if primero else _segundo_rele(item)
+    otro = _segundo_rele(item) if primero else item
+    await _enviar_a_rele(otro, False, ssh)
+    await _enviar_a_rele(este, True, ssh)
+    try:
+        await asyncio.sleep(segundos)
+    finally:
+        await asyncio.shield(_enviar_a_rele(este, False, ssh))
 
 
 # ── Puertas ─────────────────────────────────────────────────────────────────
@@ -257,17 +297,54 @@ def cancel_door_pulse(door_id: str) -> None:
         task.cancel()
 
 
-async def send_door_state(door_id: str, on: bool) -> dict:
-    """Envía ON/OFF al relé de una puerta, por SSH (raspi-gpio) o por MQTT
-    según de qué nodo cuelgue. Devuelve la ficha de la puerta, que es lo que
-    necesita quien llama para poner su nombre en el mensaje."""
-    async with _lock(f"door:{door_id}"):
-        data = store.read_all()
-        door = find("doors", door_id, data)
-        if door is None:
-            raise EntityNotFound(f"La puerta {door_id} ya no existe")
+def _registrar_tarea(door_id: str, coro_fn) -> asyncio.Task:
+    """Lanza `coro_fn()` como LA tarea de esa puerta: cancela la anterior y
+    espera a que acabe de soltar sus relés antes de empezar, para que el "apagar"
+    de la vieja no llegue después del "encender" de la nueva."""
+    previo = _DOOR_PULSE_TASKS.get(door_id)
+    cancel_door_pulse(door_id)
+
+    async def _envuelta():
+        if previo is not None and not previo.done():
+            await asyncio.wait([previo])
         try:
-            await _enviar_a_rele(door, on, node_ssh(door["node_id"], data))
+            return await coro_fn()
+        finally:
+            # Solo se borra si sigue siendo ESTA tarea la registrada: la vieja
+            # acababa después de registrarse la nueva y se llevaba su entrada.
+            if _DOOR_PULSE_TASKS.get(door_id) is asyncio.current_task():
+                _DOOR_PULSE_TASKS.pop(door_id, None)
+
+    tarea = asyncio.create_task(_envuelta())
+    _DOOR_PULSE_TASKS[door_id] = tarea
+    return tarea
+
+
+async def _ctx_puerta(door_id: str) -> tuple[dict, SSHSpec | None]:
+    data = store.read_all()
+    door = find("doors", door_id, data)
+    if door is None:
+        raise EntityNotFound(f"La puerta {door_id} ya no existe")
+    return door, node_ssh(door.get("node_id", ""), data)
+
+
+async def _tecla_puerta(door: dict, abrir: bool) -> None:
+    tecla = door.get("btn_on" if abrir else "btn_off", "")
+    mando = door.get("remote_id", "")
+    if not mando or not tecla:
+        raise NotConfigured(
+            f'A «{door.get("name", door.get("id"))}» le falta la tecla de '
+            f'{"abrir" if abrir else "cerrar"} — edítala y elige el botón del mando.')
+    await send_remote_button(mando, tecla, apuntar_estado=False)
+
+
+async def _rele_puerta(door_id: str, on: bool) -> dict:
+    """ON/OFF directo al relé de una puerta de UN relé, por SSH (raspi-gpio) o
+    MQTT según de qué nodo cuelgue. Devuelve la ficha."""
+    async with _lock(f"door:{door_id}"):
+        door, ssh = await _ctx_puerta(door_id)
+        try:
+            await _enviar_a_rele(door, on, ssh)
         except NotConfigured:
             raise
         except Exception as e:
@@ -275,103 +352,223 @@ async def send_door_state(door_id: str, on: bool) -> dict:
         return door
 
 
-def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) -> asyncio.Task:
-    """Abrir (pulso): activa el relé unos segundos y lo vuelve a cerrar solo.
-    Cancelable con cancel_door_pulse() o por cualquier otro pulso de la misma
-    puerta. `seconds=None` toma el pulso configurado en la ficha.
+async def _energizar(door_id: str, primero: bool) -> dict:
+    """Empieza el movimiento: `primero` = abrir, si no cerrar. Relé (ON), mando
+    (pulsa la tecla) o dos relés (enciende el que toca, con el otro ya apagado)."""
+    async with _lock(f"door:{door_id}"):
+        door, ssh = await _ctx_puerta(door_id)
+        try:
+            tipo = _tipo(door)
+            if tipo == store.ACT_MANDO:
+                await _tecla_puerta(door, primero)
+            elif tipo == store.ACT_DOS_RELES:
+                _comprobar_dos_reles(door)
+                este = door if primero else _segundo_rele(door)
+                otro = _segundo_rele(door) if primero else door
+                await _enviar_a_rele(otro, False, ssh)
+                await _enviar_a_rele(este, True, ssh)
+            else:
+                await _enviar_a_rele(door, True, ssh)
+        except (NotConfigured, EntityNotFound):
+            raise
+        except Exception as e:
+            raise OperationError(str(e)) from e
+        return door
 
-    Un PORTÓN (modo "porton") hace el recorrido completo: abre `pulse_seconds`
-    (fase "abriendo"), sigue abierto `paso_seconds` para que entre o salga el
-    coche mientras el plano enseña el magnético (fase "paso") y solo entonces
-    cierra el relé, que es lo que lo deja bloqueado.
+
+async def _soltar(door_id: str) -> None:
+    """Deja los relés de la puerta sin corriente. Con un relé es lo que la
+    vuelve a cerrar/bloquear; con dos, lo que para el motor. Con mando no hay
+    nada que soltar."""
+    async with _lock(f"door:{door_id}"):
+        door, ssh = await _ctx_puerta(door_id)
+        tipo = _tipo(door)
+        if tipo == store.ACT_MANDO:
+            return
+        fichas = [door] if tipo == store.ACT_RELE else [door, _segundo_rele(door)]
+        error = None
+        for ficha in fichas:
+            # Se intenta apagar TODOS aunque uno falle: dejar el otro relé
+            # activo por un error en el primero sería lo peor.
+            try:
+                await _enviar_a_rele(ficha, False, ssh)
+            except Exception as e:
+                error = error or e
+        if error:
+            raise OperationError(str(error)) from error
+
+
+async def _soltar_seguro(door_id: str) -> None:
+    try:
+        await asyncio.shield(_soltar(door_id))
+    except Exception:
+        pass
+
+
+async def parar_puerta(door_id: str) -> None:
+    """Corta lo que esté en marcha: cancela la tarea y deja los relés sin
+    corriente. Es lo que hace "Cortar pulso"."""
+    cancel_door_pulse(door_id)
+    await _soltar(door_id)
+
+
+async def send_door_state(door_id: str, on: bool) -> dict:
+    """Abrir (True) / cerrar (False) y dejarlo así. Con un relé, es
+    ON/OFF directo. Con dos relés o mando, el movimiento completo (ver
+    hold_door_open / close_door). Devuelve la ficha de la puerta, que es lo que
+    necesita quien llama para poner su nombre en el mensaje."""
+    door, _ = await _ctx_puerta(door_id)
+    if _tipo(door) == store.ACT_RELE:
+        return await _rele_puerta(door_id, on)
+    if on:
+        return await hold_door_open(door_id)
+    await close_door(door_id)
+    return door
+
+
+async def _recorrido_apertura(door_id: str, pulso: float) -> None:
+    await _energizar(door_id, True)
+    await asyncio.sleep(pulso)
+    # Con dos relés el motor para al acabar el recorrido; con uno, el relé se
+    # queda activo (es lo que mantiene abierto) hasta que se cierre.
+    door, _ = await _ctx_puerta(door_id)
+    if _tipo(door) == store.ACT_DOS_RELES:
+        await _soltar(door_id)
+
+
+async def _recorrido_cierre(door_id: str, pulso: float, con_fase: bool) -> None:
+    door, _ = await _ctx_puerta(door_id)
+    tipo = _tipo(door)
+    if tipo == store.ACT_RELE:
+        await _soltar(door_id)
+        if con_fase:
+            await asyncio.sleep(pulso)
+        return
+    await _energizar(door_id, False)
+    await asyncio.sleep(pulso)
+    if tipo == store.ACT_DOS_RELES:
+        await _soltar(door_id)
+
+
+async def _fase(door_id: str, fase: str, mantenida: bool | None = None) -> None:
+    await asyncio.to_thread(store.set_door_runtime, door_id, fase, mantenida)
+
+
+def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) -> asyncio.Task:
+    """Abrir (pulso). Cancelable con cancel_door_pulse() o por cualquier otro
+    pulso de la misma puerta. `seconds=None` toma el pulso configurado en la
+    ficha (`pulse_seconds`: lo que tarda el recorrido).
+
+    Una PUERTA abre y se acabó: con un relé lo activa `pulse_seconds` y lo
+    suelta; con dos relés pulsa el de abrir; con mando manda la tecla.
+    Un PORTÓN (modo "porton") hace el recorrido completo: abre (fase
+    "abriendo"), sigue abierto `paso_seconds` para que entre o salga el coche
+    mientras el plano enseña el magnético (fase "paso") y cierra por sí solo
+    (fase "cerrando"), que es lo que lo deja bloqueado.
 
     Devuelve la tarea sin esperarla — quien llama decide si le importa cuándo
     acaba. `on_finish` recibe el mensaje del resultado para que una sesión
     pueda pintarlo."""
-    cancel_door_pulse(door_id)
-
     async def _pulse():
         nombre = (find("doors", door_id) or {}).get("name", door_id)
         try:
-            await asyncio.to_thread(store.set_door_runtime, door_id, "abriendo", False)
-            door = await send_door_state(door_id, True)
-            espera = float(door.get("pulse_seconds", 2)) if seconds is None else float(seconds)
-            await asyncio.sleep(espera)
+            door, _ = await _ctx_puerta(door_id)
+            pulso = float(door.get("pulse_seconds", 2)) if seconds is None else float(seconds)
+            await _fase(door_id, "abriendo", False)
+            await _recorrido_apertura(door_id, pulso)
             if door.get("modo") == store.MODO_PORTON:
-                await asyncio.to_thread(store.set_door_runtime, door_id, "paso")
+                await _fase(door_id, "paso")
                 await asyncio.sleep(float(door.get("paso_seconds", 3)))
-            await send_door_state(door_id, False)
-            msg = f"✅ {door['name']} abierta"
+                await _fase(door_id, "cerrando")
+                await _recorrido_cierre(door_id, pulso, True)
+            elif _tipo(door) == store.ACT_RELE:
+                await _soltar(door_id)
+            msg = f"✅ {nombre} abierta"
         except asyncio.CancelledError:
             # El re-raise es lo que deja la tarea CANCELADA y no "terminada":
             # es la diferencia entre "se cortó el pulso" y "el pulso acabó
             # solo", y de ella depende que el auto-cierre no pise un
-            # "Mantener abierto" posterior.
+            # "Mantener abierto" posterior. Con dos relés, además, el motor no
+            # puede quedarse en marcha.
+            if _tipo(find("doors", door_id) or {}) == store.ACT_DOS_RELES:
+                await _soltar_seguro(door_id)
             msg = f"⏹️ Pulso de {nombre} cortado"
             raise
         except Exception as e:
+            await _soltar_seguro(door_id)
             msg = f"❌ {nombre}: {e}"
         finally:
             await asyncio.to_thread(store.set_door_runtime, door_id, "")
             if on_finish:
                 await on_finish(msg)
-            _DOOR_PULSE_TASKS.pop(door_id, None)
 
-    tarea = asyncio.create_task(_pulse())
-    _DOOR_PULSE_TASKS[door_id] = tarea
-    return tarea
+    return _registrar_tarea(door_id, _pulse)
 
 
 def close_door(door_id: str, *, on_finish=None) -> asyncio.Task:
-    """Cerrar y bloquear: relé a OFF (la cerradura vuelve a quedar echada) y se
-    quita lo de "mantenida". En un portón, además, el recorrido de cierre se
-    enseña como fase "cerrando" durante `pulse_seconds`, y al acabar el plano
-    vuelve a dar el magnético en reposo.
+    """Cerrar y bloquear: recorrido de cierre y se quita lo de "mantenida".
+    Con un relé, es apagarlo (la cerradura vuelve a quedar echada); con dos
+    relés, pulsa el de cerrar; con mando, manda la tecla de cerrar. En un
+    portón (o con dos relés/mando) el recorrido se enseña como fase "cerrando"
+    durante `pulse_seconds`, y al acabar el plano vuelve a dar el magnético en
+    reposo.
 
     Comparte registro con pulse_door: cancela el pulso que hubiera en marcha,
     y "Cortar pulso" también corta un cierre en curso."""
-    cancel_door_pulse(door_id)
-
     async def _cerrar():
         nombre = (find("doors", door_id) or {}).get("name", door_id)
         try:
-            door = await send_door_state(door_id, False)
-            await asyncio.to_thread(store.set_door_runtime, door_id, "", False)
-            if door.get("modo") == store.MODO_PORTON:
-                await asyncio.to_thread(store.set_door_runtime, door_id, "cerrando")
-                await asyncio.sleep(float(door.get("pulse_seconds", 2)))
-            msg = f"🔒 {door['name']} cerrada y bloqueada"
+            door, _ = await _ctx_puerta(door_id)
+            pulso = float(door.get("pulse_seconds", 2))
+            visual = door.get("modo") == store.MODO_PORTON
+            if visual or _tipo(door) != store.ACT_RELE:
+                await _fase(door_id, "cerrando", False)
+            else:
+                await _fase(door_id, "", False)
+            await _recorrido_cierre(door_id, pulso, visual)
+            msg = f"🔒 {nombre} cerrada y bloqueada"
         except asyncio.CancelledError:
+            if _tipo(find("doors", door_id) or {}) == store.ACT_DOS_RELES:
+                await _soltar_seguro(door_id)
             msg = f"⏹️ Cierre de {nombre} cortado"
             raise
         except Exception as e:
+            await _soltar_seguro(door_id)
             msg = f"❌ {nombre}: {e}"
         finally:
             await asyncio.to_thread(store.set_door_runtime, door_id, "")
             if on_finish:
                 await on_finish(msg)
-            _DOOR_PULSE_TASKS.pop(door_id, None)
 
-    tarea = asyncio.create_task(_cerrar())
-    _DOOR_PULSE_TASKS[door_id] = tarea
-    return tarea
+    return _registrar_tarea(door_id, _cerrar)
 
 
-async def hold_door_open(door_id: str) -> dict:
-    """Liberar: abre el relé y lo deja abierto hasta que alguien cierre. En un
-    portón, hace primero el recorrido de apertura (fase "abriendo") y se queda
-    arriba con el magnético a la vista, sin más parpadeo."""
-    cancel_door_pulse(door_id)
-    await asyncio.to_thread(store.set_door_runtime, door_id, "abriendo", False)
-    try:
-        door = await send_door_state(door_id, True)
-        if door.get("modo") == store.MODO_PORTON:
-            await asyncio.sleep(float(door.get("pulse_seconds", 2)))
-        await asyncio.to_thread(store.set_door_runtime, door_id, "", True)
-        return door
-    except BaseException:
-        await asyncio.to_thread(store.set_door_runtime, door_id, "")
-        raise
+def hold_door_open(door_id: str) -> asyncio.Task:
+    """Liberar: recorrido de apertura y se queda abierta hasta que alguien
+    cierre (`mantenida`), con el magnético a la vista. Con un relé, el relé
+    sigue activo; con dos relés o mando, el movimiento acaba y no se manda nada
+    más. Devuelve la tarea; su resultado es la ficha de la puerta."""
+    async def _liberar():
+        try:
+            door, _ = await _ctx_puerta(door_id)
+            pulso = float(door.get("pulse_seconds", 2))
+            await _fase(door_id, "abriendo", False)
+            if _tipo(door) == store.ACT_RELE and door.get("modo") != store.MODO_PORTON:
+                await _energizar(door_id, True)
+            else:
+                await _recorrido_apertura(door_id, pulso)
+            await asyncio.to_thread(store.set_door_runtime, door_id, "", True)
+            return door
+        except asyncio.CancelledError:
+            if _tipo(find("doors", door_id) or {}) == store.ACT_DOS_RELES:
+                await _soltar_seguro(door_id)
+            await asyncio.to_thread(store.set_door_runtime, door_id, "")
+            raise
+        except BaseException:
+            await asyncio.to_thread(store.set_door_runtime, door_id, "")
+            raise
+
+    return _registrar_tarea(door_id, _liberar)
 
 
 # ── Mandos IR / RF / webOS ──────────────────────────────────────────────────

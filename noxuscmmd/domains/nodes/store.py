@@ -198,6 +198,14 @@ def _apply_defaults(data: dict) -> dict:
         door.setdefault("modo", MODO_PUERTA)
         door.setdefault("paso_seconds", 3)
         door.setdefault("sensor_id", "")
+        # Forma de actuación (ver _campos_actuacion): sin ella, un relé.
+        door.setdefault("kind", ACT_RELE)
+        door.setdefault("pin2", "")
+        door.setdefault("topic_cmd2", "")
+        door.setdefault("remote_id", "")
+        door.setdefault("btn_on", "")
+        door.setdefault("btn_off", "")
+        door.setdefault("mando_modo", DOS_TECLAS)
         door.setdefault("floor_top", None)
         door.setdefault("floor_left", None)
         door.setdefault("floor_icon", None)
@@ -207,6 +215,9 @@ def _apply_defaults(data: dict) -> dict:
     for light in data["lights"]:
         # Las luces de antes de que existieran las de mando son todas de relé.
         light.setdefault("kind", LUZ_RELE)
+        light.setdefault("pin2", "")
+        light.setdefault("topic_cmd2", "")
+        light.setdefault("pulse_seconds", 1)
         light.setdefault("aspecto", "luz")
         light.setdefault("mando_modo", DOS_TECLAS)
         light.setdefault("remote_id", "")
@@ -826,11 +837,12 @@ def _extras_puerta(modo: str, paso_seconds, sensor_id: str) -> dict:
 
 def add_door(name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
              show_on_floor: bool = False, floor_icon: str = "", modo: str = MODO_PUERTA,
-             paso_seconds: int = 3, sensor_id: str = "") -> dict:
+             paso_seconds: int = 3, sensor_id: str = "", kind: str = "rele",
+             pin2: str = "", remote_id: str = "", btn_on: str = "",
+             btn_off: str = "") -> dict:
     item = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        "topic_cmd": command_topic(node_name, pin),
-        "topic_state": sensor_topic(node_name, pin),
+        **_campos_actuacion(kind, node_name, pin, pin2, remote_id, btn_on, btn_off),
         "pulse_seconds": pulse_seconds,
         **_extras_puerta(modo, paso_seconds, sensor_id),
         **floor_fields(show_on_floor, floor_icon, None),
@@ -844,12 +856,13 @@ def delete_door(door_id: str) -> None:
 
 def update_door(door_id: str, name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
                 show_on_floor: bool = False, floor_icon: str = "", modo: str = MODO_PUERTA,
-                paso_seconds: int = 3, sensor_id: str = "") -> dict | None:
+                paso_seconds: int = 3, sensor_id: str = "", kind: str = "rele",
+                pin2: str = "", remote_id: str = "", btn_on: str = "",
+                btn_off: str = "") -> dict | None:
     current = next((d for d in _read()["doors"] if d["id"] == door_id), None)
     return _update("doors", door_id, {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        "topic_cmd": command_topic(node_name, pin),
-        "topic_state": sensor_topic(node_name, pin),
+        **_campos_actuacion(kind, node_name, pin, pin2, remote_id, btn_on, btn_off),
         "pulse_seconds": pulse_seconds,
         **_extras_puerta(modo, paso_seconds, sensor_id),
         **floor_fields(show_on_floor, floor_icon, current),
@@ -863,6 +876,14 @@ def update_door(door_id: str, name: str, node_id: str, node_name: str, pin: str,
 # una luz que solo se enciende por infrarrojos, como la del ventilador de techo:
 # no tiene relé ni topic, tiene dos teclas de un mando virtual.
 LUZ_RELE, LUZ_MANDO = "rele", "mando"
+
+# Forma de actuación, LA MISMA para puertas y luces (y lo que se añada después):
+#   ACT_RELE       un relé — el de siempre, GPIO por SSH o MQTT.
+#   ACT_DOS_RELES  dos relés que se pulsan por separado: abrir/cerrar (el motor
+#                  de un portón) o encender/apagar. Nunca están los dos a la vez.
+#   ACT_MANDO      teclas de un mando virtual (infrarrojos, RF o webOS).
+ACT_RELE, ACT_DOS_RELES, ACT_MANDO = LUZ_RELE, "dos_reles", LUZ_MANDO
+ACTUACIONES = (ACT_RELE, ACT_DOS_RELES, ACT_MANDO)
 
 # Qué es el aparato, para el icono y para cómo se le llama en la pantalla. La
 # mecánica es la misma para todos (encender/apagar y guardar el estado), así que
@@ -897,15 +918,15 @@ def es_luz(item: dict) -> bool:
 DOS_TECLAS, UNA_TECLA = "dos", "una"
 
 
-def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
-                btn_on: str, btn_off: str,
-                mando_modo: str = DOS_TECLAS) -> dict:
-    """Lo que distingue a una luz de relé de una de mando.
+def _campos_actuacion(kind: str, node_name: str, pin: str, pin2: str, remote_id: str,
+                      btn_on: str, btn_off: str, mando_modo: str = DOS_TECLAS) -> dict:
+    """Lo que distingue entre sí las formas de actuar (ver ACT_*), igual para
+    puertas y luces.
 
     Una de mando se queda SIN topics a propósito: no hay nada publicando su
     estado ni escuchando órdenes, y dejar ahí un "casa//" con el nodo vacío haría
     que el bus se suscribiera a un topic inventado."""
-    if kind == LUZ_MANDO:
+    if kind == ACT_MANDO:
         modo = mando_modo if mando_modo in (DOS_TECLAS, UNA_TECLA) else DOS_TECLAS
         # Con una sola tecla se guarda la misma en los dos sitios: así todo lo
         # que lea la ficha (el envío, el inventario, las pruebas) encuentra
@@ -914,26 +935,37 @@ def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
         if modo == UNA_TECLA:
             btn_off = btn_on
         return {
-            "kind": LUZ_MANDO, "topic_cmd": "", "topic_state": "",
+            "kind": ACT_MANDO, "topic_cmd": "", "topic_state": "",
+            "pin2": "", "topic_cmd2": "",
             "remote_id": remote_id, "btn_on": btn_on, "btn_off": btn_off,
             "mando_modo": modo,
         }
+    dos = kind == ACT_DOS_RELES
     return {
-        "kind": LUZ_RELE,
+        "kind": ACT_DOS_RELES if dos else ACT_RELE,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
+        "pin2": pin2 if dos else "",
+        "topic_cmd2": command_topic(node_name, pin2) if dos and pin2 else "",
         "remote_id": "", "btn_on": "", "btn_off": "", "mando_modo": DOS_TECLAS,
     }
+
+
+def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
+                btn_on: str, btn_off: str, mando_modo: str = DOS_TECLAS,
+                pin2: str = "") -> dict:
+    return _campos_actuacion(kind, node_name, pin, pin2, remote_id, btn_on, btn_off,
+                             mando_modo)
 
 
 def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = "",
               show_on_floor: bool = False, floor_icon: str = "",
               kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
               btn_off: str = "", aspecto: str = "luz",
-              mando_modo: str = DOS_TECLAS) -> dict:
+              mando_modo: str = DOS_TECLAS, pin2: str = "") -> dict:
     item = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo, pin2),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, None),
@@ -949,11 +981,11 @@ def update_light(light_id: str, name: str, node_id: str, node_name: str, pin: st
                  show_on_floor: bool = False, floor_icon: str = "",
                  kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
                  btn_off: str = "", aspecto: str = "luz",
-                 mando_modo: str = DOS_TECLAS) -> dict | None:
+                 mando_modo: str = DOS_TECLAS, pin2: str = "") -> dict | None:
     current = next((l for l in _read()["lights"] if l["id"] == light_id), None)
     return _update("lights", light_id, {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo, pin2),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, current),

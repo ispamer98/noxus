@@ -13,6 +13,7 @@ from ..components.node_select import node_select
 from ..components.actions_menu import actions_menu, confirm_delete, confirm_delete_dialog
 from ..components.form_dialog import form_dialog_content, field, dialog_footer, styled_input, styled_select, select_content
 from ..components.floor_fields import floor_plan_fields
+from ..components.actuacion import selector_actuacion, campo_segundo_rele, tecla_select as _tecla_select
 
 
 def _room_select(name: str = "room_id", default_value=None) -> rx.Component:
@@ -52,16 +53,8 @@ def _aspecto_select(default_value=None) -> rx.Component:
 
 
 def _kind_select(default_value=None) -> rx.Component:
-    kwargs = {"default_value": default_value} if default_value is not None else {}
-    return styled_select(
-        "Cómo se enciende",
-        select_content(
-            rx.select.item("Por relé (nodo con GPIO o MQTT)", value="rele"),
-            rx.select.item("Por mando (infrarrojos)", value="mando"),
-        ),
-        name="light_kind",
-        **kwargs,
-    )
+    return selector_actuacion("light_kind", default_value if default_value is not None else "rele",
+                              "Cómo se enciende", ("encender", "apagar"))
 
 
 def _modo_mando_select(default_value=None) -> rx.Component:
@@ -75,24 +68,6 @@ def _modo_mando_select(default_value=None) -> rx.Component:
             rx.select.item("Una sola tecla para encender y apagar", value="una"),
         ),
         name="mando_modo",
-        **kwargs,
-    )
-
-
-def _tecla_select(name: str, etiqueta: str, default_value=None) -> rx.Component:
-    """Un solo desplegable con las teclas de TODOS los mandos, ya etiquetadas
-    "Mando · Tecla". El mando se deduce de la tecla elegida (ver
-    NodesState.teclas_de_mando)."""
-    kwargs = {"default_value": default_value} if default_value is not None else {}
-    return styled_select(
-        etiqueta,
-        select_content(
-            rx.foreach(
-                NodesState.teclas_de_mando,
-                lambda t: rx.select.item(t["etiqueta"], value=t["valor"]),
-            ),
-        ),
-        name=name,
         **kwargs,
     )
 
@@ -172,8 +147,9 @@ def _edit_light_dialog(light: dict) -> rx.Component:
                 field("Nombre", styled_input(name="name", default_value=light["name"])),
                 field("Qué es", _aspecto_select(default_value=light["aspecto"])),
                 field("Cómo se enciende", _kind_select(default_value=light["kind"])),
-                field("Nodo (solo si es por relé)", node_select(default_value=light["node_id"])),
-                field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", default_value=light["pin"])),
+                field("Nodo (solo si es por relé o dos relés)", node_select(default_value=light["node_id"])),
+                field("Pin GPIO (SSH) o señal MQTT (ESP32) · relé de encender", styled_input(name="pin", default_value=light["pin"])),
+                campo_segundo_rele(light["pin2"].to(str), "apagar"),
                 field("Teclas del mando (solo si es por mando)",
                       _modo_mando_select(default_value=light["mando_modo"])),
                 field("Tecla de encender · o la única si es de una sola",
@@ -216,8 +192,9 @@ def _add_light_dialog() -> rx.Component:
                     # elegido (ver NodesState.submit_add_light), y así no hace
                     # falta sacar el formulario entero al estado para esconder
                     # la mitad.
-                    field("Nodo (solo si es por relé)", node_select()),
-                    field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", placeholder="22 · luz_salon")),
+                    field("Nodo (solo si es por relé o dos relés)", node_select()),
+                    field("Pin GPIO (SSH) o señal MQTT (ESP32) · relé de encender", styled_input(name="pin", placeholder="22 · luz_salon")),
+                    campo_segundo_rele("", "apagar"),
                     field("Teclas del mando (solo si es por mando)",
                           _modo_mando_select(default_value="dos")),
                     field("Tecla de encender · o la única si es de una sola",

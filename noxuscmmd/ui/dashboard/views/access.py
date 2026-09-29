@@ -25,6 +25,7 @@ from ..components.node_select import node_select
 from ..components.actions_menu import actions_menu, confirm_delete
 from ..components.form_dialog import form_dialog_content, field, dialog_footer, styled_input, styled_select, select_content
 from ..components.floor_fields import floor_plan_fields
+from ..components.actuacion import selector_actuacion, campo_segundo_rele, campos_tecla_par
 
 
 def _door_select(on_change) -> rx.Component:
@@ -53,7 +54,7 @@ def _level_select(name: str = "level_id", default_value=None) -> rx.Component:
 
 def _pulse_field(default_value: str = "2") -> rx.Component:
     return field(
-        "Tiempo de pulso (segundos)",
+        "Tiempo de pulso / recorrido (segundos)",
         styled_input(name="pulse_seconds", default_value=default_value, type="number", min=1, max=60),
     )
 
@@ -102,8 +103,12 @@ def _edit_door_dialog(door: dict) -> rx.Component:
             rx.vstack(
                 rx.input(name="entity_id", value=door["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=door["name"])),
-                field("Nodo", node_select(default_value=door["node_id"])),
-                field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", default_value=door["pin"])),
+                field("Cómo se acciona", selector_actuacion(
+                    "kind", door["kind"].to(str), "Cómo se acciona", ("abrir", "cerrar"))),
+                field("Nodo (solo si es por relé o dos relés)", node_select(default_value=door["node_id"])),
+                field("Pin GPIO (SSH) o señal MQTT (ESP32) · relé de abrir", styled_input(name="pin", default_value=door["pin"])),
+                campo_segundo_rele(door["pin2"].to(str), "cerrar"),
+                *campos_tecla_par("abrir", "cerrar"),
                 _pulse_field(door["pulse_seconds"].to(str)),
                 *_porton_fields(door["modo"].to(str), door["paso_seconds"].to(str),
                                 rx.cond(door["sensor_id"].to(str) != "", door["sensor_id"].to(str), "ninguno")),
@@ -221,8 +226,12 @@ def _add_door_dialog() -> rx.Component:
             form=rx.form.root(
                 rx.vstack(
                     field("Nombre", styled_input(name="name", placeholder="Puerta Garaje")),
-                    field("Nodo", node_select()),
-                    field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", placeholder="27 · puerta_garaje")),
+                    field("Cómo se acciona", selector_actuacion(
+                        "kind", "rele", "Cómo se acciona", ("abrir", "cerrar"))),
+                    field("Nodo (solo si es por relé o dos relés)", node_select()),
+                    field("Pin GPIO (SSH) o señal MQTT (ESP32) · relé de abrir", styled_input(name="pin", placeholder="27 · puerta_garaje")),
+                    campo_segundo_rele("", "cerrar"),
+                    *campos_tecla_par("abrir", "cerrar"),
                     _pulse_field(),
                     *_porton_fields(),
                     dialog_footer(confirm_label="Añadir"),

@@ -552,6 +552,35 @@ def _elementos_vigilados(data: dict) -> list[dict]:
     return salida
 
 
+def actuacion_de_formulario(form_data: dict, verbo_a: str, verbo_b: str):
+    """La forma de actuar elegida en un formulario de alta/edición — la
+    MISMA lectura para puertas y luces (y lo que venga): devuelve
+    (kind, pin2, remote_id, btn_on, btn_off, error). `error` es un aviso
+    listo para enseñar, o "" si todo está bien.
+
+    Las teclas llegan como "mando:tecla" (ver teclas_de_mando) y se exige que
+    las dos sean del MISMO mando."""
+    kind = form_data.get("kind") or form_data.get("light_kind") or store.ACT_RELE
+    if kind not in store.ACTUACIONES:
+        kind = store.ACT_RELE
+    pin2 = form_data.get("pin2", "").strip()
+    remote_a, _, btn_on = form_data.get("btn_on", "").partition(":")
+    remote_b, _, btn_off = form_data.get("btn_off", "").partition(":")
+    if kind == store.ACT_DOS_RELES:
+        if not pin2:
+            return kind, "", "", "", "", (
+                f"⚠️ Con dos relés hace falta el pin del segundo (el de {verbo_b}).")
+        return kind, pin2, "", "", "", ""
+    if kind == store.ACT_MANDO:
+        if not remote_a or not btn_on or not btn_off:
+            return kind, "", "", "", "", (
+                f"⚠️ Por mando hacen falta las dos teclas: la de {verbo_a} y la de {verbo_b}.")
+        if remote_a != remote_b:
+            return kind, "", "", "", "", "⚠️ Las dos teclas tienen que ser del mismo mando."
+        return kind, "", remote_a, btn_on, btn_off, ""
+    return kind, "", "", "", "", ""
+
+
 class NodesState(rx.State):
     nodes: list[dict] = []
     sensors: list[dict] = []
@@ -1257,12 +1286,22 @@ class NodesState(rx.State):
         paso_seconds = int(form_data.get("paso_seconds") or 3)
         sensor_id = form_data.get("sensor_id", "")
         sensor_id = "" if sensor_id == "ninguno" else sensor_id
-        if not name or not node_id or not pin:
+        kind, pin2, remote_id, btn_on, btn_off, error = actuacion_de_formulario(
+            form_data, "abrir", "cerrar")
+        if error:
+            self.status = error
+            return
+        if kind == store.ACT_MANDO:
+            node_id, pin = "", ""
+        if not name or (kind != store.ACT_MANDO and (not node_id or not pin)):
             return
         item = store.add_door(name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                              show_on_floor, floor_icon, modo, paso_seconds, sensor_id)
+                              show_on_floor, floor_icon, modo, paso_seconds, sensor_id,
+                              kind=kind, pin2=pin2, remote_id=remote_id,
+                              btn_on=btn_on, btn_off=btn_off)
         self._reload()
-        self._subscribe_if_running(item["topic_state"], item["id"])
+        if item["topic_state"]:
+            self._subscribe_if_running(item["topic_state"], item["id"])
         await self._log(logs.PUERTAS, "PUERTA_CREADA",
                         f"{name} · {self._node_name(node_id)} pin {pin} · pulso {pulse_seconds}s")
 
@@ -1295,11 +1334,20 @@ class NodesState(rx.State):
         paso_seconds = int(form_data.get("paso_seconds") or 3)
         sensor_id = form_data.get("sensor_id", "")
         sensor_id = "" if sensor_id == "ninguno" else sensor_id
-        if not door_id or not name or not node_id or not pin:
+        kind, pin2, remote_id, btn_on, btn_off, error = actuacion_de_formulario(
+            form_data, "abrir", "cerrar")
+        if error:
+            self.status = error
+            return
+        if kind == store.ACT_MANDO:
+            node_id, pin = "", ""
+        if not door_id or not name or (kind != store.ACT_MANDO and (not node_id or not pin)):
             return
         old = next((d for d in self.doors if d["id"] == door_id), None)
         item = store.update_door(door_id, name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                                 show_on_floor, floor_icon, modo, paso_seconds, sensor_id)
+                                 show_on_floor, floor_icon, modo, paso_seconds, sensor_id,
+                                 kind=kind, pin2=pin2, remote_id=remote_id,
+                                 btn_on=btn_on, btn_off=btn_off)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         await self._log(logs.PUERTAS, "PUERTA_EDITADA",
@@ -1307,8 +1355,10 @@ class NodesState(rx.State):
         if item and old and old["topic_state"] != item["topic_state"]:
             bus = mqtt_bus.get_running_bus()
             if bus:
-                bus.unsubscribe_dynamic(old["topic_state"])
-                bus.subscribe_dynamic(item["topic_state"], door_id)
+                if old["topic_state"]:
+                    bus.unsubscribe_dynamic(old["topic_state"])
+                if item["topic_state"]:
+                    bus.subscribe_dynamic(item["topic_state"], door_id)
 
     @rx.event(background=True)
     async def open_door(self, door_id: str):
@@ -1356,7 +1406,8 @@ class NodesState(rx.State):
             if door is None:
                 return
         try:
-            await operations.send_door_state(door_id, False)
+            # Relés sin corriente (los dos, si son dos: el motor se para).
+            await operations.parar_puerta(door_id)
             msg = f"⏹️ Pulso de {door['name']} cortado"
         except operations.OperationError as e:
             msg = f"❌ {door['name']}: {e}"
@@ -1384,6 +1435,9 @@ class NodesState(rx.State):
                 msg = f"🔓 {door['name']} liberada (abierta)"
             except operations.OperationError as e:
                 msg = f"❌ {door['name']}: {e}"
+            except asyncio.CancelledError:
+                # Alguien cortó el recorrido a medias ("Cortar pulso").
+                msg = f"⏹️ Apertura de {door['name']} cortada"
         else:
             async def _acabado(m: str):
                 async with self:
@@ -1463,17 +1517,21 @@ class NodesState(rx.State):
             node_id, pin = "", ""
         elif not node_id or not pin:
             return
+        pin2 = form_data.get("pin2", "").strip()
+        if kind == store.ACT_DOS_RELES and not pin2:
+            self.status = "⚠️ Con dos relés hace falta el pin del segundo (el de apagar)."
+            return
         item = store.add_light(name, node_id, self._node_name(node_id), pin, room_id,
                                show_on_floor, floor_icon, kind=kind,
                                remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
-                               aspecto=aspecto, mando_modo=mando_modo)
+                               aspecto=aspecto, mando_modo=mando_modo, pin2=pin2)
         self._reload()
         # Una luz de mando no tiene topic al que suscribirse (ver store._campos_luz).
         if item["topic_state"]:
             self._subscribe_if_running(item["topic_state"], item["id"])
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
         como = ("por mando" if kind == store.LUZ_MANDO
-                else f"{self._node_name(node_id)} pin {pin}")
+                else f"{self._node_name(node_id)} pin {pin}" + (f"/{pin2}" if pin2 else ""))
         await self._log(logs.LUCES, "LUZ_CREADA", f"{name} · {como} · {estancia}")
 
     @rx.event
@@ -1529,17 +1587,21 @@ class NodesState(rx.State):
             node_id, pin = "", ""
         elif not node_id or not pin:
             return
+        pin2 = form_data.get("pin2", "").strip()
+        if kind == store.ACT_DOS_RELES and not pin2:
+            self.status = "⚠️ Con dos relés hace falta el pin del segundo (el de apagar)."
+            return
         old = next((l for l in self.lights if l["id"] == light_id), None)
         item = store.update_light(light_id, name, node_id, self._node_name(node_id), pin, room_id,
                                   show_on_floor, floor_icon, kind=kind,
                                   remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
-                                  aspecto=aspecto, mando_modo=mando_modo)
+                                  aspecto=aspecto, mando_modo=mando_modo, pin2=pin2)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
         movida = old and (old.get("room_id") or "") != (room_id or "")
         como = ("por mando" if kind == store.LUZ_MANDO
-                else f"{self._node_name(node_id)} pin {pin}")
+                else f"{self._node_name(node_id)} pin {pin}" + (f"/{pin2}" if pin2 else ""))
         detalle = f"{cambio} · {como} · {estancia}"
         await self._log(logs.LUCES, "LUZ_CAMBIADA_DE_ESTANCIA" if movida else "LUZ_EDITADA", detalle)
         if item and old and old["topic_state"] != item["topic_state"]:

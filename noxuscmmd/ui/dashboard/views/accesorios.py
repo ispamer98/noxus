@@ -16,6 +16,7 @@ from ....domains.nodes.state import NodesState
 from .. import theme
 from ..components.form_dialog import form_dialog_content, field, dialog_footer, styled_input
 from ..components.node_select import node_select
+from ..components.actuacion import campo_segundo_rele
 from .lights import (
     _aspecto_select, _kind_select, _light_card, _modo_mando_select,
     _room_select, _tecla_select,
@@ -44,9 +45,10 @@ def _add_aparato_dialog() -> rx.Component:
                           _tecla_select("btn_off", "Tecla de apagar")),
                     # Los de relé siguen siendo posibles (un enchufe con relé),
                     # así que el nodo y el pin se quedan disponibles.
-                    field("Nodo (solo si es por relé)", node_select()),
-                    field("Pin GPIO o señal MQTT (solo si es por relé)",
+                    field("Nodo (solo si es por relé o dos relés)", node_select()),
+                    field("Pin GPIO o señal MQTT · relé de encender (solo si es por relé)",
                           styled_input(name="pin", placeholder="22 · enchufe_salon")),
+                    campo_segundo_rele("", "apagar"),
                     field("Estancia", _room_select()),
                     dialog_footer(confirm_label="Añadir", color_scheme="cyan"),
                     spacing="3",

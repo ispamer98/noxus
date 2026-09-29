@@ -104,8 +104,25 @@ def _retardos() -> Caso:
     return c
 
 
+def _actuacion() -> Caso:
+    """Forma de actuar de puertas y luces: un relé, dos o un mando."""
+    from noxuscmmd.domains.nodes import store as nodos
+    c = Caso("Forma de actuación")
+    p = nodos._campos_actuacion("dos_reles", "nodo", "5", "6", "", "", "")
+    c.revisar("dos relés: topic del 1º", p["topic_cmd"], "casa/nodo/5/set")
+    c.revisar("dos relés: topic del 2º", p["topic_cmd2"], "casa/nodo/6/set")
+    r = nodos._campos_actuacion("rele", "nodo", "5", "6", "", "", "")
+    c.revisar("un relé no guarda 2º pin", r["pin2"], "")
+    m = nodos._campos_actuacion("mando", "", "", "", "tv", "a", "b")
+    c.revisar("mando sin topics", (m["topic_cmd"], m["topic_state"]), ("", ""))
+    c.revisar("mando guarda las teclas", (m["remote_id"], m["btn_on"], m["btn_off"]), ("tv", "a", "b"))
+    x = nodos._campos_actuacion("inventado", "nodo", "5", "", "", "", "")
+    c.revisar("un tipo desconocido cae a un relé", x["kind"], "rele")
+    return c
+
+
 def ejecutar() -> list[Caso]:
-    return [_escritura_atomica(), _permisos(), _retardos(), _avisos(),
+    return [_escritura_atomica(), _permisos(), _actuacion(), _retardos(), _avisos(),
             _equipos_en_plano(), _quien_esta_en_linea(), _medidas_del_servidor()]
 
 
