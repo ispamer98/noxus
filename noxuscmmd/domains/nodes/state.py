@@ -643,6 +643,11 @@ class NodesState(rx.State):
     # _DOOR_PULSE_TASKS, que es lo que de verdad controla/cancela el pulso: eso
     # es de proceso, y esto es por sesión, solo para pintar.
     pulsing_doors: dict[str, bool] = {}
+    # Recorrido en vivo, leído del fichero (ver store.set_door_runtime): en qué
+    # fase va cada puerta ("abriendo", "paso", "cerrando") y cuáles se han
+    # dejado abiertas a propósito ("Liberar"). Es lo que pinta el plano.
+    door_fase: dict[str, str] = {}
+    door_hold: dict[str, bool] = {}
 
     # ── Carga inicial ────────────────────────────────────────────────────
     @rx.event
@@ -661,6 +666,9 @@ class NodesState(rx.State):
         # además el único bucle que corre también en la vista clásica.
         if not _STARTED:
             _STARTED = True
+            # Un recorrido de portón que se quedó a medias al reiniciar no
+            # puede seguir pintándose como "abriendo" para siempre.
+            store.clear_door_fases()
             yield NodesState.attach_to_mqtt_bus
 
     def _reload(self):
@@ -672,6 +680,14 @@ class NodesState(rx.State):
         # escribe si encuentra algo desfasado.
         referencias.sincronizar()
         self._refrescar(store.read_all())
+
+    def _aplicar_door_runtime(self, runtime: dict) -> None:
+        fase = {k: v.get("fase", "") for k, v in runtime.items()}
+        hold = {k: bool(v.get("mantenida")) for k, v in runtime.items()}
+        if fase != self.door_fase:
+            self.door_fase = fase
+        if hold != self.door_hold:
+            self.door_hold = hold
 
     def _refrescar(self, data: dict) -> None:
         """Vuelca en las Vars un `data` ya leído del disco.
@@ -694,6 +710,7 @@ class NodesState(rx.State):
         self.ir_remotes = [_remote_para_ui(r) for r in data["ir_remotes"]]
         self.widgets = sorted(data["overview_widgets"], key=lambda w: w.get("order", 0))
         self.sensor_state = data["sensor_states"]
+        self._aplicar_door_runtime(data.get("door_runtime", {}))
         self.host_online = data["host_online"]
         self.floor_catalog = _build_floor_catalog(data, self.plano_actual,
                                                   self._nombres_plano)
@@ -1039,10 +1056,12 @@ class NodesState(rx.State):
                         self._refrescar(data)
                 else:
                     real_sensors = await asyncio.to_thread(store.get_all_sensor_states)
+                    real_runtime = await asyncio.to_thread(store.get_door_runtime)
                     real_hosts = await asyncio.to_thread(store.get_all_host_online)
                     async with self:
                         if real_sensors != self.sensor_state:
                             self.sensor_state = real_sensors
+                        self._aplicar_door_runtime(real_runtime)
                         if real_hosts != self.host_online:
                             self.host_online = real_hosts
                 if not await aviso.espera(guardia, 3.0):
@@ -1234,10 +1253,14 @@ class NodesState(rx.State):
         pulse_seconds = int(form_data.get("pulse_seconds") or 2)
         show_on_floor = bool(form_data.get("show_on_floor"))
         floor_icon = form_data.get("floor_icon", "")
+        modo = form_data.get("modo", store.MODO_PUERTA)
+        paso_seconds = int(form_data.get("paso_seconds") or 3)
+        sensor_id = form_data.get("sensor_id", "")
+        sensor_id = "" if sensor_id == "ninguno" else sensor_id
         if not name or not node_id or not pin:
             return
         item = store.add_door(name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                              show_on_floor, floor_icon)
+                              show_on_floor, floor_icon, modo, paso_seconds, sensor_id)
         self._reload()
         self._subscribe_if_running(item["topic_state"], item["id"])
         await self._log(logs.PUERTAS, "PUERTA_CREADA",
@@ -1268,11 +1291,15 @@ class NodesState(rx.State):
         pulse_seconds = int(form_data.get("pulse_seconds") or 2)
         show_on_floor = bool(form_data.get("show_on_floor"))
         floor_icon = form_data.get("floor_icon", "")
+        modo = form_data.get("modo", store.MODO_PUERTA)
+        paso_seconds = int(form_data.get("paso_seconds") or 3)
+        sensor_id = form_data.get("sensor_id", "")
+        sensor_id = "" if sensor_id == "ninguno" else sensor_id
         if not door_id or not name or not node_id or not pin:
             return
         old = next((d for d in self.doors if d["id"] == door_id), None)
         item = store.update_door(door_id, name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                                 show_on_floor, floor_icon)
+                                 show_on_floor, floor_icon, modo, paso_seconds, sensor_id)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         await self._log(logs.PUERTAS, "PUERTA_EDITADA",
@@ -1322,6 +1349,7 @@ class NodesState(rx.State):
             if (no := await permisos.denegar(self, permisos.PUERTAS)):
                 return no
         _cancel_pulse(door_id)
+        await asyncio.to_thread(store.set_door_runtime, door_id, "", False)
         async with self:
             self.pulsing_doors.pop(door_id, None)
             door = next((d for d in self.doors if d["id"] == door_id), None)
@@ -1339,30 +1367,38 @@ class NodesState(rx.State):
 
     @rx.event(background=True)
     async def set_door_hold(self, door_id: str, state: bool):
-        """Mantener abierto (state=True) / Mantener cerrado (state=False):
-        fuerza el relé a ese estado y lo mantiene — cancela cualquier pulso
-        en curso para que no lo pise el auto-cierre."""
+        """Liberar (state=True): hace el recorrido de apertura y deja el relé
+        abierto hasta que alguien cierre, con el magnético a la vista.
+        Cerrar (state=False): recorrido de cierre y bloqueo de la cerradura.
+        Ambos cancelan cualquier pulso en curso para que no lo pise el
+        auto-cierre."""
         async with self:
             if (no := await permisos.denegar(self, permisos.PUERTAS)):
                 return no
-        _cancel_pulse(door_id)
-        async with self:
             door = next((d for d in self.doors if d["id"] == door_id), None)
             if door is None:
                 return
-        try:
-            await operations.send_door_state(door_id, state)
-            msg = f"🔒 {door['name']} mantenida {'ABIERTA' if state else 'CERRADA'}"
-        except operations.OperationError as e:
-            msg = f"❌ {door['name']}: {e}"
+        if state:
+            try:
+                await operations.hold_door_open(door_id)
+                msg = f"🔓 {door['name']} liberada (abierta)"
+            except operations.OperationError as e:
+                msg = f"❌ {door['name']}: {e}"
+        else:
+            async def _acabado(m: str):
+                async with self:
+                    infra = await self.get_state(InfraState)
+                    infra.status = m
+                    self.pulsing_doors.pop(door_id, None)
+
+            operations.close_door(door_id, on_finish=_acabado)
+            async with self:
+                await self._log(logs.PUERTAS, "PUERTA_MANTENIDA_CERRADA", door["name"])
+            return
         async with self:
             infra = await self.get_state(InfraState)
             infra.status = msg
-            await self._log(
-                logs.PUERTAS,
-                "PUERTA_MANTENIDA_ABIERTA" if state else "PUERTA_MANTENIDA_CERRADA",
-                door["name"],
-            )
+            await self._log(logs.PUERTAS, "PUERTA_MANTENIDA_ABIERTA", door["name"])
 
     # ── Alta: luces ──────────────────────────────────────────────────────
     @rx.var

@@ -73,6 +73,17 @@ def _permisos() -> Caso:
     }
     for (rol, cap), debe in esperado.items():
         c.revisar(f"{rol} · {cap}", permisos.puede_rol(rol, cap), debe)
+    # Extra por aparato: la tablet de habitación es invitado pero arma.
+    c.revisar("invitado + extra armar · armar",
+              permisos.puede_rol("invitado", permisos.ARMAR, [permisos.ARMAR]), True)
+    c.revisar("invitado + extra armar · puertas sigue NO",
+              permisos.puede_rol("invitado", permisos.PUERTAS, [permisos.ARMAR]), False)
+    c.revisar("invitado + extra armar · ajustes sigue NO",
+              permisos.puede_rol("invitado", permisos.AJUSTES, [permisos.ARMAR]), False)
+    c.revisar("bloqueado + extra armar · nada",
+              permisos.puede_rol("bloqueado", permisos.ARMAR, [permisos.ARMAR]), False)
+    c.revisar("extra no permitido (ajustes) no da nada",
+              permisos.puede_rol("invitado", permisos.AJUSTES, [permisos.AJUSTES]), False)
     return c
 
 

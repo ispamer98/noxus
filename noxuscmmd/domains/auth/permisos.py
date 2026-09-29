@@ -44,6 +44,13 @@ _POR_ROL = {
     store.BLOQUEADO: set(),
 }
 
+# Capacidades que se le pueden CONCEDER a un aparato concreto por encima de su
+# rol (ficha["extras"] en dispositivos.json). Lista corta a propósito: solo lo
+# que tiene sentido dar suelto. Caso de uso: la tablet de una habitación, que es
+# «invitado» para todo lo demás pero tiene que poder armar y desarmar. AJUSTES
+# no está y no puede estar: eso ya es ser administrador.
+EXTRAS_PERMITIDOS = frozenset({ARMAR})
+
 # Lo que se le dice a quien no llega. Sin jerga y sin detalles de más: si
 # alguien está probando puertas, tampoco hace falta explicarle el mapa.
 _NEGATIVA = {
@@ -62,14 +69,21 @@ def capacidades(rol: str) -> set[str]:
     return _POR_ROL.get(rol, set())
 
 
-def puede_rol(rol: str, capacidad: str) -> bool:
-    return capacidad in capacidades(rol)
+def puede_rol(rol: str, capacidad: str, extras=()) -> bool:
+    """`extras` son las capacidades concedidas al aparato por encima de su rol.
+    Solo cuentan si el rol ya deja entrar al panel (VER): un aparato pendiente o
+    bloqueado no gana nada por tener extras guardados."""
+    if capacidad in capacidades(rol):
+        return True
+    return (capacidad in EXTRAS_PERMITIDOS and capacidad in extras
+            and VER in capacidades(rol))
 
 
 def puede(id_dispositivo: str, capacidad: str) -> bool:
     """La pregunta completa: mira el rol vigente del aparato, ya con su
-    caducidad contada."""
-    return puede_rol(store.rol_de(id_dispositivo), capacidad)
+    caducidad contada, y las capacidades extra de su ficha."""
+    return puede_rol(store.rol_de(id_dispositivo), capacidad,
+                     store.extras_de(id_dispositivo))
 
 
 def motivo(capacidad: str) -> str:

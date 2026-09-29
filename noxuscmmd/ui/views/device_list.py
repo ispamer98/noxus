@@ -221,7 +221,7 @@ def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=Non
     if on_click is not None:
         props["on_click"] = on_click
     return rx.box(
-        rx.icon(icon, size=14, color=color),
+        icon if isinstance(icon, rx.Component) else rx.icon(icon, size=14, color=color),
         # rgba() no se puede componer con un Var, así que el relleno/halo se
         # hacen con color-mix/box-shadow sobre currentColor-like: usamos el
         # propio color con transparencia vía CSS color-mix, soportado en todos
@@ -291,29 +291,77 @@ def _camera_marker(entity_id, name, icon, top, left, on_click, subtle=None, colo
                    on_click=on_click, subtle=subtle)
 
 
-def _door_marker(entity_id, name, icon, is_open, pulsing, top, left, on_click, subtle=None,
-                  color=None, color_on=None) -> rx.Component:
+_SVG_PORTON_CERRADO = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" '
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M6 21V11h12v10"/>'
+    '<path d="M6 14h12M6 17h12"/></svg>'
+)
+# Portón levantado: los paneles suben hasta el dintel y queda el hueco libre,
+# con una flecha hacia arriba para que se lea de un vistazo como "abierto".
+_SVG_PORTON_ABIERTO = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" '
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+    'stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M6 8.5h12M6 11h12"/>'
+    '<path d="M12 20v-5M9.5 17.5 12 15l2.5 2.5"/></svg>'
+)
+
+
+def _icono_puerta(icon, es_porton, abierta, color) -> rx.Component:
+    """Icono de una puerta según su magnético: el portón cambia a «levantado»
+    cuando está abierto; el resto de puertas con el icono por defecto pasan de
+    «cerrada» a «abierta»; un icono elegido a mano se respeta tal cual."""
+    porton = rx.box(
+        rx.cond(abierta, rx.html(_SVG_PORTON_ABIERTO), rx.html(_SVG_PORTON_CERRADO)),
+        color=color, display="flex", align_items="center", justify_content="center",
+    )
+    normal = rx.icon(
+        rx.cond(abierta & (icon == "door-closed"), "door-open", icon), size=14, color=color,
+    )
+    return rx.cond(es_porton, porton, normal)
+
+
+def _door_marker(entity_id, name, icon, is_open, fase, held, es_porton, top, left, on_click,
+                  subtle=None, color=None, color_on=None) -> rx.Component:
     """Puerta: en reposo (cerrada) el color elegido en el plano; ROJO
     parpadeando rápido si el sensor la da por abierta. Al pulsarla se lanza su
     pulso de apertura (igual que el botón "Abrir" de Accesos).
 
-    Mientras el relé está activado (`pulsing`, ver NodesState.pulsing_doors) el
-    marcador se pone ámbar y late con un halo que se expande — así se ve que la
-    orden salió y está en curso, sin depender de que la puerta tenga sensor de
-    estado (muchas solo tienen relé y nunca cambian `is_open`)."""
+    `fase` viene del fichero (NodesState.door_fase). Mientras el relé hace su
+    recorrido de apertura o de cierre ("abriendo"/"cerrando") el marcador se pone
+    ámbar y late con un halo que se expande — así se ve que la orden salió y
+    está en curso, sin depender de que la puerta tenga sensor de estado. En la
+    fase "paso" de un portón, o cuando está liberada (`held`), el ámbar se apaga
+    y se enseña el magnético tal cual, sin parpadeo de alarma: está abierta a
+    propósito y lo que interesa es verla arriba."""
+    pulsing = (fase == "abriendo") | (fase == "cerrando")
+    a_proposito = (fase == "paso") | held
+    abierta = is_open | a_proposito
     return _marker(
-        entity_id, icon,
+        entity_id,
+        _icono_puerta(icon, es_porton, is_open, rx.cond(
+            pulsing, _AMBER,
+            rx.cond(abierta, _active_color(color_on, _RED), _resting_color(color)))),
         rx.cond(pulsing, _AMBER,
-                rx.cond(is_open, _active_color(color_on, _RED), _resting_color(color))),
+                rx.cond(abierta, _active_color(color_on, _RED), _resting_color(color))),
         rx.cond(
-            pulsing,
-            name + ": ABRIENDO...",
-            rx.cond(is_open, name + ": ABIERTA — pulsa para abrir", name + ": Cerrada — pulsa para abrir"),
+            fase == "abriendo", name + ": ABRIENDO...",
+            rx.cond(
+                fase == "cerrando", name + ": CERRANDO...",
+                rx.cond(
+                    held, name + ": LIBERADA — pulsa para cerrar",
+                    rx.cond(
+                        fase == "paso", name + ": abierta (paso)",
+                        rx.cond(is_open, name + ": ABIERTA — pulsa para abrir",
+                                name + ": Cerrada — pulsa para abrir"),
+                    ),
+                ),
+            ),
         ),
-        top, left, on_click=on_click, alarmed=is_open,
-        subtle=_quiet(subtle, is_open, pulsing),
+        top, left, on_click=on_click, alarmed=is_open & ~a_proposito,
+        subtle=_quiet(subtle, is_open, pulsing, a_proposito),
         # Prevalece sobre la animación "pulse" normal: es la señal de que hay
-        # un pulso de apertura en marcha ahora mismo.
+        # un recorrido en marcha ahora mismo.
         animation_override=rx.cond(pulsing, "nxDoorPulse 0.9s ease-out infinite", ""),
     )
 
@@ -410,11 +458,17 @@ def _dynamic_door_marker(d: dict) -> rx.Component:
     duración configurada en su propia ficha (pestaña Accesos)."""
     icon = rx.cond(d["floor_icon"], d["floor_icon"].to(str), "door-closed")
     did = d["id"].to(str)
+    sensor = d["sensor_id"].to(str)
+    held = NodesState.door_hold[did]
     return _door_marker(
         did, d["name"].to(str), icon,
-        NodesState.sensor_state[did], NodesState.pulsing_doors[did],
+        # El magnético a enseñar: uno aparte si se ha elegido, y si no el
+        # propio estado de la puerta.
+        rx.cond(sensor != "", NodesState.sensor_state[sensor], NodesState.sensor_state[did]),
+        NodesState.door_fase[did], held, d["modo"].to(str) == "porton",
         d["floor_top"].to(str), d["floor_left"].to(str),
-        NodesState.open_door(did),
+        # Liberada: tocarla la cierra. Si no, lanza el pulso de apertura.
+        rx.cond(held, NodesState.set_door_hold(did, False), NodesState.open_door(did)),
         subtle=d["floor_subtle"], color=d["floor_color"].to(str),
         color_on=d["floor_color_on"].to(str),
     )

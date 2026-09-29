@@ -222,6 +222,15 @@ def _panel_permisos(item: rx.Var) -> rx.Component:
         ),
         _etiqueta_seccion("Rol"),
         _selector_rol(item),
+        rx.hstack(
+            rx.checkbox(
+                checked=item["extra_armar"],
+                on_change=lambda _: AuthAdminState.alternar_extra_armar(item["id"]),
+            ),
+            rx.icon("shield", size=13, color=theme.MUTED, flex_shrink="0"),
+            rx.text("Puede armar y desarmar", size="2", color=theme.TEXT),
+            spacing="2", align="center", width="100%",
+        ),
         rx.cond(
             item["tiene_avisos"] == "sí",
             rx.fragment(

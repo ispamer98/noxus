@@ -160,6 +160,9 @@ def _apply_defaults(data: dict) -> dict:
     for k in _COLLECTIONS:
         data.setdefault(k, [])
     data.setdefault("sensor_states", {})
+    # Lo que está pasando AHORA en cada puerta/portón: {id: {"fase", "mantenida"}}.
+    # Ver set_door_runtime. Aparte de sensor_states porque no es un bool.
+    data.setdefault("door_runtime", {})
     data.setdefault("host_online", {})
     vw = data.get("video_wall")
     if not isinstance(vw, dict):
@@ -189,6 +192,12 @@ def _apply_defaults(data: dict) -> dict:
         sensor.setdefault("floor_color_on", None)
     for door in data["doors"]:
         door.setdefault("pulse_seconds", 2)
+        # "puerta" (pulso simple) o "porton" (recorrido: abre, deja ver el
+        # magnético `paso_seconds` y cierra bloqueando). `sensor_id` es el
+        # magnético a enseñar si no es el propio estado de la puerta.
+        door.setdefault("modo", MODO_PUERTA)
+        door.setdefault("paso_seconds", 3)
+        door.setdefault("sensor_id", "")
         door.setdefault("floor_top", None)
         door.setdefault("floor_left", None)
         door.setdefault("floor_icon", None)
@@ -803,13 +812,27 @@ def toggle_sensor_isolated(sensor_id: str) -> dict | None:
 # del relé); topic_cmd es donde el sistema publica ON/OFF para actuar.
 # pulse_seconds: duración del pulso de "Abrir" antes de cerrarse solo — definible
 # por puerta (2, 3, 4, 5s...) en vez de fijo en el código.
+MODO_PUERTA = "puerta"
+MODO_PORTON = "porton"
+
+
+def _extras_puerta(modo: str, paso_seconds, sensor_id: str) -> dict:
+    return {
+        "modo": modo if modo in (MODO_PUERTA, MODO_PORTON) else MODO_PUERTA,
+        "paso_seconds": min(60, _entero(paso_seconds, 3, 1)),
+        "sensor_id": (sensor_id or "").strip(),
+    }
+
+
 def add_door(name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
-             show_on_floor: bool = False, floor_icon: str = "") -> dict:
+             show_on_floor: bool = False, floor_icon: str = "", modo: str = MODO_PUERTA,
+             paso_seconds: int = 3, sensor_id: str = "") -> dict:
     item = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
         "pulse_seconds": pulse_seconds,
+        **_extras_puerta(modo, paso_seconds, sensor_id),
         **floor_fields(show_on_floor, floor_icon, None),
     }
     return _add("doors", "door", item)
@@ -820,13 +843,15 @@ def delete_door(door_id: str) -> None:
 
 
 def update_door(door_id: str, name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
-                show_on_floor: bool = False, floor_icon: str = "") -> dict | None:
+                show_on_floor: bool = False, floor_icon: str = "", modo: str = MODO_PUERTA,
+                paso_seconds: int = 3, sensor_id: str = "") -> dict | None:
     current = next((d for d in _read()["doors"] if d["id"] == door_id), None)
     return _update("doors", door_id, {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
         "pulse_seconds": pulse_seconds,
+        **_extras_puerta(modo, paso_seconds, sensor_id),
         **floor_fields(show_on_floor, floor_icon, current),
     })
 
@@ -1116,6 +1141,45 @@ def set_sensor_state(entity_id: str, value: bool) -> None:
 
 def get_all_sensor_states() -> dict:
     return _read().get("sensor_states", {})
+
+
+# ── Recorrido en vivo de puertas y portones ─────────────────────────────────
+# fase: "abriendo" | "paso" | "cerrando" | "" (reposo). mantenida: el relé se
+# ha dejado abierto a propósito ("Liberar"). Vive en el fichero y no en la
+# sesión para que lo vea igual la tablet que el móvil desde el que se pulsó, y
+# para que sobreviva a recargar la página.
+def get_door_runtime() -> dict:
+    return _read().get("door_runtime", {})
+
+
+def set_door_runtime(door_id: str, fase: str | None = None,
+                     mantenida: bool | None = None) -> None:
+    def _apply(data):
+        actual = data["door_runtime"].get(door_id, {"fase": "", "mantenida": False})
+        if fase is not None:
+            actual["fase"] = fase
+        if mantenida is not None:
+            actual["mantenida"] = bool(mantenida)
+        if actual.get("fase") or actual.get("mantenida"):
+            data["door_runtime"][door_id] = actual
+        else:
+            data["door_runtime"].pop(door_id, None)
+
+    _mutate(_apply)
+    bus.publicar(bus.SENSORES)
+
+
+def clear_door_fases() -> None:
+    """Al arrancar el servicio: ninguna fase puede seguir en marcha (la tarea
+    que la llevaba murió con el proceso). Lo mantenido sí se conserva: el relé
+    sigue como se dejó."""
+    def _apply(data):
+        for door_id in list(data["door_runtime"]):
+            data["door_runtime"][door_id]["fase"] = ""
+            if not data["door_runtime"][door_id].get("mantenida"):
+                data["door_runtime"].pop(door_id)
+
+    _mutate(_apply)
 
 
 # ── Estado en vivo de ping de equipos extra ──────────────────────────────────

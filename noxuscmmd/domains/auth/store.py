@@ -200,6 +200,15 @@ def rol_de(id_dispositivo: str) -> str:
     return rol if rol in ROLES else PENDIENTE
 
 
+def extras_de(id_dispositivo: str) -> list[str]:
+    """Capacidades concedidas a este aparato por encima de su rol. Se filtran
+    contra permisos.EXTRAS_PERMITIDOS al usarse (ver permisos.puede_rol): un
+    valor inventado en el fichero no da nada."""
+    d = dispositivo(id_dispositivo) or {}
+    extras = d.get("extras", [])
+    return [e for e in extras if isinstance(e, str)] if isinstance(extras, list) else []
+
+
 def por_endpoint(endpoint: str) -> tuple[str, dict] | tuple[None, None]:
     """Busca el dispositivo por su suscripción push."""
     if not endpoint:

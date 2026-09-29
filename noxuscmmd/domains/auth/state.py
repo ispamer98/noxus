@@ -54,6 +54,8 @@ class AuthState(rx.State):
     _id: str = ""
     _rol: str = store.PENDIENTE
     _nombre: str = ""
+    # Capacidades extra de la ficha (ver permisos.EXTRAS_PERMITIDOS).
+    _extras: list[str] = []
     # Copia de si el bloqueo está en vigor. Mientras no lo esté, la interfaz
     # tiene que enseñarlo TODO: el rodaje sirve para ver quién es quién sin
     # quitarle nada a nadie, y esconder botones ya es quitar. Sin esto, un
@@ -99,7 +101,7 @@ class AuthState(rx.State):
         """Si la interfaz debe ENSEÑAR algo. No es lo mismo que poder hacerlo:
         mientras el bloqueo no esté en vigor se enseña todo, porque en rodaje
         nadie debe notar el cambio."""
-        return (not self._bloqueo) or permisos.puede_rol(self._rol, capacidad)
+        return (not self._bloqueo) or permisos.puede_rol(self._rol, capacidad, self._extras)
 
     @rx.var
     def registrando(self) -> bool:
@@ -198,6 +200,7 @@ class AuthState(rx.State):
         ficha = store.dispositivo(self._id) or {}
         self._rol = store.rol_de(self._id)
         self._nombre = ficha.get("nombre", "")
+        self._extras = store.extras_de(self._id)
         self._bloqueo = store.estricto()
         prefs = store.preferencias(self._id)
         self.densidad = prefs["densidad"]
@@ -238,7 +241,9 @@ class AuthState(rx.State):
                     if self._id:
                         rol = await asyncio.to_thread(store.rol_de, self._id)
                         bloqueo = await asyncio.to_thread(store.estricto)
-                        if rol != self._rol or bloqueo != self._bloqueo:
+                        extras = await asyncio.to_thread(store.extras_de, self._id)
+                        if (rol != self._rol or bloqueo != self._bloqueo
+                                or extras != self._extras):
                             # Solo se refresca cuando ha cambiado algo: reasignar
                             # en cada vuelta repintaría el panel entero cada vez
                             # que se toca cualquier dispositivo, no solo el suyo.

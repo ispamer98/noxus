@@ -17,6 +17,7 @@ store.py.
 """
 import reflex as rx
 
+from ....domains.devices import registry
 from ....domains.nodes.state import NodesState
 from ....domains.access.state import AccessControlState
 from .. import theme
@@ -57,6 +58,41 @@ def _pulse_field(default_value: str = "2") -> rx.Component:
     )
 
 
+def _porton_fields(modo="puerta", paso="3", sensor_id="ninguno") -> list[rx.Component]:
+    """Ajustes de portón: modo (pulso simple o recorrido completo), segundos
+    que se enseña el magnético tras abrir y magnético a enseñar si no es el
+    propio estado de la puerta."""
+    return [
+        styled_select(
+            "Tipo",
+            select_content(
+                rx.select.item("Puerta (pulso simple)", value="puerta"),
+                rx.select.item("Portón (recorrido abre → paso → cierra y bloquea)", value="porton"),
+            ),
+            name="modo", default_value=modo,
+        ),
+        field(
+            "Portón: segundos de paso (magnético a la vista antes de cerrar)",
+            styled_input(name="paso_seconds", default_value=paso, type="number", min=1, max=60),
+        ),
+        styled_select(
+            "Magnético a enseñar (opcional)",
+            select_content(
+                rx.select.item("El propio estado de la puerta", value="ninguno"),
+                rx.select.group(
+                    rx.select.label("Sensores del sistema"),
+                    *[rx.select.item(sen.name, value=sid) for sid, sen in registry.binary_sensors().items()],
+                ),
+                rx.select.group(
+                    rx.select.label("Sensores adicionales"),
+                    rx.foreach(NodesState.sensors, lambda sn: rx.select.item(sn["name"], value=sn["id"])),
+                ),
+            ),
+            name="sensor_id", default_value=sensor_id,
+        ),
+    ]
+
+
 def _edit_door_dialog(door: dict) -> rx.Component:
     return form_dialog_content(
         icon="door-closed",
@@ -69,6 +105,8 @@ def _edit_door_dialog(door: dict) -> rx.Component:
                 field("Nodo", node_select(default_value=door["node_id"])),
                 field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", default_value=door["pin"])),
                 _pulse_field(door["pulse_seconds"].to(str)),
+                *_porton_fields(door["modo"].to(str), door["paso_seconds"].to(str),
+                                rx.cond(door["sensor_id"].to(str) != "", door["sensor_id"].to(str), "ninguno")),
                 *floor_plan_fields(
                     door["floor_top"],
                     rx.cond(door["floor_icon"], door["floor_icon"].to(str), "door-closed"),
@@ -98,6 +136,9 @@ def _door_card(door: dict) -> rx.Component:
                     rx.text(door["name"], size="3", weight="bold", color=theme.TEXT),
                     rx.badge(door["node_name"], variant="outline", size="1", color_scheme="purple"),
                     rx.badge(f"Pulso {door['pulse_seconds']}s", variant="soft", size="1", color_scheme="gray"),
+                    rx.cond(door["modo"] == "porton",
+                            rx.badge(f"Portón · paso {door['paso_seconds']}s", variant="soft", size="1",
+                                     color_scheme="amber")),
                     spacing="2",
                     align="center",
                     wrap="wrap",
@@ -137,7 +178,7 @@ def _door_card(door: dict) -> rx.Component:
             ),
             rx.button(
                 rx.icon("door-open", size=14),
-                "Mantener abierto",
+                "Liberar",
                 on_click=NodesState.set_door_hold(door["id"], True),
                 color_scheme="amber",
                 variant="surface",
@@ -145,7 +186,7 @@ def _door_card(door: dict) -> rx.Component:
             ),
             rx.button(
                 rx.icon("lock", size=14),
-                "Mantener cerrado",
+                "Cerrar",
                 on_click=NodesState.set_door_hold(door["id"], False),
                 color_scheme="gray",
                 variant="surface",
@@ -183,6 +224,7 @@ def _add_door_dialog() -> rx.Component:
                     field("Nodo", node_select()),
                     field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", placeholder="27 · puerta_garaje")),
                     _pulse_field(),
+                    *_porton_fields(),
                     dialog_footer(confirm_label="Añadir"),
                     spacing="3",
                     width="100%",

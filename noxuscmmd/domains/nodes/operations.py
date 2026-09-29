@@ -280,6 +280,11 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
     Cancelable con cancel_door_pulse() o por cualquier otro pulso de la misma
     puerta. `seconds=None` toma el pulso configurado en la ficha.
 
+    Un PORTÓN (modo "porton") hace el recorrido completo: abre `pulse_seconds`
+    (fase "abriendo"), sigue abierto `paso_seconds` para que entre o salga el
+    coche mientras el plano enseña el magnético (fase "paso") y solo entonces
+    cierra el relé, que es lo que lo deja bloqueado.
+
     Devuelve la tarea sin esperarla — quien llama decide si le importa cuándo
     acaba. `on_finish` recibe el mensaje del resultado para que una sesión
     pueda pintarlo."""
@@ -288,9 +293,13 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
     async def _pulse():
         nombre = (find("doors", door_id) or {}).get("name", door_id)
         try:
+            await asyncio.to_thread(store.set_door_runtime, door_id, "abriendo", False)
             door = await send_door_state(door_id, True)
             espera = float(door.get("pulse_seconds", 2)) if seconds is None else float(seconds)
             await asyncio.sleep(espera)
+            if door.get("modo") == store.MODO_PORTON:
+                await asyncio.to_thread(store.set_door_runtime, door_id, "paso")
+                await asyncio.sleep(float(door.get("paso_seconds", 3)))
             await send_door_state(door_id, False)
             msg = f"✅ {door['name']} abierta"
         except asyncio.CancelledError:
@@ -303,6 +312,7 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
         except Exception as e:
             msg = f"❌ {nombre}: {e}"
         finally:
+            await asyncio.to_thread(store.set_door_runtime, door_id, "")
             if on_finish:
                 await on_finish(msg)
             _DOOR_PULSE_TASKS.pop(door_id, None)
@@ -310,6 +320,58 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
     tarea = asyncio.create_task(_pulse())
     _DOOR_PULSE_TASKS[door_id] = tarea
     return tarea
+
+
+def close_door(door_id: str, *, on_finish=None) -> asyncio.Task:
+    """Cerrar y bloquear: relé a OFF (la cerradura vuelve a quedar echada) y se
+    quita lo de "mantenida". En un portón, además, el recorrido de cierre se
+    enseña como fase "cerrando" durante `pulse_seconds`, y al acabar el plano
+    vuelve a dar el magnético en reposo.
+
+    Comparte registro con pulse_door: cancela el pulso que hubiera en marcha,
+    y "Cortar pulso" también corta un cierre en curso."""
+    cancel_door_pulse(door_id)
+
+    async def _cerrar():
+        nombre = (find("doors", door_id) or {}).get("name", door_id)
+        try:
+            door = await send_door_state(door_id, False)
+            await asyncio.to_thread(store.set_door_runtime, door_id, "", False)
+            if door.get("modo") == store.MODO_PORTON:
+                await asyncio.to_thread(store.set_door_runtime, door_id, "cerrando")
+                await asyncio.sleep(float(door.get("pulse_seconds", 2)))
+            msg = f"🔒 {door['name']} cerrada y bloqueada"
+        except asyncio.CancelledError:
+            msg = f"⏹️ Cierre de {nombre} cortado"
+            raise
+        except Exception as e:
+            msg = f"❌ {nombre}: {e}"
+        finally:
+            await asyncio.to_thread(store.set_door_runtime, door_id, "")
+            if on_finish:
+                await on_finish(msg)
+            _DOOR_PULSE_TASKS.pop(door_id, None)
+
+    tarea = asyncio.create_task(_cerrar())
+    _DOOR_PULSE_TASKS[door_id] = tarea
+    return tarea
+
+
+async def hold_door_open(door_id: str) -> dict:
+    """Liberar: abre el relé y lo deja abierto hasta que alguien cierre. En un
+    portón, hace primero el recorrido de apertura (fase "abriendo") y se queda
+    arriba con el magnético a la vista, sin más parpadeo."""
+    cancel_door_pulse(door_id)
+    await asyncio.to_thread(store.set_door_runtime, door_id, "abriendo", False)
+    try:
+        door = await send_door_state(door_id, True)
+        if door.get("modo") == store.MODO_PORTON:
+            await asyncio.sleep(float(door.get("pulse_seconds", 2)))
+        await asyncio.to_thread(store.set_door_runtime, door_id, "", True)
+        return door
+    except BaseException:
+        await asyncio.to_thread(store.set_door_runtime, door_id, "")
+        raise
 
 
 # ── Mandos IR / RF / webOS ──────────────────────────────────────────────────

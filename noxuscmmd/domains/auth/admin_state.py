@@ -142,6 +142,9 @@ class AuthAdminState(rx.State):
                 "visto": _hace_cuanto(d.get("visto")),
                 "caduca": _queda(d.get("caduca")) if d.get("caduca") else "",
                 "tiene_avisos": "sí" if d.get("endpoint") else "no",
+                # Permiso extra de armar/desarmar concedido a este aparato
+                # aunque su rol no lo tenga (tablet de habitación).
+                "extra_armar": permisos.ARMAR in store.extras_de(d["id"]),
                 "es_admin": store.rol_de(d["id"]) == store.ADMIN,
                 "sin_acceso": store.rol_de(d["id"]) == store.PENDIENTE,
                 # ¿Está llamando a la puerta AHORA? Ver
@@ -234,6 +237,30 @@ class AuthAdminState(rx.State):
         return rx.toast.success(
             f"{antes.get('nombre') or 'El dispositivo'} pasa a "
             f"{store.NOMBRES_DE_ROL.get(rol, rol)}.", position="top-center")
+
+    @rx.event
+    async def alternar_extra_armar(self, id_dispositivo: str):
+        """Concede o quita a ESTE aparato poder armar y desarmar, sin cambiarle
+        el rol. Es cosa de administradores."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        d = store.dispositivo(id_dispositivo)
+        if d is None:
+            return
+        extras = set(store.extras_de(id_dispositivo))
+        if permisos.ARMAR in extras:
+            extras.discard(permisos.ARMAR)
+            ahora = False
+        else:
+            extras.add(permisos.ARMAR)
+            ahora = True
+        store.actualizar(id_dispositivo, extras=sorted(extras))
+        self._recargar()
+        await audit.registrar(
+            self, logs.ACCESOS, "EXTRA_ARMAR_CAMBIADO",
+            f"{d.get('nombre') or id_dispositivo}: armar/desarmar "
+            f"{'concedido' if ahora else 'retirado'}",
+        )
 
     @rx.event
     async def alternar_categoria(self, id_dispositivo: str, categoria: str):
