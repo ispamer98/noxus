@@ -104,6 +104,7 @@ def host_name(host_id: str) -> str:
 # de los dos SSH conteste antes. De paso arregla el doble clic en la web.
 _TARGET_LOCKS: dict[str, asyncio.Lock] = {}
 _LIGHT_BACKGROUND_TASKS: set[asyncio.Task] = set()
+_CONTINUACIONES_MANDO: set[str] = set()
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -664,21 +665,38 @@ def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> list[dict]:
 async def _continuar_desde_mando(light: dict) -> None:
     light_id = light["id"]
     lock = _lock(f"light:{light_id}")
-    await lock.acquire()
     try:
-        await _continuar_encendido(light_id, light,
-                                   incluir_modo=bool(light.get("modo_encendido")))
+        await lock.acquire()
+        try:
+            data = store.read_all()
+            actual = find("lights", light_id, data)
+            if actual is None or not data.get("sensor_states", {}).get(light_id, False):
+                return
+            await _continuar_encendido(
+                light_id, actual, incluir_modo=bool(actual.get("modo_encendido")))
+        finally:
+            lock.release()
     finally:
-        lock.release()
+        _CONTINUACIONES_MANDO.discard(light_id)
+
+
+def _continuacion_mando_done(task: asyncio.Task, light_id: str) -> None:
+    _CONTINUACIONES_MANDO.discard(light_id)
+    _background_done(task)
 
 
 def _programar_continuacion_mando(luces: list[dict]) -> None:
     for light in luces:
         if not (light.get("modo_encendido") or store.luz_a_mantener(light)):
             continue
+        light_id = light["id"]
+        if light_id in _CONTINUACIONES_MANDO:
+            continue
+        _CONTINUACIONES_MANDO.add(light_id)
         tarea = asyncio.create_task(_continuar_desde_mando(light))
         _LIGHT_BACKGROUND_TASKS.add(tarea)
-        tarea.add_done_callback(_background_done)
+        tarea.add_done_callback(
+            lambda task, light_id=light_id: _continuacion_mando_done(task, light_id))
 
 
 def expirar_accesorios(ahora: float | None = None) -> list[str]:

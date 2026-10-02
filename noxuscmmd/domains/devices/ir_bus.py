@@ -335,6 +335,8 @@ def construir_pulsacion_larga(code_hex: str, segundos: float) -> str:
     """Construye un único paquete Broadlink que emula una tecla mantenida."""
     if not isinstance(segundos, (int, float)) or not math.isfinite(segundos) or segundos <= 0:
         raise ValueError("los segundos de pulsación deben ser positivos")
+    if segundos > 30:
+        raise ValueError("los segundos de pulsación no pueden superar 30")
     _, unidades = _decodificar_codigo(code_hex)
     inicios = [indice for indice in range(0, len(unidades), 2)
                if unidades[indice] >= 200]
@@ -350,6 +352,10 @@ def construir_pulsacion_larga(code_hex: str, segundos: float) -> str:
     while acumulado - (trama[-1] if n == 0 else repeticion[-1]) < objetivo:
         acumulado += sum(repeticion)
         n += 1
+        payload_bytes = sum(1 if valor <= 255 else 3
+                            for valor in trama + repeticion * n)
+        if payload_bytes > 2000:
+            raise ValueError("el paquete Broadlink resultante supera 2000 bytes")
     salida = trama + repeticion * n
     salida[-1] = unidades[-1]
     return _codificar_unidades(salida).hex()

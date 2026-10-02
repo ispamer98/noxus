@@ -261,6 +261,39 @@ def _mando_directo_y_pulsacion_larga() -> Caso:
                    ("hold", "luz-code")])
         c.revisar("mando directo mantiene 3 s", mantenidas, [3.0])
         enviados.clear()
+        store.set_mando_state(luz["id"], False)
+        await ops.send_remote_button(mando["id"], on["id"])
+        store.set_mando_state(luz["id"], False)
+        while ops._LIGHT_BACKGROUND_TASKS:
+            await asyncio.sleep(0)
+        c.revisar("una pulsación posterior apaga antes de continuar", enviados,
+                  [("button", "on-code")])
+        c.revisar("la carrera apagado no mantiene Luz", mantenidas, [3.0])
+        c.revisar("la continuación queda libre tras abortar",
+                  ops._CONTINUACIONES_MANDO, set())
+
+        mantenidas.clear()
+        enviados.clear()
+        store.set_mando_state(luz["id"], True)
+        ops._programar_continuacion_mando([luz, luz])
+        while ops._LIGHT_BACKGROUND_TASKS:
+            await asyncio.sleep(0)
+        c.revisar("dos continuaciones pendientes solo mantienen una vez",
+                  enviados, [("button", "cont-code"), ("hold", "luz-code")])
+        c.revisar("la deduplicación queda libre al terminar",
+                  ops._CONTINUACIONES_MANDO, set())
+
+        enviados.clear()
+        store.set_mando_state(luz["id"], False)
+        await ops.send_remote_button(mando["id"], on["id"])
+        while ops._LIGHT_BACKGROUND_TASKS:
+            await asyncio.sleep(0)
+        c.revisar("se puede volver a encender tras terminar", enviados,
+                  [("button", "on-code"), ("button", "cont-code"),
+                   ("hold", "luz-code")])
+        c.revisar("la segunda continuación también deja el conjunto vacío",
+                  ops._CONTINUACIONES_MANDO, set())
+        enviados.clear()
         await ops.send_remote_button(mando["id"], on["id"])
         c.revisar("al apagar no lanza continuación", enviados,
                   [("button", "on-code")])
@@ -338,6 +371,11 @@ def _pulsacion_larga_codigos() -> Caso:
         c.revisar("payload grande protesta", "no protestó", "ValueError")
     except ValueError:
         c.cierto("payload grande protesta", True)
+    try:
+        ir_bus.construir_pulsacion_larga(original.hex(), 31)
+        c.revisar("pulsación de 31 s protesta", "no protestó", "ValueError")
+    except ValueError:
+        c.cierto("pulsación de 31 s protesta", True)
     return c
 
 
