@@ -405,7 +405,6 @@ def _recarga_al_recibir_acceso() -> Caso:
     class _EstadoVigilado:
         _id = "visitante-prueba"
         _rol = store.PENDIENTE
-        _bloqueo = True
 
         async def __aenter__(self):
             return self
@@ -421,12 +420,10 @@ def _recarga_al_recibir_acceso() -> Caso:
             return ""
 
         def _ve(self, capacidad):
-            return (not self._bloqueo
-                    or permisos.puede_rol(self._rol, capacidad))
+            return permisos.puede_rol(self._rol, capacidad)
 
         def _refrescar(self):
             self._rol = store.FAMILIA
-            self._bloqueo = True
 
     async def guardia_falsa(_estado):
         return object()
@@ -436,11 +433,9 @@ def _recarga_al_recibir_acceso() -> Caso:
 
     guardia_original = sesiones_panel.guardia
     rol_original = store.rol_de
-    estricto_original = store.estricto
     hilo_original = auth_state_module.asyncio.to_thread
     sesiones_panel.guardia = guardia_falsa
     store.rol_de = lambda _identificador: store.FAMILIA
-    store.estricto = lambda: True
     auth_state_module.asyncio.to_thread = hilo_falso
     bucle = asyncio.new_event_loop()
     generador = AuthState.vigilar_acceso.fn(_EstadoVigilado())
@@ -453,7 +448,6 @@ def _recarga_al_recibir_acceso() -> Caso:
         bucle.close()
         sesiones_panel.guardia = guardia_original
         store.rol_de = rol_original
-        store.estricto = estricto_original
         auth_state_module.asyncio.to_thread = hilo_original
     return c
 

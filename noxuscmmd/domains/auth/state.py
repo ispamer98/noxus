@@ -272,13 +272,6 @@ class AuthState(rx.State):
     # formulario. Se conserva solo en esta sesión y se persiste junto con la
     # ficha cuando nombre y motivo validan; nunca crea una ficha por sí sola.
     _endpoint_push: str = ""
-    # Copia de si el bloqueo está en vigor. Mientras no lo esté, la interfaz
-    # tiene que enseñarlo TODO: el rodaje sirve para ver quién es quién sin
-    # quitarle nada a nadie, y esconder botones ya es quitar. Sin esto, un
-    # aparato todavía sin reconocer se quedaba sin el botón de armar aunque el
-    # sistema le hubiera dejado armar de todas formas — lo peor de los dos
-    # mundos: no puede pulsar y encima parece roto.
-    _bloqueo: bool = False
     # Si `identificar` ya ha corrido. Hasta entonces no se sabe si este
     # navegador tiene acceso, y no se puede pintar ni el panel (seria
     # ensenarselo a quien no debe) ni la puerta cerrada (un parpadeo de
@@ -316,15 +309,11 @@ class AuthState(rx.State):
         return self._nombre
 
     def _ve(self, capacidad: str) -> bool:
-        """Si la interfaz debe ENSEÑAR algo. No es lo mismo que poder hacerlo:
-        mientras el bloqueo no esté en vigor se enseña todo, porque en rodaje
-        nadie debe notar el cambio."""
-        # Kiosco siempre queda encerrado aunque los permisos generales sigan
-        # en rodaje: una tablet de pared no puede adquirir Ajustes o Armado por
-        # una fase de despliegue pensada para los dispositivos personales.
+        """Si la interfaz debe ENSEÑAR algo. No sustituye al permiso: el de
+        verdad se comprueba en el servidor (permisos.denegar y core/portero)."""
         if self._rol == store.KIOSCO:
             return permisos.puede(self._id, capacidad)
-        return (not self._bloqueo) or permisos.puede_rol(self._rol, capacidad)
+        return permisos.puede_rol(self._rol, capacidad)
 
     @rx.var
     def registrando(self) -> bool:
@@ -437,7 +426,6 @@ class AuthState(rx.State):
         self._nombre = ficha.get("nombre", "")
         self._kiosco_estancia = store.estancia_kiosco(self._id)
         self._kiosco_camaras = store.kiosco_puede_camaras(self._id)
-        self._bloqueo = store.estricto()
         prefs = store.preferencias(self._id)
         self.densidad = prefs["densidad"]
         self.acento = prefs["acento"]
@@ -491,12 +479,11 @@ class AuthState(rx.State):
                     if self._id:
                         tenia_acceso = self._ve(permisos.VER)
                         rol = await asyncio.to_thread(store.rol_de, self._id)
-                        bloqueo = await asyncio.to_thread(store.estricto)
                         ficha = await asyncio.to_thread(store.dispositivo, self._id) or {}
                         estancia = (str(ficha.get("kiosco_estancia") or "")
                                     if rol == store.KIOSCO else "")
                         camaras = bool(estancia and ficha.get("kiosco_camaras"))
-                        if (rol != self._rol or bloqueo != self._bloqueo
+                        if (rol != self._rol
                                 or estancia != self._kiosco_estancia
                                 or camaras != self._kiosco_camaras):
                             # Solo se refresca cuando ha cambiado algo: reasignar

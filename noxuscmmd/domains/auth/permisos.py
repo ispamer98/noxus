@@ -156,17 +156,6 @@ async def denegar(state, capacidad: str):
     su_rol = store.NOMBRES_DE_ROL.get(auth.rol_actual, auth.rol_actual)
     donde = _quien_lo_pidio()
 
-    # Rodaje: se apunta lo que se habría impedido, pero se deja pasar. Sirve
-    # para ver durante unos días quién haría qué antes de cerrar la puerta, y
-    # para que encender los permisos no deje a nadie tirado sin avisar.
-    if not store.estricto():
-        logs.registrar(
-            logs.ACCESOS, "ACCESO_DENEGADO", quien,
-            f"«{capacidad}» siendo {su_rol}{donde} — PERMITIDO: los permisos aún "
-            "no están en vigor",
-        )
-        return None
-
     logs.registrar(
         logs.ACCESOS, "ACCESO_DENEGADO", quien,
         f"intentó «{capacidad}» siendo {su_rol}{donde}",

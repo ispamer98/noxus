@@ -20,7 +20,7 @@ que llega del navegador (middleware de Reflex), y aplica tres reglas:
    (PERMITIDOS_SIN_ACCESO).
 3. Una lista de manejadores delicados (comandos SSH, GPIO, deshacer…) exige su
    capacidad a todos los demás roles, con la misma regla del resto del panel
-   (AuthState._ve: en rodaje se enseña todo).
+   (AuthState._ve).
 
 Los eventos internos de Reflex (hidratar, on_load_internal…) pasan siempre. Los de
 fondo que lanza el propio servidor (core/entrada.py) no pasan por aquí: no vienen
@@ -59,6 +59,8 @@ def tablas() -> dict:
     from ..domains.infra.pruebas_state import PruebasState
     from ..domains.infra.state import InfraState
     from ..domains.electro.state import ElectroState
+    from ..domains.devices.registry_state import RegistryState
+    from ..domains.automations.state import AutomationsState
     from ..domains.nodes.estancias_state import EstanciasState
     from ..domains.nodes.host_actions_state import HostActionsState
     from ..domains.nodes.kiosco_state import KioscoState
@@ -74,6 +76,9 @@ def tablas() -> dict:
         _handlers(AuthState, ()) | _handlers(PushState, ())
         | _uno(DashboardState, "entrar") | _uno(KioscoState, "entrar")
     )
+    # Mandar avisos no es «identificarse»: PushState entero está abierto a quien
+    # no tiene acceso, pero esto sale a los móviles de toda la casa.
+    sin_acceso -= _uno(PushState, "lanzar_alerta_global_con_subscripcion")
     kiosco = (
         sin_acceso | _handlers(KioscoState) | _handlers(AlertasState)
         | _uno(NodesState, "toggle_light", "open_door", "set_door_hold",
@@ -93,10 +98,25 @@ def tablas() -> dict:
               "wake_pc", "rdp_pc", "rdp_portatil", "rdp_raspberry"):
         requiere.update({n: permisos.EQUIPOS for n in _uno(InfraState, h)})
     requiere.update({n: permisos.CAMARAS for n in _uno(InfraState, "tomar_foto_raspberry")})
+    requiere.update({n: permisos.AVISAR
+                     for n in _uno(PushState, "lanzar_alerta_global_con_subscripcion")})
     for h in ("apuntar", "deshacer"):
         requiere.update({n: permisos.AJUSTES for n in _uno(DeshacerState, h)})
     requiere.update({n: permisos.AJUSTES for n in _handlers(PruebasState)})
     requiere.update({n: permisos.AJUSTES for n in _handlers(EstanciasState)})
+    # Edición sin comprobación propia en el manejador (la UI ya la esconde tras
+    # AuthState.puede_ajustes, pero esconder no es un permiso): recolocar el
+    # plano, tocar los botones de un mando IR/RF y ocultar o aislar entidades.
+    requiere.update({n: permisos.AJUSTES for n in _uno(
+        NodesState, "save_floor_positions", "set_floor_pos",
+        "save_ir_button_positions", "learn_into_button", "submit_learn_ir_button")})
+    requiere.update({n: permisos.AJUSTES for n in _uno(
+        RegistryState, "hide_entity", "unhide_entity", "toggle_isolated")})
+    # Sirena de la tablet (la tablet misma se salta `requiere`: ver decidir) y
+    # copiar reglas de automatización, que persisten sin comprobar al llamarlas.
+    requiere.update({n: permisos.AJUSTES for n in _uno(
+        KioscoState, "alternar_sirena", "elegir_sonido", "elegir_volumen")})
+    requiere.update({n: permisos.AJUSTES for n in _uno(AutomationsState, "duplicate_rule")})
     requiere.update({n: permisos.PUERTAS
                      for n in _uno(NodesState, "cut_door_pulse", "set_door_hold")})
 

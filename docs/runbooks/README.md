@@ -12,3 +12,5 @@ parecido otro día sin volver a explorar el código.
 | [movimiento-dispara-alarma.md](movimiento-dispara-alarma.md) | Movimiento en cámaras con la casa armada dispara la alarma |
 | [humidificador-ir.md](humidificador-ir.md) | Mando IR y accesorio «Humidificador» (Simpeak 550 ml), pendientes de aprender las señales |
 | [layout-plano-menus.md](layout-plano-menus.md) | Plano + menús: altura máxima = plano, dos columnas, edición a la derecha, botón de ajustes (engranaje) |
+| [permisos-obligatorios.md](permisos-obligatorios.md) | Fin del rodaje: permisos siempre en vigor + agujeros cerrados en la revisión del 2026-10-02 |
+| [anadir-equipo-sin-romper-seguridad.md](anadir-equipo-sin-romper-seguridad.md) | Receta única para añadir un nodo MQTT, un aparato o código nuevo sin chocar con permisos/MQTT autenticado |

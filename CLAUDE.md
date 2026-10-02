@@ -63,6 +63,13 @@ Python del venv: **3.11**. Nunca `python3` suelto.
   igual que siempre: `_` delante.
 - Repo publico: `tinytuya.json`, `webos_key.json` y `.env` llevan credenciales
   reales y estan en `.gitignore`. Revisa `git status` antes de cualquier `git add`.
+- **Permisos siempre en vigor** (sin modo rodaje, desde 2026-10-02). Un `@rx.event` que
+  actúe o escriba lleva `permisos.denegar` o regla en `core/portero.py`; el test
+  `_cobertura` de `tests/test_portero.py` falla si no. Los avisos push solo llegan a
+  aparatos con `VER`.
+- **MQTT con usuario por nodo**: nodo nuevo = `scripts/mqtt_nodo.sh alta <slug>`; el
+  broker no escucha en la LAN y la clave nunca va al repo. Guía:
+  `docs/runbooks/anadir-equipo-sin-romper-seguridad.md`.
 - `.web/` es generado: ni leer ni editar.
 
 Detalles de Reflex → skill `reflex`. Despliegue → skill `despliegue`.

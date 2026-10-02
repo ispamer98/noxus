@@ -97,8 +97,8 @@ class DashboardState(rx.State):
         # detrás de ella estados del panel completo que la tablet nunca verá.
         if auth._rol == auth_store.KIOSCO:
             return para_cliente
-        # Mismo criterio que AuthState.tiene_acceso: durante el rodaje la
-        # interfaz sigue visible; con el bloqueo activo exige la capacidad VER.
+        # Mismo criterio que AuthState.tiene_acceso: sin la capacidad VER no
+        # se cargan los estados del panel.
         if not auth._ve(permisos.VER):
             return para_cliente
         resto = EVENTOS_DE_ENTRADA[len(EVENTOS_DE_IDENTIFICACION):]

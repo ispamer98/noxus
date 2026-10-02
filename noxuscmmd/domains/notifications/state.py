@@ -400,6 +400,8 @@ class PushState(rx.State):
 
     @rx.event
     async def lanzar_alerta_global_con_subscripcion(self, subscription_json: str):
+        if (no := await permisos.denegar(self, permisos.AVISAR)):
+            return no
         sub_data = None
         if subscription_json and subscription_json != "null":
             try:

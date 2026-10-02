@@ -27,6 +27,14 @@ PROTEGIDOS = {23, 27}  # entradas de sensor_mqtt.py (tamper PC, puerta)
 ORDEN = re.compile(rf"^casa/{re.escape(NODO)}/(\d+)/set$")
 
 
+def _credenciales():
+    """Usuario y contraseña del broker, de un fichero 600 junto al script."""
+    import os
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".mqtt_cred")
+    with open(ruta) as f:
+        return NODO, f.read().strip()   # usuario del broker = slug del nodo
+
+
 def _nivel(pin: int) -> bool:
     salida = subprocess.run(["raspi-gpio", "get", str(pin)], capture_output=True,
                             text=True, timeout=5).stdout
@@ -69,6 +77,7 @@ def _cliente() -> mqtt.Client:
 
 
 cliente = _cliente()
+cliente.username_pw_set(*_credenciales())
 cliente.on_connect = _al_conectar
 cliente.on_message = _al_mensaje
 cliente.connect_async(BROKER, PUERTO, 60)

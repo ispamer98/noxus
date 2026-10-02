@@ -47,11 +47,15 @@ class ElectroState(rx.State):
         while True:
             try:
                 data = await asyncio.to_thread(store.read_all)
-                plano_id, room_id = await self._contexto()
                 async with self:
+                    # get_state sobre un StateProxy solo vale dentro del contexto.
+                    plano_id, room_id = await self._contexto()
                     self._cargar(data, time.time(), plano_id, room_id)
             except Exception as exc:
                 print(f"⚠️ Error en ElectroState.sync_loop: {exc}")
+                if not getattr(ElectroState, "_traza_vista", False):
+                    ElectroState._traza_vista = True
+                    import traceback; print(traceback.format_exc(), flush=True)
             if not await sesiones.espera(guardia, 10):
                 return
 

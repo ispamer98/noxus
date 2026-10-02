@@ -92,7 +92,6 @@ class AuthAdminState(rx.State):
     dispositivos: list[dict] = []
     invitaciones: list[dict] = []
     estancias: list[dict] = []
-    bloqueo_activo: bool = False
 
     # Los códigos reales nunca son estado público: Reflex sincroniza todas las
     # vars públicas por websocket aunque la vista no llegue a pintarlas. La UI
@@ -120,7 +119,7 @@ class AuthAdminState(rx.State):
         return AuthAdminState.vigilar_desconocidos
 
     async def _puede_cargar_ajustes(self) -> bool:
-        """Comprueba el permiso real, incluso durante el modo de rodaje."""
+        """Comprueba el permiso real antes de volcar datos administrativos."""
         from .state import AuthState
 
         try:
@@ -134,7 +133,6 @@ class AuthAdminState(rx.State):
         self.dispositivos = []
         self.invitaciones = []
         self.estancias = []
-        self.bloqueo_activo = False
         self._codigos_invitacion = {}
 
     @rx.event(background=True)
@@ -170,7 +168,6 @@ class AuthAdminState(rx.State):
                     return
 
     def _recargar(self):
-        self.bloqueo_activo = store.estricto()
         subs = suscriptores.leer()
         endpoints_vivos = {s.get("endpoint") for s in subs}
         fichas = store.todos()
@@ -299,15 +296,6 @@ class AuthAdminState(rx.State):
     @rx.var
     def hay_admin(self) -> bool:
         return any(d["es_admin"] for d in self.dispositivos)
-
-    @rx.var
-    def resumen_bloqueo(self) -> str:
-        if self.bloqueo_activo:
-            return ("Los permisos están EN VIGOR: quien no tenga rol para algo, "
-                    "no puede hacerlo.")
-        return ("Los permisos están EN RODAJE: se apunta en los registros quién "
-                "haría qué, pero todavía no se impide nada. Enciéndelos cuando "
-                "la lista de abajo esté como debe.")
 
     # ── Cambios ──────────────────────────────────────────────────────────
     @rx.event
@@ -496,28 +484,6 @@ class AuthAdminState(rx.State):
         await audit.registrar(self, logs.ACCESOS, "AVISOS_QUITADOS",
                               f"{nombre or '(sin nombre)'} (suscripción suelta)")
         return rx.toast.success("Suscripción borrada.")
-
-    @rx.event
-    async def alternar_bloqueo(self):
-        if (no := await permisos.denegar(self, permisos.AJUSTES)):
-            return no
-        nuevo = not store.estricto()
-        if nuevo and not self.hay_admin:
-            return rx.toast.error(
-                "No hay ningún administrador: si se activa ahora, nadie podría "
-                "volver a entrar aquí. Pon admin a un dispositivo primero.",
-                duration=10000)
-        store.poner_estricto(nuevo)
-        self._recargar()
-        # Que esta misma sesión vea el cambio sin recargar la página: la
-        # interfaz decide qué enseña con una copia del estado del bloqueo.
-        from .state import AuthState
-        (await self.get_state(AuthState))._refrescar()
-        await audit.registrar(
-            self, logs.ACCESOS, "ROL_CAMBIADO",
-            "permisos EN VIGOR" if nuevo else "permisos en rodaje")
-        return rx.toast.success(
-            "Permisos en vigor." if nuevo else "Permisos en rodaje.")
 
     # ── Invitaciones ─────────────────────────────────────────────────────
     @rx.event

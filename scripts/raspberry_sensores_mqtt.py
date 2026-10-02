@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """
+NO DESPLEGADO — sin credenciales MQTT: el broker lo rechazaría. Lo que corre en la
+Raspberry es scripts/sensor_mqtt.py (sensor-mqtt.service). Esto queda solo como
+referencia de diseño.
+
 Publicador MQTT de los sensores todo/nada cableados a la Raspberry.
 
 Sustituye al script de un solo sensor que había antes: lleva la puerta y el

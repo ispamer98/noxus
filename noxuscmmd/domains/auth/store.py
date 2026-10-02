@@ -80,27 +80,24 @@ def rol_de_partida(nombre: str) -> str:
 
 
 # ── Lectura y escritura ──────────────────────────────────────────────────
-_VACIO = {"dispositivos": {}, "invitaciones": {}, "ajustes": {"estricto": False}}
+_VACIO = {"dispositivos": {}, "invitaciones": {}}
 
-# El mismo vacío pero CERRADO, para cuando el fichero está y no se puede leer.
-# No es lo mismo que no tenerlo: si existe, es que esta casa ya tenía sus
-# permisos puestos, y perderlos de vista no puede significar «que pase todo el
-# mundo». Sin dispositivos y en estricto nadie tiene rol, así que el panel se
-# cierra hasta que se arregle el fichero (por SSH). Se prefiere quedarse fuera
-# a que un fichero corrupto —o una restauración a medias— apague la
-# autorización entera sin que se note.
-_CERRADO = {"dispositivos": {}, "invitaciones": {}, "ajustes": {"estricto": True}}
+# El mismo vacío para cuando el fichero está y no se puede leer. Sin
+# dispositivos nadie tiene rol y los permisos son siempre obligatorios, así que
+# el panel se cierra para todos hasta que se arregle el fichero (por SSH). Se
+# prefiere quedarse fuera a que un fichero corrupto —o una restauración a
+# medias— abra el panel entero sin que se note.
+_CERRADO = {"dispositivos": {}, "invitaciones": {}}
 
 
 def leer() -> dict:
     try:
         if not ARCHIVO.exists():
-            # Primera vez: rodaje, y que no se quede nadie tirado (ver estricto()).
+            # Primera vez: sin dispositivos, nadie entra (alta con scripts/acceso.py).
             return json.loads(json.dumps(_VACIO))
         datos = json.loads(ARCHIVO.read_text())
         datos.setdefault("dispositivos", {})
         datos.setdefault("invitaciones", {})
-        datos.setdefault("ajustes", {"estricto": False})
         return datos
     except Exception as e:
         print(f"❌ Leyendo {ARCHIVO}: {e} — el panel queda CERRADO para todos "
@@ -117,23 +114,6 @@ def escribir(datos: dict) -> None:
     # abiertas (la del propio afectado incluida) se enteren al instante en vez
     # de esperar a su próxima relectura por sondeo (ver core/bus.py).
     bus.publicar(bus.DISPOSITIVOS)
-
-
-# ── Rodaje y bloqueo ─────────────────────────────────────────────────────
-# Arranca en FALSO a propósito. Con los permisos recién puestos, ningún
-# dispositivo se ha presentado todavía: si el bloqueo entrara en vigor de
-# golpe, el primero en descubrirlo sería quien llegara a casa de noche y no
-# pudiera desarmar. En falso, el panel identifica a todo el mundo y APUNTA lo
-# que habría bloqueado, sin impedir nada. Cuando la lista de dispositivos se ve
-# correcta, se enciende y ya sí manda.
-def estricto() -> bool:
-    return bool(leer()["ajustes"].get("estricto"))
-
-
-def poner_estricto(valor: bool) -> None:
-    datos = leer()
-    datos["ajustes"]["estricto"] = bool(valor)
-    escribir(datos)
 
 
 # ── Dispositivos ─────────────────────────────────────────────────────────

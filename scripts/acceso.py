@@ -9,7 +9,6 @@ administrador. Esto es esa puerta de servicio.
 
     .venv/bin/python scripts/acceso.py listar
     .venv/bin/python scripts/acceso.py rol <nombre-o-id> admin
-    .venv/bin/python scripts/acceso.py estricto off
     .venv/bin/python scripts/acceso.py admin-a-todos      # último recurso
 
 Se ejecuta en el servidor, así que quien puede usarlo ya tiene acceso a la
@@ -31,7 +30,6 @@ def _fecha(marca):
 
 
 def listar():
-    print(f"Bloqueo de permisos: {'EN VIGOR' if store.estricto() else 'en rodaje (no impide nada)'}")
     dispositivos = store.todos()
     if not dispositivos:
         print("\nNo hay ningún dispositivo dado de alta todavía.")
@@ -75,18 +73,6 @@ def poner_rol(clave: str, rol: str):
     return 0
 
 
-def estricto(valor: str):
-    encender = valor.lower() in ("on", "si", "sí", "true", "1")
-    store.poner_estricto(encender)
-    if encender:
-        admins = [d for d in store.todos() if store.rol_de(d["id"]) == store.ADMIN]
-        print("Bloqueo EN VIGOR." if admins else
-              "Bloqueo EN VIGOR, pero ¡ojo!: no hay ningún administrador.")
-    else:
-        print("Bloqueo en rodaje: se apunta quién haría qué, pero no se impide nada.")
-    return 0
-
-
 def admin_a_todos():
     """Último recurso: deja a todos los dispositivos conocidos como
     administradores. Para salir del paso, no para quedarse así."""
@@ -112,8 +98,6 @@ def main():
         return 0
     if orden == "rol" and len(args) == 3:
         return poner_rol(args[1], args[2])
-    if orden == "estricto" and len(args) == 2:
-        return estricto(args[1])
     if orden == "admin-a-todos":
         return admin_a_todos()
     print(__doc__)

@@ -47,6 +47,16 @@ def _olvidar(endpoints: list[str]) -> None:
         print(f"🧹 Push: suscripción caducada eliminada ({endpoint[:40]}…)")
 
 
+def _endpoints_con_acceso() -> set[str]:
+    """Suscripciones cuyo aparato tiene hoy el permiso VER (caducidad contada)."""
+    from ..auth import permisos, store
+    return {
+        d["endpoint"]
+        for id_d, d in store.leer()["dispositivos"].items()
+        if d.get("endpoint") and permisos.puede(id_d, permisos.VER)
+    }
+
+
 def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
                         tag: str = "", silencioso: bool = False,
                         acciones: tuple | list = (), url: str = "",
@@ -111,8 +121,15 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
             # origen: aquí solo se ponen rutas del panel.
             "url": url or "",
         })
+        # Solo reciben avisos los aparatos con acceso al panel. Registrar una
+        # suscripción no exige acceso (así se identifica un aparato nuevo ante
+        # el administrador), de modo que sin este filtro cualquiera podía darse
+        # de alta con su propio endpoint y recibir las alarmas de la casa.
+        con_acceso = _endpoints_con_acceso()
         muertas = []
         for sub in subs:
+            if sub.get("endpoint") not in con_acceso:
+                continue
             nombre = sub.get("nombre_usuario", "")
             if not a_todos and nombre not in elegidos:
                 continue

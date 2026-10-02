@@ -384,39 +384,6 @@ def _fila_invitacion(item: rx.Var) -> rx.Component:
     )
 
 
-def _aviso_bloqueo() -> rx.Component:
-    return rx.hstack(
-        rx.icon(
-            rx.cond(AuthAdminState.bloqueo_activo, "shield-check", "shield-alert"),
-            size=20,
-            color=rx.cond(AuthAdminState.bloqueo_activo, theme.SUCCESS, theme.WARNING),
-            flex_shrink="0",
-        ),
-        rx.vstack(
-            rx.text(
-                rx.cond(AuthAdminState.bloqueo_activo,
-                        "Permisos en vigor", "Permisos en rodaje"),
-                size="2", weight="bold", color=theme.TEXT,
-            ),
-            rx.text(AuthAdminState.resumen_bloqueo, size="1", color=theme.MUTED,
-                    style={"line-height": "1.5"}),
-            spacing="1", align="start", min_width="0",
-        ),
-        rx.spacer(),
-        rx.button(
-            rx.cond(AuthAdminState.bloqueo_activo, "Volver a rodaje", "Activar"),
-            size="2",
-            color_scheme=rx.cond(AuthAdminState.bloqueo_activo, "gray", "green"),
-            on_click=AuthAdminState.alternar_bloqueo,
-            flex_shrink="0",
-        ),
-        align="center", spacing="3", width="100%",
-        background=theme.BG_CARD, class_name="nx-card",
-        border=f"1px solid {rx.cond(AuthAdminState.bloqueo_activo, theme.alpha(theme.SUCCESS, 0.4), theme.alpha(theme.WARNING, 0.4))}",
-        border_radius="12px", padding="14px 16px",
-    )
-
-
 def _crear_invitacion() -> rx.Component:
     return rx.vstack(
         rx.text("Dejar entrar a alguien un rato", size="2", weight="bold",
@@ -463,8 +430,6 @@ def usuarios_view() -> rx.Component:
             "pantalla; el invitado solo las luces.",
             size="1", color=theme.MUTED, style={"line-height": "1.6"},
         ),
-
-        _aviso_bloqueo(),
 
         rx.cond(
             ~AuthAdminState.hay_admin,
