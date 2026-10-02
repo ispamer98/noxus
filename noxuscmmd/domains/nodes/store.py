@@ -17,6 +17,7 @@ que publica/escucha, exactamente igual que ya hacen la Raspberry/Pi Zero.
 """
 import fcntl
 import json
+import math
 import os
 import re
 import time
@@ -231,18 +232,14 @@ def _entero(valor, por_defecto: int, minimo: int) -> int:
         return por_defecto
 
 
-def _repeticiones_luz(valor) -> int:
+def _luz_mantener_s(valor) -> float:
     try:
-        return min(60, max(1, int(valor)))
+        valor = float(valor)
+        if not math.isfinite(valor):
+            raise ValueError
+        return min(10.0, max(0.5, valor))
     except (TypeError, ValueError):
-        return 25
-
-
-def _intervalo_luz(valor) -> float:
-    try:
-        return min(1.0, max(0.05, float(valor)))
-    except (TypeError, ValueError):
-        return 0.12
+        return 3.0
 
 
 def _apply_defaults(data: dict) -> dict:
@@ -347,8 +344,9 @@ def _apply_defaults(data: dict) -> dict:
         light["modo_encendido"] = _modo_encendido(light.get("modo_encendido", ""))
         light["pausa_secuencia_s"] = _pausa_secuencia(light.get("pausa_secuencia_s", 1.0))
         light["apagar_luz_al_encender"] = bool(light.get("apagar_luz_al_encender", False))
-        light["luz_repeticiones"] = _repeticiones_luz(light.get("luz_repeticiones", 25))
-        light["luz_intervalo_s"] = _intervalo_luz(light.get("luz_intervalo_s", 0.12))
+        light["luz_mantener_s"] = _luz_mantener_s(light.get("luz_mantener_s", 3.0))
+        light.pop("luz_repeticiones", None)
+        light.pop("luz_intervalo_s", None)
         # Solo los accesorios por mando necesitan recordar el inicio del ciclo.
         # Se guarda en su propia ficha: ``sensor_states`` conserva estrictamente
         # su contrato booleano para el plano, Alexa y las automatizaciones.
@@ -1182,7 +1180,7 @@ def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
                 btn_continuo: str = "", btn_timing: str = "",
                 pausa_secuencia_s: float = 1.0,
                 apagar_luz_al_encender: bool = False, btn_luz: str = "",
-                luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict:
+                luz_mantener_s: float = 3.0) -> dict:
     """Lo que distingue a una luz de relé de una de mando.
 
     Una de mando se queda SIN topics a propósito: no hay nada publicando su
@@ -1205,8 +1203,7 @@ def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
             "pausa_secuencia_s": _pausa_secuencia(pausa_secuencia_s),
             "apagar_luz_al_encender": bool(apagar_luz_al_encender),
             "btn_luz": btn_luz,
-            "luz_repeticiones": _repeticiones_luz(luz_repeticiones),
-            "luz_intervalo_s": _intervalo_luz(luz_intervalo_s),
+            "luz_mantener_s": _luz_mantener_s(luz_mantener_s),
         }
     return {
         "kind": LUZ_RELE,
@@ -1216,7 +1213,7 @@ def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
         "modo_encendido": "", "btn_continuo": "", "btn_timing": "",
         "pausa_secuencia_s": 1.0,
         "apagar_luz_al_encender": False, "btn_luz": "",
-        "luz_repeticiones": 25, "luz_intervalo_s": 0.12,
+        "luz_mantener_s": 3.0,
     }
 
 
@@ -1228,7 +1225,7 @@ def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = 
               modo_encendido: str = "", btn_continuo: str = "",
               btn_timing: str = "", pausa_secuencia_s: float = 1.0,
               apagar_luz_al_encender: bool = False, btn_luz: str = "",
-              luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict:
+              luz_mantener_s: float = 3.0) -> dict:
     datos = _read()
     if kind == LUZ_MANDO:
         btn_continuo = _tecla_valida(datos, remote_id, btn_continuo)
@@ -1241,7 +1238,7 @@ def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = 
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo,
                        modo_encendido, btn_continuo, btn_timing, pausa_secuencia_s,
-                       apagar_luz_al_encender, btn_luz, luz_repeticiones, luz_intervalo_s),
+                       apagar_luz_al_encender, btn_luz, luz_mantener_s),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "auto_apagado_min": _entero(auto_apagado_min, por_defecto=0, minimo=0)
         if kind == LUZ_MANDO else 0,
@@ -1293,7 +1290,7 @@ def update_light(light_id: str, name: str, node_id: str, node_name: str, pin: st
                  modo_encendido: str = "", btn_continuo: str = "",
                  btn_timing: str = "", pausa_secuencia_s: float = 1.0,
                  apagar_luz_al_encender: bool = False, btn_luz: str = "",
-                 luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict | None:
+                 luz_mantener_s: float = 3.0) -> dict | None:
     datos = _read()
     current = next((l for l in datos["lights"] if l["id"] == light_id), None)
     if kind == LUZ_MANDO:
@@ -1307,7 +1304,7 @@ def update_light(light_id: str, name: str, node_id: str, node_name: str, pin: st
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo,
                        modo_encendido, btn_continuo, btn_timing, pausa_secuencia_s,
-                       apagar_luz_al_encender, btn_luz, luz_repeticiones, luz_intervalo_s),
+                       apagar_luz_al_encender, btn_luz, luz_mantener_s),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
         "auto_apagado_min": _entero(auto_apagado_min, por_defecto=0, minimo=0)
         if kind == LUZ_MANDO else 0,
@@ -1348,14 +1345,11 @@ def secuencia_encendido(light: dict) -> list[tuple[str, float]]:
     return [(on, 0)]
 
 
-def pasos_apagar_luz(light: dict) -> list[tuple[str, float]]:
-    """Pulsaciones que emulan mantener pulsada la tecla Luz."""
+def luz_a_mantener(light: dict) -> tuple[str, float] | None:
+    """Devuelve la tecla Luz y cuánto tiempo debe mantenerse pulsada."""
     if not light.get("apagar_luz_al_encender") or not light.get("btn_luz"):
-        return []
-    repeticiones = _repeticiones_luz(light.get("luz_repeticiones", 25))
-    intervalo = _intervalo_luz(light.get("luz_intervalo_s", 0.12))
-    return [(light["btn_luz"], 0 if indice == 0 else intervalo)
-            for indice in range(repeticiones)]
+        return None
+    return light["btn_luz"], _luz_mantener_s(light.get("luz_mantener_s", 3.0))
 
 
 def duracion_ciclo_min(modo: str) -> int:

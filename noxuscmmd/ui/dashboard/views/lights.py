@@ -148,12 +148,9 @@ def _apagar_luz_fields(light=None):
             default_checked=light.get("apagar_luz_al_encender", False),
         )),
         field("Tecla Luz", _tecla_select("btn_luz", "Tecla Luz", tecla_luz)),
-        field("Repeticiones", styled_input(
-            name="luz_repeticiones", default_value=str(light.get("luz_repeticiones", 25)),
-            type="number", min="1", max="60")),
-        field("Intervalo (s)", styled_input(
-            name="luz_intervalo_s", default_value=str(light.get("luz_intervalo_s", 0.12)),
-            type="number", min="0.05", max="1.0", step="0.01")),
+        field("Segundos pulsada (Luz)", styled_input(
+            name="luz_mantener_s", default_value=str(light.get("luz_mantener_s", 3)),
+            type="number", min="0.5", max="10", step="0.5")),
     )
 
 

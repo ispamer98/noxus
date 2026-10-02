@@ -2097,8 +2097,7 @@ class NodesState(rx.State):
         pausa_secuencia_s = form_data.get("pausa_secuencia_s", 1.0)
         auto_apagado_min = store._entero(form_data.get("auto_apagado_min"), 0, 0)
         apagar_luz_al_encender = bool(form_data.get("apagar_luz_al_encender"))
-        luz_repeticiones = form_data.get("luz_repeticiones", 25)
-        luz_intervalo_s = form_data.get("luz_intervalo_s", 0.12)
+        luz_mantener_s = form_data.get("luz_mantener_s", 3)
         if not name:
             return
         if kind == store.LUZ_MANDO:
@@ -2133,8 +2132,7 @@ class NodesState(rx.State):
                                modo_encendido=modo_encendido, btn_continuo=btn_continuo,
                                btn_timing=btn_timing, pausa_secuencia_s=pausa_secuencia_s,
                                apagar_luz_al_encender=apagar_luz_al_encender,
-                               btn_luz=btn_luz, luz_repeticiones=luz_repeticiones,
-                               luz_intervalo_s=luz_intervalo_s)
+                               btn_luz=btn_luz, luz_mantener_s=luz_mantener_s)
         self._reload()
         # Una luz de mando no tiene topic al que suscribirse (ver store._campos_luz).
         if item["topic_state"]:
@@ -2184,8 +2182,7 @@ class NodesState(rx.State):
         pausa_secuencia_s = form_data.get("pausa_secuencia_s", 1.0)
         auto_apagado_min = store._entero(form_data.get("auto_apagado_min"), 0, 0)
         apagar_luz_al_encender = bool(form_data.get("apagar_luz_al_encender"))
-        luz_repeticiones = form_data.get("luz_repeticiones", 25)
-        luz_intervalo_s = form_data.get("luz_intervalo_s", 0.12)
+        luz_mantener_s = form_data.get("luz_mantener_s", 3)
         if not light_id or not name:
             return
         if kind == store.LUZ_MANDO:
@@ -2221,8 +2218,7 @@ class NodesState(rx.State):
                                   modo_encendido=modo_encendido, btn_continuo=btn_continuo,
                                   btn_timing=btn_timing, pausa_secuencia_s=pausa_secuencia_s,
                                   apagar_luz_al_encender=apagar_luz_al_encender,
-                                  btn_luz=btn_luz, luz_repeticiones=luz_repeticiones,
-                                  luz_intervalo_s=luz_intervalo_s)
+                                  btn_luz=btn_luz, luz_mantener_s=luz_mantener_s)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"

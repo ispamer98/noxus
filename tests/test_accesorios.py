@@ -14,6 +14,7 @@ from tests.comun import Caso
 
 from noxuscmmd.domains.nodes import operations as ops
 from noxuscmmd.domains.nodes import store
+from noxuscmmd.domains.devices import ir_bus
 
 
 def _almacen() -> Caso:
@@ -136,7 +137,8 @@ def _modos_encendido() -> Caso:
 
 
 def ejecutar() -> list[Caso]:
-    return [_modos_encendido(), _apagar_luz(), _activacion_con_modo(), _almacen(), _envio(), _una_sola_tecla(), _separacion(), _widgets(),
+    return [_modos_encendido(), _apagar_luz(), _mando_directo_y_pulsacion_larga(),
+            _pulsacion_larga_codigos(), _activacion_con_modo(), _almacen(), _envio(), _una_sola_tecla(), _separacion(), _widgets(),
             _estado_compartido(), _orden_idempotente(),
             _apagado_automatico(),
             _secuencia_apagar_habitacion(), _sin_doble_contabilidad(), _familias(),
@@ -145,17 +147,17 @@ def ejecutar() -> list[Caso]:
 
 
 def _apagar_luz() -> Caso:
-    c = Caso("Repetición de tecla Luz del humidificador")
-    c.revisar("pasos activos", store.pasos_apagar_luz({
+    c = Caso("Pulsación larga de tecla Luz del humidificador")
+    c.revisar("mantener activo", store.luz_a_mantener({
         "apagar_luz_al_encender": True, "btn_luz": "luz",
-        "luz_repeticiones": 3, "luz_intervalo_s": 0.12,
-    }), [("luz", 0), ("luz", 0.12), ("luz", 0.12)])
-    c.revisar("tecla ausente desactiva", store.pasos_apagar_luz({
+        "luz_mantener_s": 3,
+    }), ("luz", 3.0))
+    c.revisar("tecla ausente desactiva", store.luz_a_mantener({
         "apagar_luz_al_encender": True, "btn_luz": "",
-    }), [])
-    c.revisar("opción desactivada", store.pasos_apagar_luz({
+    }), None)
+    c.revisar("opción desactivada", store.luz_a_mantener({
         "apagar_luz_al_encender": False, "btn_luz": "luz",
-    }), [])
+    }), None)
 
     async def escenario():
         mando = store.add_ir_remote("Mando humidificador")
@@ -167,15 +169,16 @@ def _apagar_luz() -> Caso:
             remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
             mando_modo=store.UNA_TECLA, modo_encendido="continuo",
             btn_continuo=cont["id"], btn_luz=luz_btn["id"],
-            apagar_luz_al_encender=True, luz_repeticiones=3,
-            luz_intervalo_s=0.12)
-        enviados, pausas = [], []
+            apagar_luz_al_encender=True, luz_mantener_s=3)
+        enviados, mantenidas, pausas = [], [], []
         original_send = ops.send_remote_button
         original_sleep = ops.asyncio.sleep
         original_thread = ops.asyncio.to_thread
 
         async def enviar(remote_id, button_id, **kwargs):
             enviados.append(button_id)
+            if kwargs.get("mantener_s") is not None:
+                mantenidas.append(kwargs["mantener_s"])
 
         bloqueada = {"valor": False}
         puerta = asyncio.Event()
@@ -197,8 +200,9 @@ def _apagar_luz() -> Caso:
             while ops._LIGHT_BACKGROUND_TASKS:
                 await original_sleep(0)
             c.revisar("orden completa", enviados,
-                      [on["id"], luz_btn["id"], luz_btn["id"], luz_btn["id"], cont["id"]])
-            c.revisar("pausas de Luz y modo", pausas, [0.12, 0.12, 1.0])
+                      [on["id"], cont["id"], luz_btn["id"]])
+            c.revisar("Luz se mantiene una vez", mantenidas, [3.0])
+            c.revisar("pausas entre pasos", pausas, [1.0, 1.0])
 
             enviados.clear(); pausas.clear()
             await ops.set_light(luz["id"], False)
@@ -218,6 +222,122 @@ def _apagar_luz() -> Caso:
             store.delete_ir_remote(mando["id"])
 
     asyncio.run(escenario())
+    return c
+
+
+def _mando_directo_y_pulsacion_larga() -> Caso:
+    c = Caso("Secuencia al pulsar directamente el mando")
+    mando = store.add_ir_remote("Mando directo")
+    on = store.add_ir_button(mando["id"], "On", "", "on-code")
+    cont = store.add_ir_button(mando["id"], "Continuo", "", "cont-code")
+    luz_btn = store.add_ir_button(mando["id"], "Luz", "", "luz-code")
+    luz = store.add_light("Humidificador directo", "", "", "",
+                          kind=store.LUZ_MANDO, remote_id=mando["id"],
+                          btn_on=on["id"], btn_off=on["id"],
+                          mando_modo=store.UNA_TECLA, modo_encendido="continuo",
+                          btn_continuo=cont["id"], btn_luz=luz_btn["id"],
+                          apagar_luz_al_encender=True)
+    enviados, mantenidas = [], []
+    original_button = ir_bus.send_button
+    original_hold = ir_bus.send_hold
+    original_thread = ops.asyncio.to_thread
+
+    async def button(code):
+        enviados.append(("button", code))
+
+    async def hold(code, segundos):
+        enviados.append(("hold", code))
+        mantenidas.append(segundos)
+
+    async def en_el_loop(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    async def escenario():
+        await ops.send_remote_button(mando["id"], on["id"])
+        while ops._LIGHT_BACKGROUND_TASKS:
+            await asyncio.sleep(0)
+        c.revisar("mando directo ordena modo y Luz", enviados,
+                  [("button", "on-code"), ("button", "cont-code"),
+                   ("hold", "luz-code")])
+        c.revisar("mando directo mantiene 3 s", mantenidas, [3.0])
+        enviados.clear()
+        await ops.send_remote_button(mando["id"], on["id"])
+        c.revisar("al apagar no lanza continuación", enviados,
+                  [("button", "on-code")])
+
+        sim = store.add_ir_remote("Mando simulado")
+        store._update("ir_remotes", sim["id"], {"simulado": True})
+        sim_btn = store.add_ir_button(sim["id"], "On", "", "sim-code")
+        sim_luz = store.add_light("Humidificador simulado", "", "", "",
+                                  kind=store.LUZ_MANDO, remote_id=sim["id"],
+                                  btn_on=sim_btn["id"], btn_off=sim_btn["id"],
+                                  mando_modo=store.UNA_TECLA,
+                                  modo_encendido="continuo")
+        try:
+            enviados.clear()
+            await ops.send_remote_button(sim["id"], sim_btn["id"])
+            await asyncio.sleep(0)
+            c.revisar("mando simulado no envía ni continúa", enviados, [])
+            c.revisar("mando simulado sí apunta estado",
+                      store.get_sensor_state(sim_luz["id"]), True)
+        finally:
+            store.delete_light(sim_luz["id"])
+            store.delete_ir_remote(sim["id"])
+
+    ir_bus.send_button, ir_bus.send_hold = button, hold
+    ops.asyncio.to_thread = en_el_loop
+    try:
+        asyncio.run(escenario())
+    finally:
+        ir_bus.send_button, ir_bus.send_hold = original_button, original_hold
+        ops.asyncio.to_thread = original_thread
+        store.delete_light(luz["id"])
+        store.delete_ir_remote(mando["id"])
+    return c
+
+
+def _pulsacion_larga_codigos() -> Caso:
+    c = Caso("Construcción de paquetes Broadlink de pulsación larga")
+
+    def empaquetar(unidades):
+        payload = bytearray()
+        for valor in unidades:
+            payload.extend((valor,) if valor <= 255 else (0, valor >> 8, valor & 255))
+        return bytes((0x26, 0, len(payload) & 255, len(payload) >> 8)) + payload
+
+    frame = [300, 145, 100, 80, 100, 80, 18, 0x0D05]
+    repeat = [300, 70, 18, 0x0D05]
+    original = empaquetar(frame + repeat + repeat)
+    largo = ir_bus.construir_pulsacion_larga(original.hex(), 3.0)
+    datos, unidades = ir_bus._decodificar_codigo(largo)
+    c.revisar("conserva cabecera Broadlink", datos[:2].hex(), "2600")
+    c.revisar("conserva la trama inicial", unidades[:len(frame)], frame)
+    c.revisar("conserva el terminador original", unidades[-1], 0x0D05)
+    c.cierto("el paso de las repeticiones es el de la plantilla",
+             unidades[len(frame):len(frame) + len(repeat)] == repeat)
+    ultimo_inicio = max(i for i in range(0, len(unidades), 2)
+                        if unidades[i] >= 200)
+    tiempo = sum(unidades[:ultimo_inicio + 1]) * 269 / 8192000
+    c.cierto("el tiempo hasta la última marca queda en rango",
+             3.0 <= tiempo <= 3.12)
+    mas_largo = ir_bus.construir_pulsacion_larga(original.hex(), 6.0)
+    c.cierto("más segundos añade repeticiones",
+             len(ir_bus._decodificar_codigo(mas_largo)[1]) > len(unidades))
+    sin_repeticiones = ir_bus.construir_pulsacion_larga(empaquetar(frame).hex(), 0.5)
+    c.cierto("sin repeticiones repite la trama",
+             len(ir_bus._decodificar_codigo(sin_repeticiones)[1]) > len(frame))
+    for codigo in ("00", "26000100"):
+        try:
+            ir_bus.construir_pulsacion_larga(codigo, 3)
+            c.revisar("hex inválido protesta", "no protestó", "ValueError")
+        except ValueError:
+            c.cierto("hex inválido protesta", True)
+    grande = empaquetar([300] + [1, 100] * 1000 + [1])
+    try:
+        ir_bus.construir_pulsacion_larga(grande.hex(), 3)
+        c.revisar("payload grande protesta", "no protestó", "ValueError")
+    except ValueError:
+        c.cierto("payload grande protesta", True)
     return c
 
 

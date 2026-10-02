@@ -12,6 +12,7 @@ auth() y no hace falta rehacerlo en cada botón.
 """
 import asyncio
 import contextlib
+import math
 import os
 
 import broadlink
@@ -286,6 +287,80 @@ async def send_button(code_hex: str) -> None:
     datos = bytes.fromhex(code_hex)
     async with _hub_para_mi():
         await asyncio.to_thread(_con_reintento, lambda d: d.send_data(datos))
+
+
+def _decodificar_codigo(code_hex: str) -> tuple[bytes, list[int]]:
+    try:
+        datos = bytes.fromhex(code_hex)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("código Broadlink hexadecimal inválido") from exc
+    if len(datos) < 4 or datos[0] != 0x26:
+        raise ValueError("el código no es un paquete Broadlink IR (byte 0x26)")
+    longitud = int.from_bytes(datos[2:4], "little")
+    if longitud != len(datos) - 4:
+        raise ValueError("la longitud declarada del código Broadlink no coincide")
+    unidades = []
+    indice = 4
+    while indice < len(datos):
+        valor = datos[indice]
+        indice += 1
+        if valor == 0:
+            if indice + 2 > len(datos):
+                raise ValueError("duración Broadlink truncada")
+            valor = int.from_bytes(datos[indice:indice + 2], "big")
+            indice += 2
+        unidades.append(valor)
+    if not unidades or len(unidades) % 2 != 0:
+        raise ValueError("el código Broadlink debe contener marcas y espacios alternos")
+    return datos, unidades
+
+
+def _codificar_unidades(unidades: list[int]) -> bytes:
+    payload = bytearray()
+    for valor in unidades:
+        if not isinstance(valor, int) or valor <= 0:
+            raise ValueError("duración Broadlink inválida")
+        if valor <= 255:
+            payload.append(valor)
+        elif valor <= 0xFFFF:
+            payload.extend((0, (valor >> 8) & 0xFF, valor & 0xFF))
+        else:
+            raise ValueError("duración Broadlink demasiado grande")
+    if len(payload) > 2000:
+        raise ValueError("el paquete Broadlink resultante supera 2000 bytes")
+    return bytes((0x26, 0, len(payload) & 0xFF, len(payload) >> 8)) + payload
+
+
+def construir_pulsacion_larga(code_hex: str, segundos: float) -> str:
+    """Construye un único paquete Broadlink que emula una tecla mantenida."""
+    if not isinstance(segundos, (int, float)) or not math.isfinite(segundos) or segundos <= 0:
+        raise ValueError("los segundos de pulsación deben ser positivos")
+    _, unidades = _decodificar_codigo(code_hex)
+    inicios = [indice for indice in range(0, len(unidades), 2)
+               if unidades[indice] >= 200]
+    if not inicios or inicios[0] != 0:
+        raise ValueError("el código Broadlink no contiene una trama con líder")
+    segmentos = [unidades[inicio:fin] for inicio, fin in zip(inicios, inicios[1:] + [len(unidades)])]
+    trama = segmentos[0]
+    repeticion = segmentos[1] if len(segmentos) > 1 else trama
+    # Broadlink expresa cada unidad como 269/8192 milisegundos (≈32,84 µs).
+    objetivo = segundos * 8192000 / 269
+    acumulado = sum(trama)
+    n = 0
+    while acumulado - (trama[-1] if n == 0 else repeticion[-1]) < objetivo:
+        acumulado += sum(repeticion)
+        n += 1
+    salida = trama + repeticion * n
+    salida[-1] = unidades[-1]
+    return _codificar_unidades(salida).hex()
+
+
+async def send_hold(code_hex: str, segundos: float) -> None:
+    """Envía una vez el paquete que representa una pulsación larga."""
+    datos = bytes.fromhex(construir_pulsacion_larga(code_hex, segundos))
+    async with _hub_para_mi():
+        await asyncio.to_thread(_con_reintento, lambda d: d.send_data(datos))
+        await asyncio.sleep(segundos + 0.3)
 
 
 def forget_connection() -> None:

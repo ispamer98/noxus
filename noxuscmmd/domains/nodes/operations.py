@@ -150,7 +150,8 @@ async def _enviar_por_mando(light: dict, on: bool) -> None:
 
 
 async def _pulsar_tecla_mando(light: dict, tecla: str, *, on: bool,
-                              una_sola: bool = False) -> None:
+                              una_sola: bool = False,
+                              mantener_s: float | None = None) -> None:
     """Pulsa una tecla de accesorio por el transporte común del mando."""
     mando = light.get("remote_id", "")
     if not mando or not tecla:
@@ -164,7 +165,8 @@ async def _pulsar_tecla_mando(light: dict, tecla: str, *, on: bool,
     # accesorio de UNA sola tecla la segunda escritura alternaría lo que acababa
     # de escribir la primera y el botón se quedaría siempre al revés — que es
     # justo lo que pasaba con la tele.
-    await send_remote_button(mando, tecla, apuntar_estado=False)
+    await send_remote_button(mando, tecla, apuntar_estado=False,
+                             mantener_s=mantener_s)
 
 
 class _FalloParcialSecuencia(Exception):
@@ -185,14 +187,20 @@ async def _enviar_secuencia_encendido(light: dict) -> None:
 
 
 async def _enviar_resto_encendido(light: dict, incluir_modo: bool) -> None:
-    """Envía la emulación de Luz y, después, las teclas de modo."""
-    pasos_luz = store.pasos_apagar_luz(light)
+    """Envía primero el modo y después la tecla Luz mantenida."""
     modo = store.secuencia_encendido(light)[1:] if incluir_modo else []
-    for tecla, pausa in pasos_luz + modo:
+    pasos = [(tecla, pausa, None) for tecla, pausa in modo]
+    luz = store.luz_a_mantener(light)
+    if luz:
+        tecla, mantener_s = luz
+        pasos.append((tecla, store._pausa_secuencia(
+            light.get("pausa_secuencia_s", 1.0)), mantener_s))
+    for tecla, pausa, mantener_s in pasos:
         if pausa:
             await asyncio.sleep(pausa)
         try:
-            await _pulsar_tecla_mando(light, tecla, on=True, una_sola=True)
+            await _pulsar_tecla_mando(light, tecla, on=True, una_sola=True,
+                                      mantener_s=mantener_s)
         except Exception as e:
             raise _FalloParcialSecuencia(str(e)) from e
 
@@ -323,8 +331,9 @@ async def set_light(light_id: str, on: bool | None = None, *,
         if light.get("simulado"):
             return nuevo
         try:
-            pasos_luz = store.pasos_apagar_luz(light) if por_mando and nuevo else []
-            if pasos_luz:
+            luz_a_mantener = (store.luz_a_mantener(light)
+                              if por_mando and nuevo else None)
+            if luz_a_mantener:
                 await _pulsar_tecla_mando(light, light["btn_on"], on=True, una_sola=True)
                 tarea = asyncio.create_task(
                     _continuar_encendido_con_lock(light_id, light, lock, modo_secuenciado))
@@ -607,7 +616,7 @@ async def hold_door(door_id: str, abierta: bool) -> tuple[dict, bool]:
 
 
 # ── Mandos IR / RF / webOS ──────────────────────────────────────────────────
-def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> None:
+def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> list[dict]:
     """Pone al día el estado de lo que se accione con ESA tecla.
 
     El porqué: una misma luz o una tele se pueden encender desde sitios muy
@@ -632,16 +641,44 @@ def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> None:
     datos = store.read_all()
     estados = datos.get("sensor_states", {})
     ahora = time.time()
+    encendidas = []
     for luz in datos.get("lights", []):
         if luz.get("kind") != store.LUZ_MANDO or luz.get("remote_id") != remote_id:
             continue
         if luz.get("mando_modo") == store.UNA_TECLA:
             if luz.get("btn_on") == button_id:
-                store.set_mando_state(luz["id"], not estados.get(luz["id"], False), ahora)
+                nuevo = not estados.get(luz["id"], False)
+                ciclo = (store.duracion_ciclo_min(luz.get("modo_encendido", ""))
+                         if nuevo and luz.get("modo_encendido") else None)
+                cambio = store.set_mando_state(luz["id"], nuevo, ahora,
+                                                ciclo_min=ciclo)
+                if cambio and nuevo:
+                    encendidas.append(luz)
         elif luz.get("btn_on") == button_id:
             store.set_mando_state(luz["id"], True, ahora)
         elif luz.get("btn_off") == button_id:
             store.set_mando_state(luz["id"], False, ahora)
+    return encendidas
+
+
+async def _continuar_desde_mando(light: dict) -> None:
+    light_id = light["id"]
+    lock = _lock(f"light:{light_id}")
+    await lock.acquire()
+    try:
+        await _continuar_encendido(light_id, light,
+                                   incluir_modo=bool(light.get("modo_encendido")))
+    finally:
+        lock.release()
+
+
+def _programar_continuacion_mando(luces: list[dict]) -> None:
+    for light in luces:
+        if not (light.get("modo_encendido") or store.luz_a_mantener(light)):
+            continue
+        tarea = asyncio.create_task(_continuar_desde_mando(light))
+        _LIGHT_BACKGROUND_TASKS.add(tarea)
+        tarea.add_done_callback(_background_done)
 
 
 def expirar_accesorios(ahora: float | None = None) -> list[str]:
@@ -716,7 +753,8 @@ async def _despertar_tv_si_hace_falta(remote: dict) -> None:
 
 
 async def send_remote_button(remote_id: str, button_id: str, *,
-                             apuntar_estado: bool = True) -> str:
+                             apuntar_estado: bool = True,
+                             mantener_s: float | None = None) -> str:
     """Dispara una tecla de un mando virtual — por infrarrojos/radiofrecuencia
     (Broadlink) o por red (webOS de la TV LG) según su `kind`. Devuelve
     "Mando · Tecla" para el mensaje y el registro."""
@@ -741,12 +779,20 @@ async def send_remote_button(remote_id: str, button_id: str, *,
         )
     try:
         if boton.get("kind") == "webos":
+            if mantener_s is not None:
+                raise NotConfigured(
+                    f'{etiqueta}: una pulsación mantenida solo admite botones IR')
             await _despertar_tv_si_hace_falta(remote)
             await webos_bus.send_command(boton["code"])
         else:
-            await ir_bus.send_button(boton["code"])
+            if mantener_s is None:
+                await ir_bus.send_button(boton["code"])
+            else:
+                await ir_bus.send_hold(boton["code"], mantener_s)
         if apuntar_estado:
-            await asyncio.to_thread(_apuntar_estado_de_accesorios, remote_id, button_id)
+            luces = await asyncio.to_thread(
+                _apuntar_estado_de_accesorios, remote_id, button_id)
+            _programar_continuacion_mando(luces)
     except Exception as e:
         # La etiqueta va DENTRO del error: quien lo recoge (la barra de estado
         # de la web, el registro de una regla) casi nunca tiene a mano de qué
