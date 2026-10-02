@@ -15,7 +15,7 @@ floor_icon no se comparen nunca con `if` en Python.
 """
 import reflex as rx
 
-from .form_dialog import field, styled_select, select_content
+from .form_dialog import field
 from .icon_picker import icon_field
 
 # Iconos disponibles para el marcador del plano. Sirven para cualquier tipo de
@@ -26,6 +26,12 @@ FLOOR_ICON_OPTIONS = [
     "triangle-alert", "siren", "cctv", "camera", "video", "lightbulb", "lamp",
     "plug", "thermometer", "bell", "key", "flame", "droplet", "wind",
     "tv", "fan", "air-vent", "gamepad-2",
+    # Los que usan los elementos creados desde el panel (portón, coche,
+    # persianas, aire, equipos) y no estaban aquí: sin ellos, el selector
+    # enseñaba vacío el icono que el elemento ya tenía.
+    "warehouse", "car", "blinds", "snowflake", "thermometer-snowflake", "lamp-ceiling",
+    "lamp-desk", "sofa", "bed", "monitor", "laptop", "server", "router", "speaker",
+    "power", "sun", "moon", "tablet",
 ]
 
 
@@ -40,17 +46,11 @@ def floor_plan_fields(show_on_floor, floor_icon, default_icon: str = "circle-dot
     `con_icono=False` para las entidades que ya eligen su icono en otro campo
     de la misma ficha y lo reutilizan en el plano (los mandos IR): ofrecer un
     segundo selector solo servía para que los dos iconos acabaran distintos."""
-    campos = [
-        field("¿Mostrar en el plano de planta?", styled_select(
-            "Mostrar en el plano",
-            select_content(
-                rx.select.item("No mostrar", value=""),
-                rx.select.item("Mostrar en el plano", value="on"),
-            ),
-            name="show_on_floor",
-            default_value=rx.cond(show_on_floor, "on", "") if isinstance(show_on_floor, rx.Var) else ("on" if show_on_floor else ""),
-        )),
-    ]
+    # Sin selector «mostrar en el plano»: con varios planos no decía en cuál, y
+    # leía el espejo del principal. Qué sale en cada plano se elige en su editor
+    # (ver nodes/store.floor_fields). `show_on_floor` se sigue aceptando para no
+    # tocar las llamadas.
+    campos = []
     if con_icono:
         campos.append(field("Icono en el plano", icon_field(
             name="floor_icon",

@@ -6,6 +6,7 @@ un segundo editor habría significado dos sitios donde se define lo que hace la
 casa, y dos sitios que se contradicen a la primera de cambio.
 """
 import reflex as rx
+from ..components.boton_ajustes import boton_ajustes
 
 from .. import theme
 from ....domains.modes.state import ModesState
@@ -26,7 +27,7 @@ def _editor() -> rx.Component:
     return rx.dialog.root(
         rx.dialog.content(
             rx.dialog.title(
-                rx.text("Editar modo", size="3", weight="bold", color=theme.TEXT),
+                rx.text("Ajustes del modo", size="3", weight="bold", color=theme.TEXT),
             ),
             rx.vstack(
                 rx.text("Nombre", size="1", color=theme.MUTED),
@@ -94,8 +95,8 @@ def _ficha(modo: rx.Var) -> rx.Component:
             spacing="0", align="start", min_width="0",
         ),
         rx.spacer(),
-        rx.button(rx.icon("pencil", size=13), size="1", variant="soft",
-                  on_click=ModesState.abrir_editor(modo["id"])),
+        boton_ajustes(ModesState.abrir_editor(modo["id"]),
+                      titulo="Ajustes del modo", tamano=13),
         align="center", spacing="3", width="100%",
         background=theme.BG_CARD, class_name="nx-card", border=f"1px solid {theme.BORDER}",
         border_radius="12px", padding="12px 14px",

@@ -20,7 +20,7 @@ def edit_entity_dialog(
     title: str,
     fields: list[tuple[str, str, str]],  # (field_name, label, valor_actual)
     color_scheme: str = "blue",
-    icon: str = "pencil",
+    icon: str = "settings",
 ) -> rx.Component:
     return form_dialog_content(
         icon=icon,
@@ -28,7 +28,7 @@ def edit_entity_dialog(
         accent=theme.ACCENT if color_scheme == "blue" else theme.PURPLE,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=entity_id, type="hidden"),
+                rx.el.input(name="entity_id", value=entity_id, type="hidden"),
                 *[
                     field(label, styled_input(name=field_name, default_value=valor))
                     for field_name, label, valor in fields

@@ -167,6 +167,11 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
    (Equipos, Ajustes) quedan centradas y las que llenan (Mural, Registros)
    siguen llenando. */
 .nx-stage { display: flex; justify-content: center; width: 100%; padding: 28px 32px 48px; }
+.nx-stage:has(> .nx-plano-vista) { min-height: 100%; padding-block: 12px; overflow: hidden; }
+.nx-scroll:has(.nx-video-wall) { overflow-y: hidden; }
+.nx-stage:has(> .nx-video-wall) { height: 100%; overflow: hidden; }
+.nx-video-wall { display: grid !important; grid-template-rows: auto minmax(0, 1fr); gap: 16px; }
+.nx-video-wall-grid > * { min-width: 0; min-height: 0; }
 .nx-overview { display: flex; flex-direction: column; gap: 22px; width: 100%; max-width: 1180px; min-width: 0; }
 .nx-stage > * { animation: nx-aparece 0.16s ease-out both; }
 @keyframes nx-aparece { from { opacity: 0; } }
@@ -209,6 +214,7 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 
 /* --- Barra superior -------------------------------------------------------- */
 .nx-topbar {
+  --nx-topbar-h: 64px;
   position: relative; z-index: 40; flex: none; display: flex; align-items: center; gap: 8px;
   height: 64px; padding: 0 20px 0 32px;
   background: rgba(7, 11, 19, 0.5); border-bottom: 1px solid var(--nx-line);
@@ -435,7 +441,7 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 /* La única baldosa que apaga algo lleva el icono en rojo */
 .nx-tile[data-tono="danger"] .nx-tile-icon { color: var(--nx-guard); background: rgba(var(--nx-guard-rgb), 0.1); }
 .nx-tile-label { font-size: 14px; font-weight: 500; line-height: 1.25; letter-spacing: -0.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.nx-tile-meta { margin-top: -10px; font-size: 12px; color: var(--nx-muted); }
+.nx-tile-meta { margin-top: -10px; font-size: 12px; color: var(--nx-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nx-tile-ctrl { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
 .nx-tile-ctrl:empty { display: none; }
 /* Controles de Personalizar (mover y quitar): iconos de 14 px con zona táctil de 28 */
@@ -454,29 +460,43 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
    El contenedor del plano conserva su proporción y sus coordenadas internas:
    marco, halo y viñeta viven fuera o en pseudo-elementos que no alteran los %
    de los marcadores. En móvil se retiran para mantener el ancho de siempre. */
-.nx-plano-vista { width: 100%; max-width: 1120px; min-width: 0; }
+.nx-plano-vista { width: 100%; max-width: none; min-width: 0; container: nxplano / inline-size; }
 .nx-plano-layout {
-  display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
-  align-items: start; width: 100%; min-width: 0;
+  /* Medidas que comparten el CSS de abajo y el ajuste de assets/nx.js:
+     ancho de UNA columna de menús, hueco entre paneles, y lo que separa el
+     lienzo del plano del borde del marco (borde + relleno + cabecera). */
+  --nx-side-min: 460px; --nx-col-min: 270px;
+  --nx-lat-col: clamp(var(--nx-col-min), 30cqw, 392px); --nx-lat-gap: clamp(10px, 1cqw, 16px);
+  --nx-frame-pad: 8px; --nx-frame-border: 1px; --nx-plano-header-h: 48px;
+  --nx-plano-top: calc(var(--nx-plano-header-h) + var(--nx-frame-pad) + var(--nx-frame-border));
+  --nx-plano-bot: calc(var(--nx-frame-pad) + var(--nx-frame-border));
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--nx-lat-gap);
+  align-items: stretch; justify-content: center; width: 100%; min-width: 0; min-height: 0;
 }
-.nx-plano-centro { width: 100%; max-width: 806px; min-width: 0; margin-inline: auto; }
-.nx-plano-marco { position: relative; width: 100%; isolation: isolate; }
+.nx-plano-centro { width: 100%; min-width: 0; margin-inline: auto; }
+.nx-plano-marco { position: relative; width: 100%; aspect-ratio: 1; isolation: isolate; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .nx-plano-cabecera {
   display: flex; align-items: center; justify-content: flex-end; gap: 12px;
   min-height: 40px; padding: 0 2px 8px 6px;
 }
 .nx-plano-cabecera[data-editando="true"] { justify-content: space-between; }
-.nx-plano-instruccion { min-width: 0; }
-.nx-plano-lienzo { position: relative; width: 100%; isolation: isolate; }
+.nx-plano-instruccion { flex: 1 1 0; min-width: 0; line-height: 1.25; }
+.nx-plano-cabecera > :last-child { flex: none; }
+.nx-plano-lienzo { position: relative; width: 100%; min-height: 0; isolation: isolate; display: grid; place-items: center; overflow: hidden; }
+.nx-plano-lienzo > .nx-plan-container { width: auto !important; height: 100% !important; max-width: 100%; max-height: 100%; justify-self: center; }
 .nx-plano-fondo { display: none; }
-.nx-plano-lateral-der { display: grid; gap: 12px; width: 100%; min-width: 0; }
+/* Apilado (móvil, tablet, ventana estrecha): el andamiaje desaparece y los
+   paneles caen debajo del plano, como siempre. */
+.nx-plano-lateral-der { display: grid; gap: var(--nx-lat-gap); width: 100%; min-width: 0; }
+.nx-plano-lateral-der[data-editando="true"] { max-width: 720px; margin-inline: auto; }
+.nx-plano-menu, .nx-plano-cols, .nx-plano-col { display: contents; }
 .nx-plano-panel {
   min-width: 0; padding: 14px; border: 1px solid var(--nx-line);
   border-radius: 16px; background: rgba(7, 11, 19, 0.58); box-shadow: var(--nx-shadow);
 }
 .nx-plano-panel-titulo {
   margin: 0 0 11px; color: var(--nx-text); font: 600 14px/1.2 var(--nx-font);
-  letter-spacing: -0.012em;
+  letter-spacing: -0.012em; white-space: nowrap;
 }
 .nx-plano-resumen { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .nx-plano-resumen-item {
@@ -509,19 +529,16 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 .nx-plano-equipo-estado { color: var(--nx-muted); font-size: 10px; white-space: nowrap; }
 .nx-plano-equipo[data-online="true"] .nx-plano-equipo-icono,
 .nx-plano-equipo[data-online="true"] .nx-plano-equipo-estado { color: var(--nx-safe); }
+.nx-plano-equipo[data-online="true"][data-tipo="node"] .nx-plano-equipo-icono,
+.nx-plano-equipo[data-online="true"][data-tipo="node"] .nx-plano-equipo-estado { color: var(--nx-info); }
 .nx-plano-vacio { margin: 0; color: var(--nx-muted); font-size: 12px; }
 
 @media (min-width: 1100px) {
-  .nx-plano-layout:not([data-editando="true"]) {
-    grid-template-columns: minmax(0, 790px) minmax(210px, 260px);
-    justify-content: center;
-  }
-  .nx-plano-layout[data-editando="true"] { grid-template-columns: minmax(0, 790px); justify-content: center; }
-  .nx-plano-lateral-der { position: sticky; top: 12px; }
+  .nx-plano-cabecera { box-sizing: border-box; height: var(--nx-plano-header-h); min-height: 0; }
   .nx-plano-resumen { grid-template-columns: minmax(0, 1fr); }
   .nx-plano-tiles { grid-template-columns: minmax(0, 1fr); }
   .nx-plano-marco {
-    padding: 8px; overflow: visible; border: 1px solid rgba(var(--nx-info-rgb), 0.28);
+    padding: var(--nx-frame-pad); overflow: visible; border: var(--nx-frame-border) solid rgba(var(--nx-info-rgb), 0.28);
     border-radius: 20px; background: rgba(7, 11, 19, 0.62);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 24px 70px -30px rgba(0, 0, 0, 0.95), 0 0 58px -34px rgba(var(--nx-info-rgb), 0.92);
   }
@@ -539,6 +556,199 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
     height: calc(100% + 40px); border-radius: 28px; object-fit: cover;
     opacity: 0.28; filter: blur(28px) saturate(1.18); pointer-events: none;
   }
+}
+
+/* --- Plano + menús: la altura de los menús es la del plano ------------------
+   Solo con sitio (escritorio, y el contenedor .nx-plano-vista lo bastante ancho;
+   si no, apilado arriba). El plano manda con su aspect-ratio y fija la altura de
+   la fila; el aside no aporta altura propia (su caja .nx-plano-menu va en
+   absolute) y se estira a la fila, recortado a la franja del LIENZO con
+   --nx-plano-top/bot (marco + cabecera). Dentro, .nx-plano-cols se centra en
+   vertical con margin-block:auto: centrado si cabe y, si no, arriba con scroll
+   interno (último recurso). nx.js pone data-cols="2" en el aside cuando el
+   contenido en una columna no cabe en la altura del plano y hay sitio.
+   Normal: desde 760 px de contenedor. Edición (columna más ancha): desde 880. */
+@media (min-width: 901px) {
+  .nx-stage:has(> .nx-plano-vista) { height: auto; min-height: 100%; overflow: visible; }
+  .nx-plano-vista { position: relative; }
+  @container nxplano (min-width: 720px) {
+    .nx-plano-layout[data-layout="side"] { --nx-aside-width: var(--nx-lat-col); }
+    .nx-plano-layout[data-layout="side"]:has(> .nx-plano-lateral-der[data-cols="2"]) { --nx-aside-width: calc(2 * var(--nx-col-min) + var(--nx-lat-gap)); }
+    .nx-plano-layout[data-layout="side"] { --nx-side: max(var(--nx-side-min), min(calc(100dvh - var(--nx-topbar-h, 64px) - 152px), calc(100svh - var(--nx-topbar-h, 64px) - 152px), calc(100cqh - 152px), calc(100cqw - var(--nx-aside-width) - var(--nx-lat-gap)))); }
+    .nx-plano-layout[data-layout="side"] { grid-template-columns: minmax(var(--nx-side-min), var(--nx-side)) var(--nx-aside-width); width: max-content; max-width: 100%; margin-inline: auto; }
+    .nx-plano-marco { width: var(--nx-side); }
+    .nx-plano-layout[data-layout="side"] > .nx-plano-lateral-der { position: relative; display: block; width: var(--nx-aside-width); max-width: none; margin: 0; }
+    .nx-plano-layout[data-layout="side"] > .nx-plano-lateral-der[data-cols="2"] { width: var(--nx-aside-width); }
+    .nx-plano-layout[data-layout="side"] .nx-plano-menu { display: flex; }
+    .nx-plano-layout[data-layout="side"] .nx-plano-cols { display: grid; }
+    .nx-plano-layout[data-layout="side"] .nx-plano-col { display: grid; }
+  }
+  .nx-scroll:has(.nx-plano-layout[data-layout="side"][data-flujo="alto"]) { overflow-y: hidden; }
+  .nx-stage:has(> .nx-plano-vista .nx-plano-layout[data-layout="side"][data-flujo="alto"]) { height: 100%; min-height: 0; overflow: hidden; }
+  /* Lo común a los dos modos, bajo la misma condición que activa el menú
+     (position:absolute solo existe si el aside es `relative`: ver arriba). */
+  .nx-plano-layout[data-layout="side"] > .nx-plano-lateral-der > .nx-plano-menu {
+    position: absolute; inset: var(--nx-plano-top) 0 var(--nx-plano-bot) 0;
+    flex-direction: column; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-width: thin; scrollbar-color: rgba(var(--nx-info-rgb), 0.28) transparent;
+  }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu::-webkit-scrollbar { width: 6px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu::-webkit-scrollbar-thumb { border-radius: 6px; background: rgba(var(--nx-info-rgb), 0.28); }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu::-webkit-scrollbar-thumb:hover { background: rgba(var(--nx-info-rgb), 0.5); }
+  .nx-plano-layout[data-layout="side"] .nx-plano-cols {
+    flex: none; width: 100%; margin-block: auto; gap: var(--nx-lat-gap);
+    grid-template-columns: minmax(0, 1fr); align-items: center;
+  }
+  .nx-plano-layout[data-layout="side"] .nx-plano-lateral-der[data-cols="2"] .nx-plano-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nx-plano-layout[data-layout="side"] .nx-plano-col { gap: var(--nx-lat-gap); min-width: 0; }
+  /* Un punto más compactos que en apilado: así «Ahora mismo» + «Luces» caben en
+     una columna con el plano a la altura habitual. Igual en una y en dos
+     columnas (nx.js mide las alturas y no puede depender del modo). */
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-panel { padding: 12px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-panel-titulo { margin-bottom: 9px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-resumen { gap: 6px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-resumen-item { padding: 7px 9px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-tiles { gap: 6px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-tiles .nx-tile { min-height: 40px; padding-block: 5px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-equipos-lista { gap: 5px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-menu .nx-plano-equipo { padding: 7px 9px; }
+  /* Edición: UNA tarjeta (pestañas) que ocupa la franja del lienzo, nunca más
+     alta que el plano. Solo el cuerpo hace scroll; menú, cols y col son cajas
+     flex con min-height:0 para que la altura baje en cadena hasta el cuerpo. */
+  .nx-plano-layout[data-layout="side"] > .nx-plano-lateral-der[data-editando="true"] > .nx-plano-menu { overflow: hidden; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-lateral-der[data-editando="true"] .nx-plano-cols {
+    display: flex; flex-direction: column; align-items: stretch; flex: 1 1 auto; min-height: 0; margin-block: 0;
+  }
+  .nx-plano-layout[data-layout="side"] .nx-plano-lateral-der[data-editando="true"] .nx-plano-col { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-lateral-der[data-editando="true"] .nx-plano-col:empty { display: none; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-lateral-der[data-editando="true"] .nx-plano-editor { flex: 1 1 auto; min-height: 0; padding: 10px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-editor .nx-ed-cuerpo {
+    flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+    scrollbar-width: thin; scrollbar-color: rgba(var(--nx-info-rgb), 0.28) transparent;
+  }
+  .nx-plano-layout[data-layout="side"] .nx-plano-editor .nx-ed-cuerpo::-webkit-scrollbar { width: 6px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-editor .nx-ed-cuerpo::-webkit-scrollbar-thumb { border-radius: 6px; background: rgba(var(--nx-info-rgb), 0.28); }
+}
+
+/* --- Edición del plano: una tarjeta, tres pestañas, filas que no desbordan ---
+   La tarjeta (.nx-plano-editor) es un contenedor: las filas se reorganizan por
+   SU ancho. Estrecha: línea 1 = icono + nombre (elipsis) + familia; línea 2 =
+   selector de icono, color, integrado, copiar y, al final, quitar. Ancha: todo
+   en una línea. Todos los hijos flex/grid llevan min-width:0. Pestañas:
+   role=tablist (nx.js añade las flechas del teclado). */
+.nx-plano-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; container: nxedit / inline-size; }
+.nx-ed-tabs {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; flex: none;
+  padding: 3px; border: 1px solid var(--nx-line); border-radius: 999px; background: rgba(255, 255, 255, 0.035);
+}
+.nx-ed-tab {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; min-height: 34px;
+  padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: var(--nx-muted);
+  font: 500 13px/1 var(--nx-font); letter-spacing: -0.005em; cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.2s ease;
+}
+.nx-ed-tab:hover { color: var(--nx-text); }
+.nx-ed-tab[aria-selected="true"] {
+  color: var(--nx-text); background: linear-gradient(180deg, rgba(var(--nx-info-rgb), 0.2), rgba(var(--nx-info-rgb), 0.08));
+  box-shadow: inset 0 0 0 1px rgba(var(--nx-info-rgb), 0.35), 0 0 18px -8px rgba(var(--nx-info-rgb), 0.7);
+}
+.nx-ed-tab:focus-visible { outline: 2px solid var(--nx-info); outline-offset: 1px; }
+.nx-ed-tab-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-ed-tab-n {
+  flex: none; padding: 2px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.07);
+  color: var(--nx-muted); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.nx-ed-tab[aria-selected="true"] .nx-ed-tab-n { background: rgba(var(--nx-info-rgb), 0.2); color: var(--nx-info); }
+.nx-ed-cuerpo { min-width: 0; min-height: 0; }
+.nx-ed-lista { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.nx-ed-fila {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 10px;
+  border: 1px solid var(--nx-line); border-radius: 10px; background: var(--nx-s1);
+}
+.nx-ed-fila > * { min-width: 0; }
+.nx-ed-id { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
+.nx-ed-id > svg { flex: none; }
+.nx-ed-nombre { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-ed-id .nx-plano-kind { flex: none; max-width: 38%; overflow: hidden; }
+.nx-ed-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.nx-ed-picker { flex: 0 1 90px; min-width: 58px; }
+.nx-ed-btn {
+  display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 9px; background: transparent; cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.nx-ed-btn:hover { background: rgba(255, 255, 255, 0.07); }
+.nx-ed-btn:focus-visible { outline: 2px solid var(--nx-info); outline-offset: 1px; }
+.nx-ed-quitar { margin-left: auto; }
+.nx-ed-origen { flex: 1 1 0; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 20px; }
+.nx-ed-copiar { flex: none; min-height: 32px; }
+.nx-ed-estancia { min-width: 0; }
+.nx-ed-estancia-cab {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 36px; padding: 4px 8px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--nx-text);
+  font: 600 13px/1.2 var(--nx-font); text-align: left; cursor: pointer;
+}
+.nx-ed-estancia-cab:hover { background: rgba(255, 255, 255, 0.045); }
+.nx-ed-estancia-cab:focus-visible { outline: 2px solid var(--nx-info); outline-offset: -2px; }
+.nx-ed-estancia-cab > svg, .nx-ed-estancia-cab .rt-Badge { flex: none; }
+.nx-ed-estancia-nombre { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nx-ed-estancia-cuerpo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin: 4px 0 8px 8px; padding-left: 8px; border-left: 1px solid var(--nx-line); }
+.nx-ed-tipo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.nx-ed-tipo-cab { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nx-ed-tipo-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nx-muted); font: 600 11px/1 var(--nx-font); letter-spacing: 0.06em; text-transform: uppercase; }
+.nx-ed-fila.nx-ed-plano {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "n n" "c a"; align-items: center; gap: 6px 8px;
+}
+.nx-ed-plano-nombre { grid-area: n; width: 100%; min-width: 0; height: 32px; }
+.nx-ed-plano-n { grid-area: c; justify-self: start; min-width: 0; }
+.nx-ed-plano-acc { grid-area: a; display: flex; align-items: center; gap: 6px; min-width: 0; justify-self: end; }
+.nx-ed-plano-acc .rt-Button { min-height: 32px; }
+@container nxedit (max-width: 400px) { .nx-ed-tab-n { display: none; } }
+@container nxedit (max-width: 340px) {
+  .nx-ed-id .nx-plano-kind { display: none; }
+  .nx-ed-fila { padding: 8px; }
+  .nx-ed-ctl { gap: 3px; }
+  .nx-ed-tab { padding: 0 4px; font-size: 12px; }
+}
+@container nxedit (min-width: 500px) {
+  .nx-ed-fila:has(> .nx-ed-ctl > .nx-ed-picker) { flex-direction: row; align-items: center; gap: 10px; }
+  .nx-ed-fila:has(> .nx-ed-ctl > .nx-ed-picker) > .nx-ed-id { flex: 1 1 0; }
+  .nx-ed-fila:has(> .nx-ed-ctl > .nx-ed-picker) > .nx-ed-ctl { flex: none; }
+  .nx-ed-fila:has(> .nx-ed-ctl > .nx-ed-picker) .nx-ed-quitar { margin-left: 6px; }
+  .nx-ed-fila.nx-ed-plano { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "n c a"; }
+}
+@media (prefers-reduced-motion: reduce) { .nx-ed-tab, .nx-ed-btn { transition: none; } }
+
+/* Solo cambia el contenido abierto del selector; el trigger conserva su caja. */
+.nx-icon-picker-popup { width: min(520px, 90vw) !important; max-height: min(72dvh, 620px) !important; overflow: auto !important; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(var(--nx-info-rgb), .45) transparent; }
+.nx-icon-picker-popup .rt-Grid { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; gap: clamp(8px, 1.2cqw, 14px) !important; }
+.nx-icon-picker-popup .rt-Grid > * { min-width: 48px; min-height: 48px; padding: 10px; border-radius: 12px; background: var(--nx-s2); }
+.nx-icon-picker-popup .rt-Grid > * svg { width: 25px; height: 25px; }
+.nx-icon-picker-popup .rt-Grid > *:has(svg) { border-color: var(--nx-line); }
+@media (prefers-reduced-motion: reduce) { .nx-icon-picker-popup, .nx-icon-picker-popup * { scroll-behavior: auto; } }
+
+/* Botón de ajustes (engranaje): sustituye al lápiz y a «Editar» en todo el
+   panel. Componente único: ui/dashboard/components/boton_ajustes.py */
+.nx-ajustes-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  width: 28px; height: 28px; flex: none; padding: 0; border: 1px solid var(--nx-line);
+  border-radius: 9px; background: rgba(255, 255, 255, 0.03); color: var(--nx-muted);
+  font: 600 12px/1 var(--nx-font); cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-ajustes-btn svg { transition: transform 0.3s var(--nx-ease); }
+.nx-ajustes-btn:hover { background: rgba(255, 255, 255, 0.07); border-color: var(--nx-line-2); color: var(--nx-text); }
+.nx-ajustes-btn:hover svg { transform: rotate(60deg); }
+.nx-ajustes-btn:active { transform: scale(0.94); }
+.nx-ajustes-listo {
+  width: auto; padding: 0 10px; color: var(--nx-safe);
+  border-color: rgba(var(--nx-safe-rgb), 0.4); background: rgba(var(--nx-safe-rgb), 0.1);
+}
+.nx-ajustes-listo:hover { color: var(--nx-safe); background: rgba(var(--nx-safe-rgb), 0.18); border-color: rgba(var(--nx-safe-rgb), 0.6); }
+.nx-ajustes-listo:hover svg { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .nx-ajustes-btn, .nx-ajustes-btn svg { transition: none; }
+  .nx-ajustes-btn:hover svg { transform: none; }
 }
 
 /* Modos de la casa */
@@ -647,13 +857,13 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
   .nx-plano-vista { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
   .nx-plano-lateral-der { gap: 16px; }
   .nx-plano-panel { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .nx-plano-panel.nx-plano-editor { padding: 8px; border: 1px solid var(--nx-line); border-radius: 16px; background: rgba(7, 11, 19, 0.58); box-shadow: var(--nx-shadow); }
   .nx-plano-resumen { gap: 6px; }
   .nx-plano-resumen-item { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 9px 8px; }
   .nx-plano-resumen-icono { grid-row: auto; }
   .nx-plano-resumen-etiqueta { font-size: 10px; }
   .nx-plano-resumen-valor { width: 100%; font-size: 11px; }
   .nx-plano-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .nx-plano-equipos { display: none; }
   .nx-families { grid-template-columns: 1fr; gap: 12px; }
   .nx-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .nx-modes { flex-wrap: nowrap; }
@@ -724,6 +934,13 @@ html[data-nx-armado="true"] .nx-topbar::after {
 .nx-plano-tiles .nx-tile-switch { margin: 0; }
 /* En el móvil van dos por fila y no cabe el texto de estado: lo dice el interruptor */
 @media (max-width: 767px) { .nx-plano-tiles .nx-tile-meta { display: none; } }
+@media (min-width: 768px) {
+  .nx-plano-layout[data-layout="side"] .nx-plano-tiles .nx-tile { min-width: 0; gap: 7px; padding-inline: 7px; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-tiles .nx-tile-meta { display: none; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-tiles .nx-tile-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-tiles .nx-tile-ctrl { flex: none; }
+  .nx-plano-layout[data-layout="side"] .nx-plano-equipo-estado { display: none; }
+}
 
 /* --- Menús, popovers y desplegables: fondo SÓLIDO ----------------------------
    Los tres puntitos y los selectores dejaban ver lo de detrás (las filas, la
@@ -904,6 +1121,8 @@ html[data-nx-armado="true"] .nx-topbar::after {
 .nx-kiosco-nombre { font-size: 28px; }
 .nx-kiosco-acciones { margin-left: auto; display: flex; gap: 10px; }
 .nx-kiosco-alterna[data-activo="true"] { background: rgba(var(--nx-info-rgb), 0.24); border-color: rgba(var(--nx-info-rgb), 0.65); color: #fff; }
+/* Armar/desarmar en la tablet: rojo de guardia mientras la casa está armada. */
+.nx-kiosco-armar[data-armado="true"] { background: rgba(var(--nx-guard-rgb), 0.22); border-color: rgba(var(--nx-guard-rgb), 0.7); color: #fff; }
 .nx-kiosco-sirena[data-activo="true"] { background: rgba(var(--nx-guard-rgb), 0.2); border-color: rgba(var(--nx-guard-rgb), 0.6); }
 .nx-kiosco[data-audio="bloqueado"] .nx-kiosco-sirena::after { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--nx-warn); box-shadow: 0 0 10px var(--nx-warn); }
 
@@ -1035,3 +1254,191 @@ html[data-nx-armado="true"] .nx-topbar::after {
   }
   @keyframes nx-respira-filo-movil { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
 }
+
+/* ── Pruebas (Ajustes → Pruebas) ─────────────────────────────────────────────
+   Un desplegable por tipo; dentro, filas de una línea: punto con el estado real,
+   nombre y selector Real · sí · no. Rejilla en escritorio, una columna en móvil. */
+.nx-pr { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.nx-pr [data-tono="blue"]  { --pr-rgb: var(--nx-info-rgb); }
+.nx-pr [data-tono="green"] { --pr-rgb: var(--nx-safe-rgb); }
+.nx-pr [data-tono="red"]   { --pr-rgb: var(--nx-guard-rgb); }
+.nx-pr [data-tono="amber"] { --pr-rgb: var(--nx-lamp-rgb); }
+.nx-pr [data-tono="gray"]  { --pr-rgb: 180, 192, 210; }
+.nx-pr-cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px;
+  border: 1px solid var(--nx-line); border-radius: 14px; background: var(--nx-s1); }
+.nx-pr-cab-texto { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; }
+.nx-pr-h { margin: 0; font-size: 16px; font-weight: 700; color: var(--nx-text); line-height: 1.2; }
+.nx-pr-sub { margin: 0; font-size: 12px; color: var(--nx-muted); }
+.nx-pr-icono { color: var(--nx-warn); flex-shrink: 0; }
+.nx-pr-estado { font-size: 12px; padding: 4px 10px; border-radius: 999px; color: var(--nx-text-2);
+  border: 1px solid var(--nx-line-2); white-space: nowrap; }
+.nx-pr-estado[data-activo="true"] { color: #fff; border-color: rgba(var(--nx-warn-rgb), 0.6);
+  background: rgba(var(--nx-warn-rgb), 0.16); box-shadow: 0 0 14px -6px rgba(var(--nx-warn-rgb), 0.9); }
+.nx-pr-reset { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 9px;
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; color: #fff;
+  border: 1px solid rgba(var(--nx-warn-rgb), 0.55); background: rgba(var(--nx-warn-rgb), 0.18); }
+.nx-pr-reset:disabled { opacity: 0.35; cursor: default; }
+.nx-pr-ayuda { font-size: 12px; color: var(--nx-muted); padding: 0 4px; }
+.nx-pr-ayuda summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--nx-text-2); }
+.nx-pr-ayuda summary::-webkit-details-marker { display: none; }
+.nx-pr-ayuda p { margin: 6px 0 0; line-height: 1.5; }
+
+.nx-pr-grupo { border: 1px solid var(--nx-line); border-radius: 14px; background: var(--nx-s1); overflow: hidden;
+  transition: border-color 0.2s var(--nx-ease, ease); }
+.nx-pr-grupo[data-forzado="true"] { border-color: rgba(var(--nx-warn-rgb), 0.45); }
+.nx-pr-grupo > summary { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer;
+  list-style: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.nx-pr-grupo > summary::-webkit-details-marker { display: none; }
+.nx-pr-grupo > summary:hover { background: var(--nx-s2); }
+.nx-pr-titulo { font-size: 14px; font-weight: 650; color: var(--nx-text); }
+.nx-pr-total { font-size: 11px; color: var(--nx-muted); padding: 1px 7px; border-radius: 999px; background: var(--nx-s3); }
+.nx-pr-marca { font-size: 11px; color: var(--nx-warn); }
+.nx-pr-flecha { margin-left: auto; color: var(--nx-muted); transition: transform 0.2s var(--nx-ease, ease); }
+.nx-pr-grupo[open] .nx-pr-flecha { transform: rotate(180deg); }
+.nx-pr-grupo[open] > summary { border-bottom: 1px solid var(--nx-line); }
+
+.nx-pr-rejilla { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 6px; padding: 8px 10px 10px; }
+.nx-pr-fila { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 6px 5px 10px; border-radius: 10px;
+  background: var(--nx-s2); border: 1px solid transparent; }
+.nx-pr-fila[data-forzado="true"] { border-color: rgba(var(--nx-warn-rgb), 0.4); background: rgba(var(--nx-warn-rgb), 0.06); }
+.nx-pr-fila-todos { margin: 8px 10px 0; background: transparent; border: 1px dashed var(--nx-line-2); }
+.nx-pr-todos { font-size: 12px; font-weight: 600; color: var(--nx-text-2); margin-right: auto; }
+.nx-pr-punto { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--nx-faint); }
+.nx-pr-punto[data-on="true"] { background: rgb(var(--pr-rgb)); box-shadow: 0 0 8px rgba(var(--pr-rgb), 0.8); }
+.nx-pr-nombre { flex: 1; min-width: 0; font-size: 13px; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-pr-seg { display: inline-flex; flex-shrink: 0; padding: 2px; gap: 2px; border-radius: 9px; background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--nx-line); }
+.nx-pr-op { height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; cursor: pointer;
+  font: inherit; font-size: 11.5px; font-weight: 600; color: var(--nx-muted); white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease; -webkit-tap-highlight-color: transparent; }
+.nx-pr-op:hover { color: var(--nx-text); background: var(--nx-s3); }
+.nx-pr-op[data-activo="true"] { color: #fff; background: rgba(var(--pr-rgb), 0.28);
+  box-shadow: inset 0 0 0 1px rgba(var(--pr-rgb), 0.7), 0 0 12px -4px rgba(var(--pr-rgb), 0.9); }
+@media (max-width: 640px) {
+  .nx-pr-rejilla { grid-template-columns: 1fr; padding: 6px 8px 8px; }
+  .nx-pr-fila-todos { margin: 6px 8px 0; }
+  .nx-pr-op { height: 30px; padding: 0 8px; }
+  .nx-pr-sub { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .nx-pr-flecha, .nx-pr-op, .nx-pr-grupo { transition: none; } }
+
+/* ── Paneles de control (ventanas del plano y hojas de la tablet) ───────────
+   Un solo lenguaje para PC, puertas, aparatos y electrodomésticos:
+   ui/dashboard/components/panel_control.py y electro_panel.py. */
+.nx-control-panel { --tono-rgb: var(--nx-info-rgb); display: flex; flex-direction: column; gap: 14px; width: 100%; color: var(--nx-text); }
+.nx-control-cab { display: flex; align-items: center; gap: 12px; }
+.nx-control-icono { display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border-radius: 14px;
+  color: var(--nx-info); background: radial-gradient(circle at 30% 25%, rgba(var(--nx-info-rgb), .28), rgba(var(--nx-info-rgb), .06));
+  border: 1px solid rgba(var(--nx-info-rgb), .35); box-shadow: 0 0 22px -8px rgba(var(--nx-info-rgb), .9); }
+.nx-control-identidad { flex: 1; min-width: 0; }
+.nx-control-titulo { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-control-subtitulo { margin: 2px 0 0; font-size: 12px; color: var(--nx-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-control-estado { flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; color: var(--nx-text-2);
+  background: var(--nx-s2); border: 1px solid var(--nx-line-2); white-space: nowrap; }
+.nx-control-estado[data-activo="true"] { color: #fff; background: rgba(var(--nx-lamp-rgb), .18); border-color: rgba(var(--nx-lamp-rgb), .6);
+  box-shadow: 0 0 16px -6px rgba(var(--nx-lamp-rgb), .9); }
+.nx-control-principal { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: center; }
+.nx-control-ajustes { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.nx-control-campo { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nx-control-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--nx-muted); }
+.nx-control-segmentos { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(0,0,0,.28); border: 1px solid var(--nx-line); }
+.nx-control-segmento { flex: 1 1 auto; min-height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; cursor: pointer;
+  font: inherit; font-size: 12.5px; font-weight: 600; color: var(--nx-muted); white-space: nowrap; transition: background .15s ease, color .15s ease; }
+.nx-control-segmento:hover { color: var(--nx-text); background: var(--nx-s3); }
+.nx-control-segmento[data-activo="true"] { color: #fff; background: rgba(var(--tono-rgb), .26);
+  box-shadow: inset 0 0 0 1px rgba(var(--tono-rgb), .7), 0 0 14px -5px rgba(var(--tono-rgb), .9); }
+.nx-control-stepper { display: flex; align-items: center; gap: 8px; }
+.nx-control-step { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px; cursor: pointer;
+  color: var(--nx-text); background: var(--nx-s2); border: 1px solid var(--nx-line-2); transition: background .15s ease, transform .1s ease; }
+.nx-control-step:hover { background: var(--nx-s3); } .nx-control-step:active { transform: scale(.94); }
+.nx-control-valor { flex: 1; text-align: center; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.nx-control-valor small { font-size: 13px; font-weight: 500; color: var(--nx-muted); margin-left: 2px; }
+.nx-control-anillo { --nx-progreso: 0%; width: 128px; height: 128px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+  background: conic-gradient(rgb(var(--nx-lamp-rgb)) var(--nx-progreso), rgba(255,255,255,.07) 0);
+  box-shadow: 0 0 28px -10px rgba(var(--nx-lamp-rgb), .8); }
+.nx-control-anillo-centro { width: 104px; height: 104px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: #0a0e16; border: 1px solid var(--nx-line); }
+.nx-control-tiempo { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.nx-control-anillo-centro small { font-size: 10px; color: var(--nx-muted); text-transform: uppercase; letter-spacing: .08em; }
+.nx-control-acciones, .nx-control-rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+.nx-control-tres { grid-template-columns: repeat(3, 1fr); }
+.nx-control-doble { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.nx-control-boton { --tono-rgb: 180, 192, 210; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  min-height: 64px; padding: 8px 6px; border-radius: 14px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: center;
+  color: var(--nx-text-2); background: linear-gradient(180deg, var(--nx-s2), var(--nx-s1)); border: 1px solid var(--nx-line-2);
+  transition: background .15s ease, border-color .15s ease, transform .1s ease, box-shadow .2s ease; -webkit-tap-highlight-color: transparent; }
+.nx-control-boton svg { color: rgb(var(--tono-rgb)); }
+.nx-control-boton:hover { border-color: rgba(var(--tono-rgb), .55); color: var(--nx-text); }
+.nx-control-boton:active { transform: scale(.96); }
+.nx-control-boton[data-activo="true"] { color: #fff; background: rgba(var(--tono-rgb), .2); border-color: rgba(var(--tono-rgb), .75);
+  box-shadow: 0 0 18px -6px rgba(var(--tono-rgb), .95); }
+[data-tono="safe"]  { --tono-rgb: var(--nx-safe-rgb); }
+[data-tono="warn"]  { --tono-rgb: var(--nx-warn-rgb); }
+[data-tono="guard"] { --tono-rgb: var(--nx-guard-rgb); }
+[data-tono="info"]  { --tono-rgb: var(--nx-info-rgb); }
+[data-tono="lamp"]  { --tono-rgb: var(--nx-lamp-rgb); }
+.nx-control-pastillas { display: flex; flex-wrap: wrap; gap: 6px; }
+.nx-control-pastilla { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 5px 10px; border-radius: 999px;
+  color: var(--nx-text-2); background: var(--nx-s2); border: 1px solid var(--nx-line); }
+.nx-control-pastilla[data-activo="true"] { color: #fff; border-color: rgba(var(--nx-lamp-rgb), .6); background: rgba(var(--nx-lamp-rgb), .14); }
+.nx-control-aviso { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--nx-guard); }
+.nx-control-nota { margin: 0; font-size: 12px; color: var(--nx-muted); }
+.nx-control-enlace { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--nx-info); padding: 0; }
+/* Selector de encendido dentro del mando del humidificador. Usa el hueco
+   inferior del cuerpo y escala con su contenedor para las ventanas compactas. */
+.nx-remote-mode-panel { position: absolute; z-index: 2; left: 9%; right: 9%; bottom: 4%; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: clamp(3px, 1.2cqw, 6px); padding: clamp(6px, 2.4cqw, 10px);
+  border: 1px solid var(--nx-line-2); border-radius: clamp(8px, 3cqw, 14px);
+  background: linear-gradient(160deg, rgba(8, 13, 22, .92), rgba(15, 22, 34, .82));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 18px rgba(0,0,0,.28); }
+.nx-remote-mode-title { margin: 0; color: var(--nx-text-2); font-size: clamp(9px, 3cqw, 13px); font-weight: 700; line-height: 1.1; }
+.nx-remote-mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(3px, 1.2cqw, 6px); }
+.nx-remote-mode-option { min-width: 0; min-height: clamp(24px, 9cqw, 36px); padding: 0 clamp(3px, 1.5cqw, 8px);
+  border: 1px solid var(--nx-line); border-radius: clamp(5px, 2cqw, 9px); color: var(--nx-text-2);
+  background: var(--nx-s1); cursor: pointer; font: 600 clamp(9px, 2.8cqw, 12px)/1 var(--nx-font); }
+.nx-remote-mode-option:hover { border-color: rgba(var(--nx-info-rgb), .6); color: var(--nx-text); background: var(--nx-s2); }
+.nx-remote-mode-option[data-activo="true"] { color: #fff; border-color: rgba(var(--nx-info-rgb), .78);
+  background: rgba(var(--nx-info-rgb), .22); box-shadow: 0 0 12px -5px rgba(var(--nx-info-rgb), .95); }
+.nx-remote-mode-note { margin: 0; color: var(--nx-muted); font-size: clamp(7px, 2.1cqw, 10px); line-height: 1.15; white-space: nowrap; }
+/* Placa: 4 fuegos 2×2 que brillan en rojo según el nivel. */
+.nx-placa { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 16px; border-radius: 18px;
+  background: linear-gradient(145deg, #15171b, #07080a); border: 1px solid rgba(255,255,255,.08); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+.nx-placa-zona { --calor: 0; position: relative; aspect-ratio: 1; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border: 2px solid rgba(255,255,255,.12);
+  background: radial-gradient(circle, rgba(255, 70, 30, calc(var(--calor) * .55)) 0%, rgba(255, 40, 20, calc(var(--calor) * .2)) 55%, transparent 72%);
+  box-shadow: 0 0 calc(var(--calor) * 34px) rgba(255, 60, 30, calc(var(--calor) * .7)); transition: box-shadow .3s ease, background .3s ease; }
+.nx-placa-zona[data-activa="true"] { border-color: rgba(255, 90, 50, calc(.3 + var(--calor) * .6)); }
+.nx-placa-zona[data-nivel="1"]{--calor:.11}.nx-placa-zona[data-nivel="2"]{--calor:.22}.nx-placa-zona[data-nivel="3"]{--calor:.33}
+.nx-placa-zona[data-nivel="4"]{--calor:.44}.nx-placa-zona[data-nivel="5"]{--calor:.55}.nx-placa-zona[data-nivel="6"]{--calor:.66}
+.nx-placa-zona[data-nivel="7"]{--calor:.77}.nx-placa-zona[data-nivel="8"]{--calor:.88}.nx-placa-zona[data-nivel="9"]{--calor:1}
+.nx-placa-nivel { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; color: #ff8a5c; text-shadow: 0 0 12px rgba(255, 80, 40, .8); }
+.nx-placa-zona[data-activa="false"] .nx-placa-nivel { color: var(--nx-faint); text-shadow: none; }
+.nx-placa-mini { display: flex; gap: 8px; }
+.nx-placa-mini button { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; color: var(--nx-text);
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); }
+.nx-placa-mini button:active { transform: scale(.92); }
+/* Aire: termostato de pared; el color sigue al modo. */
+.nx-aire[data-modo="frío"]  { --tono-rgb: var(--nx-info-rgb); }
+.nx-aire[data-modo="calor"] { --tono-rgb: var(--nx-warn-rgb); }
+.nx-aire[data-modo="seco"]  { --tono-rgb: var(--nx-violet-rgb); }
+.nx-aire[data-modo="ventilación"], .nx-aire[data-modo="auto"] { --tono-rgb: var(--nx-safe-rgb); }
+.nx-aire[data-modo="apagado"] { --tono-rgb: 140, 150, 165; }
+.nx-aire-termostato { display: flex; align-items: center; justify-content: center; gap: 18px; }
+.nx-aire-termostato .nx-control-step { width: 56px; height: 56px; border-radius: 50%; }
+.nx-aire-dial { width: 168px; height: 168px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: radial-gradient(circle at 50% 35%, rgba(var(--tono-rgb), .22), #080b12 70%);
+  border: 2px solid rgba(var(--tono-rgb), .55); box-shadow: 0 0 40px -10px rgba(var(--tono-rgb), .9), inset 0 0 24px rgba(var(--tono-rgb), .15); }
+.nx-aire-consigna { font-size: 48px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.nx-aire-consigna small { font-size: 18px; font-weight: 500; margin-left: 2px; color: var(--nx-text-2); }
+.nx-aire-ambiente { font-size: 12px; color: var(--nx-muted); }
+/* En la tablet: más aire y dianas grandes. */
+.nx-kiosco-hoja-panel .nx-control-panel { max-width: 640px; gap: 18px; }
+.nx-kiosco-hoja-panel .nx-control-boton { min-height: 76px; font-size: 14px; }
+.nx-kiosco-hoja-panel .nx-control-segmento { min-height: 44px; font-size: 14px; }
+@media (max-width: 520px) {
+  .nx-control-principal { grid-template-columns: 1fr; justify-items: center; }
+  .nx-control-doble { grid-template-columns: 1fr; }
+  .nx-aire-dial { width: 140px; height: 140px; } .nx-aire-consigna { font-size: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .nx-control-boton, .nx-control-step, .nx-placa-zona, .nx-control-segmento { transition: none; } }

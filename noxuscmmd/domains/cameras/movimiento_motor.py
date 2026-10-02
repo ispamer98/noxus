@@ -16,14 +16,13 @@ import asyncio
 import time
 
 from . import fotogramas, movimiento, movimiento_store
-from ..security import audit, logs, logs_store, shared_state
+from ..security import audit, logs, logs_store, shared_state, watcher
 from ..notifications import categorias, push
 
 # Cada cuánto se LANZA una captura, sin esperar a que vuelva la anterior.
 #
-# Pedirle un fotograma a esta cámara cuesta 1,4 s casi fijos, y ese tiempo es
-# abrir la sesión con la nube de Tuya, no traer la imagen: pedirla pequeña
-# (31 KB en vez de 168) tarda exactamente lo mismo. Así que encadenando —pedir,
+# Pedirle un fotograma a una cámara puede costar 1,4 s aunque la imagen sea
+# pequeña. Así que encadenando —pedir,
 # esperar, pedir— no se puede bajar de un fotograma cada segundo y medio, y
 # alguien que cruza deprisa cabe entero en ese hueco.
 #
@@ -65,10 +64,7 @@ REINTENTO_CAIDA = 60.0
 
 
 def _src_de(camara_id: str) -> str:
-    """El stream de go2rtc de una cámara. Misma convención que
-    cameras/wall.catalogo_camaras: las de fábrica son su id sin el "cam_"."""
-    if camara_id.startswith("cam_"):
-        return camara_id[4:]
+    """Nombre de stream guardado en la ficha de cualquier cámara go2rtc."""
     from ..nodes import store as nodes_store
     for c in nodes_store.read_all().get("cameras", []):
         if c["id"] == camara_id and c.get("kind") == "go2rtc":
@@ -195,10 +191,39 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str, orden: int) -> None:
     # la imagen puede llegar al registro medio segundo después, que es
     # exactamente lo que ya hace el vigilante de la alarma (ver
     # cameras/fotogramas.py: el evento se guarda antes de tener la foto).
+    detalle = f"{visto.mancha}% de la imagen (cambio total {visto.total}%)"
+
+    # Con la casa ARMADA, una persona moviéndose delante de una cámara es un
+    # intruso: salta la alarma, igual que si se abriera una puerta. Solo si no
+    # lo está (vigilancia sin «solo armado») se queda en aviso de movimiento.
+    evento = None
+    if await asyncio.to_thread(shared_state.get_sistema_armado):
+        evento = await watcher.alertar_movimiento(ojo.id, nombre, detalle)
+        if evento is not None:
+            print(f"🚨 Movimiento: alarma por «{nombre}» ({detalle})")
+            await _guardar_foto(datos, evento)
+            return
+    await _avisar_movimiento(ojo, nombre, detalle, datos)
+
+
+async def _guardar_foto(datos: bytes, evento) -> None:
+    try:
+        if isinstance(evento, int) and evento:
+            nombre_foto = await asyncio.to_thread(fotogramas.guardar, datos, evento)
+            if nombre_foto:
+                await asyncio.to_thread(logs_store.adjuntar_foto, evento, nombre_foto)
+                print(f"📸 Movimiento: fotograma {nombre_foto} en el evento {evento}")
+    except Exception as e:
+        print(f"⚠️ Movimiento: no se pudo guardar el fotograma: {e}")
+
+
+async def _avisar_movimiento(ojo: _Ojo, nombre: str, detalle: str,
+                             datos: bytes) -> None:
+    """El aviso suave, sin alarma: casa desarmada, o alguien entrando con el
+    retardo de entrada corriendo."""
     evento = await asyncio.to_thread(
         audit.registrar_sistema, logs.ALARMA, "MOVIMIENTO_DETECTADO",
-        f"{nombre} · {visto.mancha}% de la imagen (cambio total {visto.total}%)",
-        entidad=ojo.id)
+        f"{nombre} · {detalle}", entidad=ojo.id)
     aviso = asyncio.create_task(asyncio.to_thread(
         push.enviar_notificacion,
         "Movimiento detectado",
@@ -213,15 +238,7 @@ async def _mirar(ojo: _Ojo, umbral: float, nombre: str, orden: int) -> None:
     ))
     _avisos.add(aviso)
     aviso.add_done_callback(_avisos.discard)
-
-    try:
-        if isinstance(evento, int) and evento:
-            nombre_foto = await asyncio.to_thread(fotogramas.guardar, datos, evento)
-            if nombre_foto:
-                await asyncio.to_thread(logs_store.adjuntar_foto, evento, nombre_foto)
-                print(f"📸 Movimiento: fotograma {nombre_foto} en el evento {evento}")
-    except Exception as e:
-        print(f"⚠️ Movimiento: no se pudo guardar el fotograma: {e}")
+    await _guardar_foto(datos, evento)
 
 
 # Cada cuánto se vuelven a leer los nombres de las cámaras. Van aparte del
@@ -279,7 +296,7 @@ async def run_forever() -> None:
                 from ..nodes import store as nodes_store
                 datos = await asyncio.to_thread(nodes_store.read_all)
                 nombres = {c["id"]: c.get("name", c["id"])
-                           for c in datos.get("cameras", []) + datos.get("factory_cameras", [])}
+                           for c in datos.get("cameras", [])}
                 nombres_vistos = time.monotonic()
 
             # Se DISPARAN y no se esperan: aquí está el ritmo. Cada captura

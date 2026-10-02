@@ -3,11 +3,13 @@ Centro de Control (/panel) — banco de pruebas para la futura migración.
 
 Shell tipo NVR profesional (sidebar + topbar + ventanas flotantes
 arrastrables) construido encima de los mismos domain states que la vista
-clásica (SecurityState, InfraState, CameraState, PushState). No introduce
+clásica (SecurityState, InfraState, PushState). No introduce
 lógica de negocio nueva: reutiliza device_list_view, device_controls_view,
-camera_dialogs y photo_dialog tal cual.
+photo_dialog y los estados de dominio.
 """
 import reflex as rx
+
+from ...domains.electro.state import ElectroState
 
 from ...domains.security.state import SecurityState
 from ...domains.security.groups_state import GroupsState
@@ -25,7 +27,6 @@ from ...domains.auth.admin_state import AuthAdminState
 from ...domains.auth.state import AuthState
 from ...domains.security.arming_state import ArmingState
 from ..components.dialogs import photo_dialog
-from ..views.camera_view import camera_dialogs
 from ..views.device_list import check_existing_subscription_event
 from ..dashboard import theme
 from ...domains.notifications.state import PushState
@@ -36,7 +37,9 @@ from ..dashboard.components.paleta import paleta_comandos
 from ..dashboard.components.pulsacion_larga import pulsacion_larga
 from ..dashboard.topbar import topbar
 from ..dashboard.state import DashboardState
-from ..dashboard.windows import floating_windows_layer, equipo_windows_layer
+from ..dashboard.windows import (floating_windows_layer, equipo_windows_layer,
+                                 puerta_windows_layer, aparato_windows_layer,
+                                 electro_windows_layer)
 from ..dashboard.views.overview import overview_view
 from ..dashboard.views.settings_hub import settings_hub_view
 from ..dashboard.views.cctv import cctv_view
@@ -64,6 +67,220 @@ from ..dashboard.views.inventario import inventario_view
 from ..dashboard.views.modos import modos_view
 from ..dashboard.views.retardos import retardos_view
 from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
+
+_EFECTOS_SCRIPT = """
+(function(){
+    if (window.__nxEfectosInit) return;
+    window.__nxEfectosInit = true;
+    // Efecto «coche»: al pulsar su icono en el plano, los intermitentes
+    // parpadean sobre la imagen al son del botón y los faros de cruce se quedan
+    // encendidos 7 s. Los puntos (en % del plano) vienen del propio elemento
+    // (efecto_puntos, por plano) en data-nx-puntos. Solo visual: la orden al
+    // coche la manda el clic normal del marcador.
+    var FAROS_MS = 7000, DESTELLOS = 3, ON_MS = 380, OFF_MS = 260;
+    function luz(padre, x, y, estilo){
+        var d = document.createElement('div');
+        d.className = 'nx-efecto-luz';
+        d.style.cssText = 'position:absolute;left:' + x + '%;top:' + y + '%;' +
+            'transform:translate(-50%,-50%);pointer-events:none;z-index:9;' +
+            'border-radius:50%;opacity:0;transition:opacity .12s ease;' +
+            // «screen» suma luz a la foto en vez de pintar un círculo encima:
+            // parece que la luz sale del propio coche.
+            'mix-blend-mode:screen;' + estilo;
+        padre.appendChild(d);
+        return d;
+    }
+    document.addEventListener('click', function(e){
+        var m = e.target.closest && e.target.closest('.nx-plan-marker[data-nx-efecto="coche"]');
+        if (!m) return;
+        var c = m.closest('.nx-plan-container');
+        if (!c || c.classList.contains('nx-plan-editing')) return;
+        var p = {};
+        try { p = JSON.parse(m.getAttribute('data-nx-puntos') || '{}'); } catch (err) {}
+        var padre = m.parentElement;
+        padre.querySelectorAll('.nx-efecto-luz').forEach(function(x){ x.remove(); });
+        var intermit = (p.intermitentes || []).map(function(q){
+            return luz(padre, q[0], q[1], 'width:34px;height:34px;background:radial-gradient(circle,' +
+                'rgba(255,236,190,.95) 0%,rgba(255,170,30,.75) 14%,rgba(255,140,0,.35) 38%,' +
+                'rgba(255,120,0,0) 70%);filter:blur(3px);');
+        });
+        var faros = (p.faros || []).map(function(q){
+            return luz(padre, q[0], q[1], 'width:44px;height:44px;background:radial-gradient(circle,' +
+                'rgba(255,255,255,.95) 0%,rgba(236,244,255,.7) 16%,rgba(210,230,255,.3) 42%,' +
+                'rgba(210,230,255,0) 72%);filter:blur(3px);transition:opacity .35s ease;');
+        });
+        // El haz de cruce: un abanico suave hacia delante de los faros.
+        var haz = null;
+        if ((p.faros || []).length === 2) {
+            var fx = (p.faros[0][0] + p.faros[1][0]) / 2, fy = Math.max(p.faros[0][1], p.faros[1][1]);
+            var ancho = Math.abs(p.faros[1][0] - p.faros[0][0]) * 1.9;
+            haz = luz(padre, fx, fy + 6, 'width:' + ancho + '%;height:14%;border-radius:40% 40% 50% 50%;' +
+                'background:radial-gradient(ellipse at 50% 0%,rgba(235,244,255,.42) 0%,' +
+                'rgba(220,235,255,.16) 45%,rgba(220,235,255,0) 72%);filter:blur(6px);' +
+                'transition:opacity .45s ease;');
+        }
+        requestAnimationFrame(function(){
+            faros.concat(haz ? [haz] : []).forEach(function(f){ f.style.opacity = '1'; });
+        });
+        // Destellos: intermitentes y el propio botón a la vez.
+        var i = 0, sombra = m.style.boxShadow;
+        (function destello(){
+            if (i >= DESTELLOS) { m.style.boxShadow = sombra; intermit.forEach(function(x){ x.remove(); }); return; }
+            intermit.forEach(function(x){ x.style.opacity = '1'; });
+            m.style.boxShadow = '0 0 22px 8px rgba(255,170,0,.85)';
+            setTimeout(function(){
+                intermit.forEach(function(x){ x.style.opacity = '0'; });
+                m.style.boxShadow = sombra;
+                i++; setTimeout(destello, OFF_MS);
+            }, ON_MS);
+        })();
+        setTimeout(function(){
+            faros.concat(haz ? [haz] : []).forEach(function(f){ f.style.opacity = '0'; });
+            setTimeout(function(){ faros.concat(haz ? [haz] : []).forEach(function(f){ f.remove(); }); }, 500);
+        }, FAROS_MS);
+    }, false);
+})();
+"""
+
+
+_TERMINAL_SCRIPT = """
+(function(){
+    if (window.__nxTerminal) return;
+    // Ventana tipo terminal con el registro de noxus-panel. Es JavaScript
+    // puro a propósito: mientras el servicio se reinicia no hay backend que
+    // pinte nada, y así la ventana sigue ahí contando hasta que vuelve.
+    var win = null, pre = null, estado = null, timer = null, caidaDesde = 0, ultimo = '';
+    function guardar(v){ try { sessionStorage.setItem('nxTerminal', v ? '1' : ''); } catch (e) {} }
+    function crear(){
+        win = document.createElement('div');
+        win.className = 'nx-terminal';
+        win.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:9999;' +
+            'width:min(560px,calc(100vw - 24px));height:min(46vh,420px);display:flex;' +
+            'flex-direction:column;background:#05080d;border:1px solid #1f2a37;border-radius:12px;' +
+            'box-shadow:0 18px 50px rgba(0,0,0,.55);overflow:hidden;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;';
+        var cab = document.createElement('div');
+        cab.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#0b1119;' +
+            'border-bottom:1px solid #1f2a37;color:#9fb3c8;font-size:12px;';
+        estado = document.createElement('span');
+        estado.style.cssText = 'width:8px;height:8px;border-radius:50%;background:#64748b;flex:none;';
+        var titulo = document.createElement('span');
+        titulo.textContent = 'noxus-panel — despliegue';
+        titulo.style.flex = '1';
+        var cerrar = document.createElement('button');
+        cerrar.textContent = '✕';
+        cerrar.title = 'Cerrar';
+        cerrar.style.cssText = 'background:none;border:0;color:#9fb3c8;cursor:pointer;font-size:14px;';
+        cerrar.onclick = function(){ api.toggle(false); };
+        cab.appendChild(estado); cab.appendChild(titulo); cab.appendChild(cerrar);
+        pre = document.createElement('pre');
+        pre.style.cssText = 'margin:0;padding:10px 12px;flex:1;overflow:auto;color:#b5f5c8;' +
+            'font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;';
+        win.appendChild(cab); win.appendChild(pre);
+        document.body.appendChild(win);
+    }
+    function pintar(texto, vivo){
+        var abajo = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+        pre.textContent = texto;
+        estado.style.background = vivo ? '#22c55e' : '#f59e0b';
+        if (abajo) pre.scrollTop = pre.scrollHeight;
+    }
+    function preguntar(){
+        fetch('/despliegue/log', {credentials: 'same-origin', cache: 'no-store'})
+            .then(function(r){
+                if (r.status === 401 || r.status === 403) throw new Error('permiso');
+                if (!r.ok) throw new Error('caido');
+                return r.text();
+            })
+            .then(function(t){ caidaDesde = 0; ultimo = t; pintar(t, true); })
+            .catch(function(e){
+                if (e.message === 'permiso') { pintar('Este aparato no tiene «Ver despliegue» activado.', false); return; }
+                if (!caidaDesde) caidaDesde = Date.now();
+                var s = Math.round((Date.now() - caidaDesde) / 1000);
+                pintar(ultimo + '\\n⏳ Reiniciando noxus-panel… ' + s + ' s (el servicio no contesta todavía)', false);
+            });
+    }
+    var api = {
+        toggle: function(forzar){
+            var abrir = (typeof forzar === 'boolean') ? forzar : !(win && win.style.display !== 'none');
+            if (abrir) {
+                if (!win) crear();
+                win.style.display = 'flex';
+                preguntar();
+                if (!timer) timer = setInterval(preguntar, 2000);
+            } else if (win) {
+                win.style.display = 'none';
+                clearInterval(timer); timer = null;
+            }
+            guardar(abrir);
+        }
+    };
+    window.__nxTerminal = api;
+    // Si estaba abierta antes de recargar (p. ej. tras un reinicio), vuelve.
+    try { if (sessionStorage.getItem('nxTerminal')) api.toggle(true); } catch (e) {}
+})();
+"""
+
+
+_BOCADILLOS_SCRIPT = """
+(function(){
+    if (window.__nxBocadillosInit) return;
+    window.__nxBocadillosInit = true;
+    // ── Cerrar al tocar fuera ────────────────────────────────────────────
+    // Solo las ventanas marcadas con data-nx-dismiss (el mando abierto desde
+    // el plano). Se hace pulsando su propia aspa en vez de con un evento
+    // nuevo: así el cierre pasa por el mismo sitio que el botón de cerrar y
+    // no hay dos caminos que mantener.
+    document.addEventListener('pointerdown', function(e){
+        if (!e.target.closest) return;
+        // Los diálogos y desplegables de Radix se dibujan FUERA de la
+        // ventana (en un portal al final del body): sin esta excepción,
+        // abrir cualquiera de ellos contaría como "tocar fuera" y cerraría
+        // el mando por debajo.
+        if (e.target.closest('[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]')) return;
+        // Tampoco cuenta pulsar el marcador del plano que lo acaba de abrir.
+        if (e.target.closest('.nx-plan-marker')) return;
+        var dentro = e.target.closest('.nx-window');
+        document.querySelectorAll('.nx-window[data-nx-dismiss="1"]').forEach(function(win){
+            if (win !== dentro) {
+                var aspa = win.querySelector('.nx-window-close');
+                if (aspa) aspa.click();
+            }
+        });
+    }, true);
+
+    // ── Bocadillos del plano: justo encima del icono pulsado ────────────
+    // Se apunta dónde está el marcador al tocarlo, y cuando aparece la
+    // ventanita que abre (las de data-nx-dismiss), se coloca centrada sobre
+    // él. Si no cabe encima, debajo; y siempre dentro de la pantalla.
+    var ancla = null;
+    document.addEventListener('pointerdown', function(e){
+        var m = e.target.closest && e.target.closest('.nx-plan-marker');
+        if (m) ancla = {r: m.getBoundingClientRect(), t: Date.now()};
+    }, true);
+    function colocar(win){
+        if (!ancla || Date.now() - ancla.t > 4000 || win.dataset.nxAnclada) return;
+        win.dataset.nxAnclada = '1';
+        requestAnimationFrame(function(){
+            var r = ancla.r, w = win.offsetWidth, h = win.offsetHeight, m = 8;
+            var vw = window.innerWidth, vh = window.innerHeight;
+            var left = Math.min(Math.max(r.left + r.width / 2 - w / 2, m), vw - w - m);
+            var top = r.top - h - 10;
+            if (top < m) top = Math.min(r.bottom + 10, vh - h - m);
+            win.style.left = Math.max(left, m) + 'px';
+            win.style.top = Math.max(top, m) + 'px';
+            win.style.right = 'auto';
+            win.style.bottom = 'auto';
+            win.style.transform = 'none';
+        });
+    }
+    new MutationObserver(function(){
+        document.querySelectorAll('.nx-window[data-nx-dismiss="1"]:not([data-nx-anclada])')
+            .forEach(colocar);
+    }).observe(document.body, {childList: true, subtree: true});
+
+})();
+"""
+
 
 _DRAG_AND_CLOCK_SCRIPT = """
 (function(){
@@ -140,7 +357,7 @@ _DENSIDAD_CSS = """
 
 # JavaScript propio del panel (assets/nx.js): conserva la precarga de la
 # suscripción y recupera la red Obsidiana con límites específicos para móvil.
-_NX_JS = "/nx.js?v=20260928b"
+_NX_JS = "/nx.js?v=20261002d"
 
 
 def _sin_permiso() -> rx.Component:
@@ -167,8 +384,7 @@ def _solo_camaras(vista: rx.Component) -> rx.Component:
     hay que impedir. Y se comprueba aquí y no solo en el menú porque a estas
     pantallas se llega escribiendo ?vista=video_wall en la barra de direcciones.
 
-    Lo que se VE, ojo: que no se pueda mover una cámara ni sonar su sirena lo
-    deciden los manejadores de CameraState."""
+    La comprobación se hace aquí porque ver el vídeo ya es acceso."""
     return rx.cond(AuthState.puede_camaras, vista, _sin_permiso_camaras())
 
 
@@ -376,6 +592,9 @@ def _panel() -> rx.Component:
     # lo que rebota y no se mueve.
     return rx.fragment(
         rx.script(_DRAG_AND_CLOCK_SCRIPT),
+        rx.script(_BOCADILLOS_SCRIPT),
+        rx.script(_TERMINAL_SCRIPT),
+        rx.script(_EFECTOS_SCRIPT),
         rx.el.div(
             sidebar(),
             rx.el.div(
@@ -409,7 +628,6 @@ def _panel() -> rx.Component:
             aria_label="Avisos del panel",
         ),
         mobile_bottom_nav(),
-        camera_dialogs(),
         photo_dialog(
             InfraState.dialog_foto_abierto,
             InfraState.toggle_dialog,
@@ -418,6 +636,9 @@ def _panel() -> rx.Component:
         floating_windows_layer(),
         ir_remote_windows_layer(),
         equipo_windows_layer(),
+        puerta_windows_layer(),
+        aparato_windows_layer(),
+        electro_windows_layer(),
         paleta_comandos(),
         pulsacion_larga(),
     )
@@ -453,6 +674,7 @@ EVENTOS_DE_ENTRADA = [
     InfraState.on_load,
     RegistryState.on_load,
     NodesState.on_load,
+    ElectroState.on_load,
     GroupsState.on_load,
     HostActionsState.on_load,
     AccessControlState.on_load,

@@ -33,8 +33,7 @@ def _descubrimiento() -> Caso:
     d._apuntar("casa/nodo_test/pir_nuevo", "OFF")
     d._apuntar("casa/nodo_test/luz_nueva/set", "ON")
     datos = nodes_store.read_all()
-    ya = next((s["topic"] for col in ("factory_sensors", "sensors")
-               for s in datos.get(col, []) if s.get("topic")), "")
+    ya = next((s["topic"] for s in datos.get("sensors", []) if s.get("topic")), "")
     if ya:
         d._apuntar(ya, "ON")
 

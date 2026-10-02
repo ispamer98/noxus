@@ -108,8 +108,7 @@ async def _run_door_pulse(target: str, params: dict) -> str:
 async def _run_door_hold(target: str, params: dict) -> str:
     _, door_id = partir(target)
     abierta = bool(_tri(params, "open"))
-    ops.cancel_door_pulse(door_id)
-    door = await ops.send_door_state(door_id, abierta)
+    door, _ = await ops.hold_door(door_id, abierta)
     _eco(f"state:{door_id}")
     return f"{door['name']}: mantenida {'abierta' if abierta else 'cerrada'}"
 

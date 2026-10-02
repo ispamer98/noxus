@@ -1,6 +1,6 @@
 """
 Ediciones persistentes sobre las entidades ESTÁTICAS de registry.py (server,
-pc, puerta_ppal, tamper1, cam_fija...). registry.py sigue siendo la fuente
+pc, puerta_ppal, tamper1...). registry.py sigue siendo la fuente
 de verdad "de fábrica" (env vars); esto es una capa fina por encima que se
 aplica al importar el módulo y cada vez que se guarda una edición desde la
 UI — así el proceso en marcha refleja el cambio al instante, aunque la
@@ -70,7 +70,7 @@ def set_override(entity_id: str, **fields) -> dict:
 
 def drop_override(entity_id: str) -> None:
     """Borra la entrada de una entidad de este almacén. Lo usa
-    registry._migrate_factory_overrides() con las que ya se guardan en
+    registry._migrate_managed_overrides() con las que ya se guardan en
     nodos_dinamicos.json: dos sitios para el mismo campo significaba que el de
     aquí, al aplicarse el último, revertía en cada reinicio lo editado desde la
     web."""

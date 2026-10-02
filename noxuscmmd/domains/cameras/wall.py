@@ -1,17 +1,14 @@
 """
-Catálogo de cámaras para el Mural de vídeo: junta las de fábrica (cam_fija,
-cam_ptz) y las dadas de alta desde la web en UNA sola lista, cada una ya con
+Catálogo de cámaras para el Mural de vídeo: resuelve la colección única con
 la URL de vídeo lista para meter en un iframe — el mural puede tener varias
 en pantalla a la vez, así que conviene resolverlas todas de una sentada en
 vez de una por una al pintar cada hueco.
 
-Mismo criterio de negociación que domains/cameras/state.py (nunca la URL
-cruda del manifiesto, siempre la página stream.html de go2rtc — un iframe
+Para go2rtc nunca usa la URL cruda del manifiesto, sino su página stream.html — un iframe
 carga documentos HTML, no manifiestos de vídeo) y misma bifurcación por
-`kind` que ui/dashboard/windows.py:_dynamic_camera_window para las cámaras
-dinámicas — aquí se hace una vez por cámara, no una vez por hueco.
+`kind` que ui/dashboard/windows.py:_dynamic_camera_window — aquí se hace una
+vez por cámara, no una vez por hueco.
 """
-from ..devices import registry
 from ..nodes import store as nodes_store
 
 _STREAM_MODES_PC = "webrtc,mse,hls,mp4"
@@ -29,17 +26,6 @@ def catalogo_camaras(cam_mode: str = "pc") -> list[dict]:
     suelta)."""
     modo = _modes(cam_mode)
     salida: list[dict] = []
-
-    for cid, cam in registry.visible_cameras().items():
-        src = cid.replace("cam_", "")
-        salida.append({
-            "id": cid, "name": cam.name, "icon": getattr(cam, "icon", None) or "video",
-            "kind": "factory",
-            # Relativa: mismo dominio que el panel, con `portero-camaras`
-            # delante. Ver domains/cameras/endpoint.py.
-            "stream_url": f"/cam/stream.html?src={src}&mode={modo}",
-            "playable": True,
-        })
 
     for c in nodes_store.read_all()["cameras"]:
         kind = c.get("kind", "embed")

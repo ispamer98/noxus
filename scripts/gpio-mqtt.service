@@ -1,0 +1,13 @@
+[Unit]
+Description=Salidas GPIO (relés) por MQTT para el panel noxus
+Wants=network-online.target
+After=network-online.target tailscaled.service
+
+[Service]
+User=vpn
+ExecStart=/usr/bin/python3 /home/vpn/MQTT/gpio_mqtt.py raspberry
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -33,15 +33,18 @@ import reflex as rx
 from ...domains.auth.state import AuthState
 from ...domains.devices.registry_state import RegistryState
 from ...domains.infra.state import InfraState
-from ...domains.nodes.host_actions_state import HostActionsState
 from ...domains.nodes.kiosco_state import KioscoState
 from ...domains.nodes.state import NodesState
 from ...domains.notifications.alertas_state import AlertasState
+from ...domains.electro.state import ElectroState
+from ...domains.security.arming_state import ArmingState
 from ...domains.security.state import SecurityState
 from ..dashboard.components.alertas import banner_alertas
+from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
 from ..dashboard.views.ir_remotes import ir_remote_kiosco
 from ..dashboard.views.overview import _quick_action
-from ..dashboard.windows import _accion, _boton_propio, camera_kiosco_content
+from ..dashboard.components.electro_panel import electro_panel
+from ..dashboard.windows import camera_kiosco_content, equipo_contenido, puerta_contenido
 from ..views.device_list import kiosco_floor_plan_content
 from .dashboard import _NX_JS, _comprobando, _sin_acceso
 
@@ -60,6 +63,8 @@ EVENTOS_KIOSCO = EVENTOS_KIOSCO_IDENTIFICACION + [
     RegistryState.on_load,
     NodesState.on_load,
     AlertasState.on_load,
+    ElectroState.on_load,
+    ArmingState.recuperar_cuenta,
 ]
 
 
@@ -73,9 +78,19 @@ def _luz(luz: rx.Var) -> rx.Component:
 
 
 def _puerta(puerta: rx.Var) -> rx.Component:
+    """Abre su hoja: abrir, mantener abierta (desbloqueada) o cerrada (bloqueada)."""
     return _quick_action(
-        "door-open", "Abrir " + puerta["name"].to(str),
-        NodesState.open_door(puerta["id"].to(str)),
+        puerta["icono_plano"].to(str), puerta["name"].to(str),
+        KioscoState.abrir_overlay("puerta", puerta["id"].to(str)),
+        tono="lamp", activo=puerta["cerradura_abierta"].to(bool),
+    )
+
+
+def _electro(e: rx.Var) -> rx.Component:
+    return _quick_action(
+        e["floor_icon"].to(str), e["name"].to(str),
+        KioscoState.abrir_overlay("electro", e["id"].to(str)),
+        tono="lamp", activo=e["en_marcha"].to(bool),
     )
 
 
@@ -93,6 +108,29 @@ def _equipo(host: rx.Var) -> rx.Component:
                 rx.cond(host["icon"], host["icon"].to(str), "server")),
         host["name"].to(str),
         KioscoState.abrir_overlay("equipo", host["id"].to(str)),
+    )
+
+
+def _equipo_vigilado(equipo: rx.Var) -> rx.Component:
+    """Estado común: host verde, nodo azul y cualquiera caído en gris."""
+    online = equipo["online"].to(bool)
+    fila = rx.el.div(
+        rx.el.span(rx.icon(equipo["icon"].to(str), size=17),
+                   class_name="nx-plano-equipo-icono"),
+        rx.el.span(equipo["name"].to(str), class_name="nx-plano-equipo-nombre"),
+        rx.el.span(rx.cond(online, "En línea", "Sin conexión"),
+                   class_name="nx-plano-equipo-estado"),
+        class_name="nx-plano-equipo",
+        custom_attrs={"data-online": online, "data-tipo": equipo["tipo"].to(str)},
+    )
+    return rx.cond(
+        equipo["accionable"].to(bool),
+        rx.el.button(
+            fila, type="button", width="100%", padding="0", border="0",
+            background="transparent", cursor="pointer",
+            on_click=KioscoState.abrir_overlay(
+                "equipo", equipo["id"].to(str))),
+        fila,
     )
 
 
@@ -114,15 +152,19 @@ def _seccion(titulo: str, icono: str, items: rx.Var, render,
 def _controles() -> rx.Component:
     vacia = (
         NodesState.kiosco_lights.length() + NodesState.kiosco_doors.length()
-        + NodesState.kiosco_remotes.length() + NodesState.kiosco_hosts.length()
+        + NodesState.kiosco_remotes.length() + NodesState.kiosco_equipos.length()
+        + ElectroState.kiosco_electros.length()
     ) == 0
     return rx.el.div(
         _seccion("Luces y aparatos", "lightbulb", NodesState.kiosco_lights, _luz),
         _seccion("Puertas", "door-open", NodesState.kiosco_doors, _puerta),
+        _seccion("Cocina y aparatos", "cooking-pot", ElectroState.kiosco_electros, _electro,
+                 visible=AuthState.puede_equipos),
         _seccion("Mandos", "gamepad-2", NodesState.kiosco_remotes, _mando,
                  visible=AuthState.puede_mandos),
-        _seccion("Equipos", "server", NodesState.kiosco_hosts, _equipo,
-                 visible=AuthState.puede_equipos),
+        _seccion("Equipos", "server", NodesState.kiosco_equipos, _equipo_vigilado,
+                 visible=AuthState.puede_equipos,
+                 clase_items="nx-plano-equipos-lista"),
         rx.cond(
             vacia,
             rx.el.p("Esta habitación aún no tiene controles. Se añaden en "
@@ -176,27 +218,6 @@ def _hoja(titulo, contenido: rx.Component, al_cerrar, clase: str = "",
         ),
         rx.el.div(contenido, class_name="nx-kiosco-hoja-cuerpo " + clase),
         class_name="nx-kiosco-hoja", role="dialog", aria_modal="true",
-    )
-
-
-def _equipo_contenido(host: rx.Var) -> rx.Component:
-    """Las mismas acciones que la ventana de equipo del plano (windows.py), con
-    sus mismos eventos: el permiso y el registro los pone HostActionsState."""
-    hid = host["id"].to(str)
-    return rx.vstack(
-        rx.cond(host["mac"], _accion("power", "Encender por red",
-                                     HostActionsState.encender_wol(hid), "green")),
-        rx.cond(
-            host["user"],
-            rx.fragment(
-                _accion("power-off", "Apagar",
-                        HostActionsState.accion_rapida(hid, "apagar"), "red"),
-                _accion("rotate-ccw", "Reiniciar",
-                        HostActionsState.accion_rapida(hid, "reiniciar"), "amber"),
-            ),
-        ),
-        rx.foreach(host["botones"].to(list[dict]), _boton_propio),
-        spacing="3", width="min(420px, 100%)",
     )
 
 
@@ -334,8 +355,8 @@ def _hojas() -> rx.Component:
             KioscoState.overlay_kind == "equipo",
             rx.foreach(NodesState.kiosco_hosts, lambda h: rx.cond(
                 h["id"].to(str) == KioscoState.overlay_id,
-                _hoja(h["name"].to(str), _equipo_contenido(h),
-                      KioscoState.cerrar_overlay))),
+                _hoja(h["name"].to(str), equipo_contenido(h),
+                      KioscoState.cerrar_overlay, clase="nx-kiosco-hoja-panel"))),
         ),
         rx.cond(
             KioscoState.overlay_kind == "camara",
@@ -343,6 +364,20 @@ def _hojas() -> rx.Component:
                 c["id"].to(str) == KioscoState.overlay_id,
                 _hoja(c["name"].to(str), camera_kiosco_content(c),
                       KioscoState.cerrar_overlay))),
+        ),
+        rx.cond(
+            KioscoState.overlay_kind == "puerta",
+            rx.foreach(NodesState.kiosco_doors, lambda p: rx.cond(
+                p["id"].to(str) == KioscoState.overlay_id,
+                _hoja(p["name"].to(str), puerta_contenido(p, con_anclados=False),
+                      KioscoState.cerrar_overlay, clase="nx-kiosco-hoja-panel"))),
+        ),
+        rx.cond(
+            KioscoState.overlay_kind == "electro",
+            rx.foreach(ElectroState.kiosco_electros, lambda e: rx.cond(
+                e["id"].to(str) == KioscoState.overlay_id,
+                _hoja(e["name"].to(str), electro_panel(e),
+                      KioscoState.cerrar_overlay, clase="nx-kiosco-hoja-panel"))),
         ),
         _selector_camara(),
         rx.cond(KioscoState.sirena_ajustes, _hoja_sirena()),
@@ -359,6 +394,18 @@ def _cabecera() -> rx.Component:
     return rx.el.header(
         rx.el.h1(NodesState.kiosco_room_name, class_name="nx-kiosco-nombre"),
         rx.el.div(
+            # Armar/desarmar toda la casa (grupo principal), como el botón de la
+            # barra superior del panel: si hay algo abierto sale el mismo aviso.
+            rx.cond(AuthState.puede_armar, rx.el.button(
+                rx.icon(rx.cond(SecurityState.sistema_armado, "shield-check", "shield-off"),
+                        size=20),
+                rx.el.span(rx.cond(SecurityState.sistema_armado, "Desarmar", "Armar")),
+                on_click=ArmingState.pedir_armar(""),
+                class_name="nx-kiosco-btn nx-kiosco-armar", type="button",
+                custom_attrs={"data-armado": SecurityState.sistema_armado},
+                aria_label=rx.cond(SecurityState.sistema_armado,
+                                   "Desarmar la casa", "Armar la casa"),
+            )),
             rx.cond(_op("sirena"), rx.el.button(
                 rx.icon("siren", size=20), rx.el.span("Sirena"),
                 on_click=KioscoState.abrir_sirena_ajustes,
@@ -416,6 +463,8 @@ def _kiosco() -> rx.Component:
         _hojas(),
         # El banner de alarma de siempre; el JS despierta la pantalla si aparece.
         rx.el.div(banner_alertas(), class_name="nx-kiosco-alertas"),
+        rx.el.aside(dialogo_armado(), cuenta_atras_salida(),
+                    class_name="nx-floating-notices", aria_label="Armado"),
         _reposo(),
         class_name="nx-kiosco",
         custom_attrs={

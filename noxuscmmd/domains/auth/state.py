@@ -299,6 +299,8 @@ class AuthState(rx.State):
     # escribe uno.
     nombre_acceso: str = ""
     nota_acceso: str = ""
+    # Casilla «Ver despliegue» de SU ficha: enseña el icono de la terminal.
+    ve_despliegue: bool = False
 
     # ── Lo que la interfaz puede leer ────────────────────────────────────
     @rx.var
@@ -349,6 +351,10 @@ class AuthState(rx.State):
     @rx.var
     def puede_armar(self) -> bool:
         return self._ve(permisos.ARMAR)
+
+    @rx.var
+    def puede_luces(self) -> bool:
+        return self._ve(permisos.LUCES)
 
     @rx.var
     def puede_puertas(self) -> bool:
@@ -437,6 +443,7 @@ class AuthState(rx.State):
         self.acento = prefs["acento"]
         self.nombre_acceso = ficha.get("nombre", "")
         self.nota_acceso = ficha.get("nota_acceso", "")
+        self.ve_despliegue = bool(ficha.get("ver_despliegue"))
         # _refrescar es el punto por el que pasan los tres caminos de
         # identificar (cookie buena, cookie inservible y sin cookie), asi
         # que es el sitio donde marcarlo una sola vez.
@@ -766,7 +773,7 @@ class AuthState(rx.State):
 
         Se puede mandar más de una vez —corregir lo que se escribió no debería
         obligar a empezar de cero—, y el tag del aviso hace que el segundo
-        sustituya al primero en la pantalla del administrador en vez de apilarse.
+        reemplace al primero en la pantalla del administrador en vez de apilarse.
         """
         if not self._id:
             return

@@ -33,6 +33,8 @@ def _almacen() -> Caso:
     c.revisar("guarda la tecla de encender", mando["btn_on"], "btn_on1")
     c.revisar("guarda la tecla de apagar", mando["btn_off"], "btn_off1")
     c.revisar("guarda qué accesorio es", mando["aspecto"], "ventilador")
+    c.revisar("apagado automático desactivado por defecto",
+              mando["auto_apagado_min"], 0)
     # Sin topics: no hay nada publicando su estado, y dejar un "casa//" haría
     # que el bus se suscribiera a un topic inventado.
     c.revisar("no inventa topic de orden", mando["topic_cmd"], "")
@@ -46,7 +48,9 @@ def _almacen() -> Caso:
 
     otra_vez = store.update_light(mando["id"], "Luz del ventilador", "", "", "",
                                   kind=store.LUZ_MANDO, remote_id="ir_2",
-                                  btn_on="b1", btn_off="b2", aspecto="tv")
+                                  btn_on="b1", btn_off="b2", aspecto="tv",
+                                  auto_apagado_min=15)
+    c.revisar("guarda el apagado automático", otra_vez["auto_apagado_min"], 15)
     c.revisar("al volver a mando suelta el topic", otra_vez["topic_cmd"], "")
     c.revisar("y coge el mando nuevo", otra_vez["remote_id"], "ir_2")
     c.revisar("un aspecto inventado cae en luz",
@@ -93,11 +97,274 @@ def _envio() -> Caso:
     return c
 
 
+def _modos_encendido() -> Caso:
+    c = Caso("Modos de encendido de accesorios")
+    base = {"btn_on": "on", "btn_continuo": "cont", "btn_timing": "timer",
+            "pausa_secuencia_s": 1.5}
+    for modo, esperado in (("continuo", [("on", 0), ("cont", 1.5)]),
+                           ("1h", [("on", 0)]),
+                           ("2h", [("on", 0), ("timer", 1.5)]),
+                           ("3h", [("on", 0), ("timer", 1.5), ("timer", 1.5)])):
+        c.revisar(f"secuencia {modo}", store.secuencia_encendido(
+            {**base, "modo_encendido": modo}), esperado)
+    c.revisar("modo vacío solo pulsa encendido", store.secuencia_encendido(
+        {**base, "modo_encendido": ""}), [("on", 0)])
+    c.revisar("modo desconocido solo pulsa encendido", store.secuencia_encendido(
+        {**base, "modo_encendido": "x"}), [("on", 0)])
+    c.revisar("sin tecla de modo hace fallback", store.secuencia_encendido(
+        {"btn_on": "on", "modo_encendido": "2h", "btn_timing": ""}), [("on", 0)])
+    for modo, minutos in (("continuo", 0), ("1h", 60), ("2h", 120), ("3h", 180), ("x", 0)):
+        c.revisar(f"duración {modo}", store.duracion_ciclo_min(modo), minutos)
+    mando = store.add_ir_remote("Mando modos")
+    on = store.add_ir_button(mando["id"], "On", "power", "on")
+    cont = store.add_ir_button(mando["id"], "Continuo", "waves", "cont")
+    timer = store.add_ir_button(mando["id"], "Timer", "clock", "timer")
+    luz = store.add_light("Accesorio modos", "", "", "", kind=store.LUZ_MANDO,
+                          remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
+                          btn_continuo=cont["id"], btn_timing=timer["id"])
+    c.cierto("guarda teclas existentes", luz["btn_continuo"] == cont["id"] and
+             luz["btn_timing"] == timer["id"])
+    c.revisar("modo válido cambia", store.set_modo_encendido(luz["id"], "continuo")["modo_encendido"], "continuo")
+    c.revisar("modo desconocido no cambia", store.set_modo_encendido(luz["id"], "x"), None)
+    store.update_light(luz["id"], luz["name"], "", "", "", kind=store.LUZ_MANDO,
+                       remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
+                       btn_continuo=cont["id"], btn_timing="missing")
+    c.revisar("tecla ausente impide 2h", store.set_modo_encendido(luz["id"], "2h"), None)
+    store.delete_light(luz["id"])
+    store.delete_ir_remote(mando["id"])
+    return c
+
+
 def ejecutar() -> list[Caso]:
-    return [_almacen(), _envio(), _una_sola_tecla(), _separacion(), _widgets(),
+    return [_modos_encendido(), _apagar_luz(), _activacion_con_modo(), _almacen(), _envio(), _una_sola_tecla(), _separacion(), _widgets(),
             _estado_compartido(), _orden_idempotente(),
+            _apagado_automatico(),
             _secuencia_apagar_habitacion(), _sin_doble_contabilidad(), _familias(),
-            _familia_mandos(), _webos_directo(), _alta_boton_webos()]
+            _familia_mandos(), _webos_directo(), _alta_boton_webos(),
+            _plantilla_humidificador()]
+
+
+def _apagar_luz() -> Caso:
+    c = Caso("Repetición de tecla Luz del humidificador")
+    c.revisar("pasos activos", store.pasos_apagar_luz({
+        "apagar_luz_al_encender": True, "btn_luz": "luz",
+        "luz_repeticiones": 3, "luz_intervalo_s": 0.12,
+    }), [("luz", 0), ("luz", 0.12), ("luz", 0.12)])
+    c.revisar("tecla ausente desactiva", store.pasos_apagar_luz({
+        "apagar_luz_al_encender": True, "btn_luz": "",
+    }), [])
+    c.revisar("opción desactivada", store.pasos_apagar_luz({
+        "apagar_luz_al_encender": False, "btn_luz": "luz",
+    }), [])
+
+    async def escenario():
+        mando = store.add_ir_remote("Mando humidificador")
+        on = store.add_ir_button(mando["id"], "On", "", "on")
+        luz_btn = store.add_ir_button(mando["id"], "Luz", "", "luz")
+        cont = store.add_ir_button(mando["id"], "Continuo", "", "cont")
+        luz = store.add_light(
+            "Humidificador", "", "", "", kind=store.LUZ_MANDO,
+            remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
+            mando_modo=store.UNA_TECLA, modo_encendido="continuo",
+            btn_continuo=cont["id"], btn_luz=luz_btn["id"],
+            apagar_luz_al_encender=True, luz_repeticiones=3,
+            luz_intervalo_s=0.12)
+        enviados, pausas = [], []
+        original_send = ops.send_remote_button
+        original_sleep = ops.asyncio.sleep
+        original_thread = ops.asyncio.to_thread
+
+        async def enviar(remote_id, button_id, **kwargs):
+            enviados.append(button_id)
+
+        bloqueada = {"valor": False}
+        puerta = asyncio.Event()
+
+        async def dormir(segundos):
+            pausas.append(segundos)
+            if bloqueada["valor"] and segundos:
+                await puerta.wait()
+            await original_sleep(0)
+
+        async def en_el_loop(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        ops.send_remote_button, ops.asyncio.sleep = enviar, dormir
+        ops.asyncio.to_thread = en_el_loop
+        try:
+            await ops.set_light(luz["id"], True)
+            c.revisar("vuelve tras encendido", enviados, [on["id"]])
+            while ops._LIGHT_BACKGROUND_TASKS:
+                await original_sleep(0)
+            c.revisar("orden completa", enviados,
+                      [on["id"], luz_btn["id"], luz_btn["id"], luz_btn["id"], cont["id"]])
+            c.revisar("pausas de Luz y modo", pausas, [0.12, 0.12, 1.0])
+
+            enviados.clear(); pausas.clear()
+            await ops.set_light(luz["id"], False)
+            bloqueada["valor"] = True
+            encender = asyncio.create_task(ops.set_light(luz["id"], True))
+            await original_sleep(0)
+            apagar = asyncio.create_task(ops.set_light(luz["id"], False))
+            await original_sleep(0)
+            c.cierto("apagar espera al lock de la secuencia", not apagar.done())
+            puerta.set()
+            await asyncio.gather(encender, apagar)
+            c.revisar("el lock conserva el orden", enviados[:2], [on["id"], on["id"]])
+        finally:
+            ops.send_remote_button, ops.asyncio.sleep = original_send, original_sleep
+            ops.asyncio.to_thread = original_thread
+            store.delete_light(luz["id"])
+            store.delete_ir_remote(mando["id"])
+
+    asyncio.run(escenario())
+    return c
+
+
+def _activacion_con_modo() -> Caso:
+    """La activación de un aparato temporal no sale nunca de este espía."""
+    c = Caso("Activación secuenciada de accesorios")
+    mando = store.add_ir_remote("Mando de ciclos")
+    on = store.add_ir_button(mando["id"], "ON", "power", "on")
+    continuo = store.add_ir_button(mando["id"], "Continuo", "waves", "continuo")
+    timing = store.add_ir_button(mando["id"], "Temporizador", "clock", "timing")
+    luz = store.add_light(
+        "Humidificador de prueba", "", "", "", kind=store.LUZ_MANDO,
+        remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
+        mando_modo=store.UNA_TECLA, btn_continuo=continuo["id"],
+        btn_timing=timing["id"], pausa_secuencia_s=1.5,
+    )
+    enviados, pausas, fallar = [], [], {"indice": None}
+    original_enviar = ops.send_remote_button
+    original_sleep = ops.asyncio.sleep
+    original_thread = ops.asyncio.to_thread
+    original_hora = store.time.time
+    original_registrar = ops.audit.registrar_sistema
+
+    async def espia(remote_id, button_id, **kwargs):
+        enviados.append((remote_id, button_id))
+        if fallar["indice"] == len(enviados) - 1:
+            raise ops.OperationError("IR no disponible")
+        return f"{remote_id} · {button_id}"
+
+    async def dormir(segundos):
+        pausas.append(segundos)
+        await original_sleep(0)
+
+    async def en_el_loop(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    def registrar_falso(*args, **kwargs):
+        pass
+
+    def ficha():
+        return next(x for x in store.read_all()["lights"] if x["id"] == luz["id"])
+
+    async def activar(modo):
+        store.set_modo_encendido(luz["id"], modo)
+        store.set_mando_state(luz["id"], False)
+        enviados.clear()
+        pausas.clear()
+        await ops.set_light(luz["id"], True)
+
+    async def escenario():
+        for modo, teclas, espera, ciclo in (
+            ("continuo", [on["id"], continuo["id"]], [1.5], 0),
+            ("1h", [on["id"]], [], 60),
+            ("2h", [on["id"], timing["id"]], [1.5], 120),
+            ("3h", [on["id"], timing["id"], timing["id"]], [1.5, 1.5], 180),
+        ):
+            await activar(modo)
+            c.revisar(f"{modo}: teclas y orden", enviados,
+                      [(mando["id"], tecla) for tecla in teclas])
+            c.revisar(f"{modo}: pausas", pausas, espera)
+            c.revisar(f"{modo}: ciclo guardado", ficha().get("ciclo_min"), ciclo)
+
+        store.time.time = lambda: 100.0
+        await activar("2h")
+        ops.expirar_accesorios(7299.999)
+        c.revisar("2 h: justo antes sigue encendido", store.get_sensor_state(luz["id"]), True)
+        ops.expirar_accesorios(7300.0)
+        c.revisar("2 h: en el plazo exacto se apaga", store.get_sensor_state(luz["id"]), False)
+
+        store.time.time = lambda: 200.0
+        await activar("continuo")
+        store.update_light(luz["id"], luz["name"], "", "", "", kind=store.LUZ_MANDO,
+                           remote_id=mando["id"], btn_on=on["id"], btn_off=on["id"],
+                           mando_modo=store.UNA_TECLA, btn_continuo=continuo["id"],
+                           btn_timing=timing["id"], modo_encendido="continuo",
+                           auto_apagado_min=1, pausa_secuencia_s=1.5)
+        ops.expirar_accesorios(999999.0)
+        c.revisar("continuo nunca caduca", store.get_sensor_state(luz["id"]), True)
+
+        store.set_mando_state(luz["id"], False)
+        store.set_modo_encendido(luz["id"], "2h")
+        enviados.clear()
+        fallar["indice"] = 0
+        reversiones = []
+
+        async def al_fallar(nuevo, error):
+            reversiones.append(nuevo)
+
+        try:
+            await ops.set_light(luz["id"], True,
+                                on_failed=al_fallar)
+        except ops.OperationError:
+            pass
+        c.revisar("fallo en ON revierte", store.get_sensor_state(luz["id"]), False)
+        c.revisar("fallo en ON no sigue la secuencia", enviados, [(mando["id"], on["id"])])
+        c.revisar("fallo en ON llama on_failed", reversiones, [True])
+
+        enviados.clear()
+        fallar["indice"] = 1
+        try:
+            await ops.set_light(luz["id"], True)
+        except ops.OperationError:
+            pass
+        c.revisar("fallo posterior conserva ON", store.get_sensor_state(luz["id"]), True)
+        c.revisar("fallo posterior conserva ciclo conseguido", ficha().get("ciclo_min"), 60)
+
+        fallar["indice"] = None
+        store.set_mando_state(luz["id"], False)
+        enviados.clear()
+        await asyncio.gather(ops.set_light(luz["id"], True), ops.set_light(luz["id"], True))
+        c.revisar("dos encendidos concurrentes mandan una secuencia", enviados,
+                  [(mando["id"], on["id"]), (mando["id"], timing["id"])])
+
+        store.set_mando_state(luz["id"], False)
+        store.set_modo_encendido(luz["id"], "")
+        enviados.clear()
+        await ops.set_light(luz["id"], True)
+        await ops.set_light(luz["id"], False)
+        c.revisar("sin modo y apagar conservan una tecla", enviados,
+                  [(mando["id"], on["id"]), (mando["id"], on["id"])])
+
+        store.time.time = lambda: 500.0
+        store.set_mando_state(luz["id"], False)
+        store.set_modo_encendido(luz["id"], "2h")
+        await ops.set_light(luz["id"], True)
+        store.set_modo_encendido(luz["id"], "3h")
+        c.revisar("cambiar modo encendido no cambia el ciclo", ficha().get("ciclo_min"), 120)
+        ops.expirar_accesorios(7699.999)
+        c.revisar("ciclo en curso conserva su plazo", store.get_sensor_state(luz["id"]), True)
+        ops.expirar_accesorios(7700.0)
+        c.revisar("ciclo en curso vence en su plazo original", store.get_sensor_state(luz["id"]), False)
+
+    ops.send_remote_button = espia
+    ops.asyncio.sleep = dormir
+    ops.asyncio.to_thread = en_el_loop
+    ops.audit.registrar_sistema = registrar_falso
+    try:
+        asyncio.run(escenario())
+    finally:
+        ops.send_remote_button = original_enviar
+        ops.asyncio.sleep = original_sleep
+        ops.asyncio.to_thread = original_thread
+        ops.audit.registrar_sistema = original_registrar
+        store.time.time = original_hora
+        store.delete_light(luz["id"])
+        store.delete_ir_remote(mando["id"])
+    return c
 
 
 def _webos_directo() -> Caso:
@@ -349,6 +616,102 @@ def _estado_compartido() -> Caso:
     return c
 
 
+def _apagado_automatico() -> Caso:
+    """El fin de ciclo solo cambia el estado lógico, una vez y sin transporte."""
+    c = Caso("Apagado automático de accesorios por mando")
+    mando = store.add_light(
+        "Humidificador temporal", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_temporal", btn_on="power", btn_off="power",
+        aspecto="otro", mando_modo=store.UNA_TECLA, auto_apagado_min=1,
+    )
+    sin_auto = store.add_light(
+        "Accesorio sin temporizador", "", "", "", kind=store.LUZ_MANDO,
+        remote_id="ir_sin_auto", btn_on="power", btn_off="power",
+        aspecto="otro", mando_modo=store.UNA_TECLA, auto_apagado_min=0,
+    )
+    rele = store.add_light("Relé sin ciclo", "nodo_prueba", "Nodo Prueba", "33")
+    eventos = []
+    enviados = []
+    original_hora = ops.time.time
+    original_registrar = ops.audit.registrar_sistema
+    original_enviar = ops._enviar_por_mando
+    original_to_thread = ops.asyncio.to_thread
+
+    def hora(valor):
+        ops.time.time = lambda: valor
+
+    def registrar(*args, **kwargs):
+        eventos.append((args, kwargs))
+
+    async def enviar(light, on):
+        enviados.append((light["id"], on))
+
+    async def en_el_loop(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    try:
+        ops.audit.registrar_sistema = registrar
+        ops._enviar_por_mando = enviar
+
+        hora(100.0)
+        ops._apuntar_estado_de_accesorios("ir_temporal", "power")
+        c.revisar("al encender guarda el inicio", mando["id"] in {
+                  l["id"] for l in store.read_all()["lights"]
+                  if l.get("encendido_en") == 100.0}, True)
+        ops.expirar_accesorios(159.999)
+        c.revisar("justo antes del borde sigue encendido",
+                  store.get_sensor_state(mando["id"]), True)
+        ops.expirar_accesorios(160.0)
+        c.revisar("en el borde exacto se apaga", store.get_sensor_state(mando["id"]), False)
+        c.revisar("limpia el inicio al caducar", any(
+            l["id"] == mando["id"] and "encendido_en" in l
+            for l in store.read_all()["lights"]), False)
+        c.revisar("registra un evento de accesorios", len(eventos), 1)
+        c.revisar("el evento describe el fin de ciclo",
+                  eventos[0][0][1:3], ("ACCESORIO_APAGADO_AUTOMATICO", mando["name"]))
+        ops.expirar_accesorios(160.0)
+        c.revisar("repetir la caducidad no duplica evento", len(eventos), 1)
+        c.revisar("caducar no manda IR", enviados, [])
+
+        hora(200.0)
+        ops._apuntar_estado_de_accesorios("ir_sin_auto", "power")
+        ops.expirar_accesorios(10000.0)
+        c.revisar("cero minutos no cambia nada", store.get_sensor_state(sin_auto["id"]), True)
+        store.set_sensor_state(rele["id"], True)
+        ops.expirar_accesorios(10000.0)
+        c.revisar("solo caducan los accesorios por mando", store.get_sensor_state(rele["id"]), True)
+
+        hora(300.0)
+        ops._apuntar_estado_de_accesorios("ir_temporal", "power")
+        hora(320.0)
+        ops._apuntar_estado_de_accesorios("ir_temporal", "power")
+        hora(400.0)
+        ops._apuntar_estado_de_accesorios("ir_temporal", "power")
+        ops.expirar_accesorios(459.999)
+        c.revisar("reencender reinicia el contador", store.get_sensor_state(mando["id"]), True)
+        ops.expirar_accesorios(460.0)
+        c.revisar("el contador reiniciado vence en su nuevo plazo",
+                  store.get_sensor_state(mando["id"]), False)
+
+        hora(500.0)
+        ops._apuntar_estado_de_accesorios("ir_temporal", "power")
+        hora(561.0)
+        ops.asyncio.to_thread = en_el_loop
+        asyncio.run(ops.set_light(mando["id"], None))
+        c.revisar("set_light tras caducar conmuta desde apagado", enviados[-1:], [(mando["id"], True)])
+        c.revisar("la orden posterior deja el accesorio encendido",
+                  store.get_sensor_state(mando["id"]), True)
+    finally:
+        ops.time.time = original_hora
+        ops.audit.registrar_sistema = original_registrar
+        ops._enviar_por_mando = original_enviar
+        ops.asyncio.to_thread = original_to_thread
+        store.delete_light(mando["id"])
+        store.delete_light(sin_auto["id"])
+        store.delete_light(rele["id"])
+    return c
+
+
 def _orden_idempotente() -> Caso:
     """El estado del plano hace idempotentes TODOS los tipos de luz.
 
@@ -376,7 +739,7 @@ def _orden_idempotente() -> Caso:
     async def espia_mando(light, on):
         enviados.append(("mando", light["id"], on))
 
-    async def espia_rele(light, on, ssh):
+    async def espia_rele(light, on, *_):
         enviados.append(("rele", light["id"], on))
 
     original_mando = ops._enviar_por_mando
@@ -467,7 +830,7 @@ def _secuencia_apagar_habitacion() -> Caso:
     async def espia_mando(light, on):
         enviados.append(("mando", light["id"], on))
 
-    async def espia_rele(light, on, ssh):
+    async def espia_rele(light, on, *_):
         enviados.append(("rele", light["id"], on))
 
     async def en_el_loop(func, *args, **kwargs):
@@ -533,7 +896,8 @@ def _sin_doble_contabilidad() -> Caso:
     c.revisar("y por defecto SÍ apunta (pulsar la tecla coordina)",
               firma.parameters["apuntar_estado"].default, True)
 
-    fuente = inspect.getsource(ops._enviar_por_mando)
+    fuente = (inspect.getsource(ops._enviar_por_mando)
+              + inspect.getsource(ops._pulsar_tecla_mando))
     c.cierto("el envío desde el accesorio pide NO apuntar",
              "apuntar_estado=False" in fuente)
     return c
@@ -598,4 +962,31 @@ def _familia_mandos() -> Caso:
     }
     for kind, familia in esperadas.items():
         c.revisar(f"{kind} -> {familia}", store.familia_de(kind), familia)
+    return c
+
+
+def _plantilla_humidificador() -> Caso:
+    """La plantilla del humidificador: sin señal, sin solapes y con la tecla
+    que usa el accesorio."""
+    from noxuscmmd.domains.devices import remote_templates as rt
+
+    c = Caso("Plantilla del humidificador")
+    botones = rt.botones("humidificador")
+    etiquetas = [b["label"] for b in botones]
+    c.cierto("está en el desplegable", "humidificador" in dict(rt.opciones()))
+    c.revisar("seis teclas", len(botones), 6)
+    c.cierto("todos los botones sin señal", all(not b["code"] for b in botones))
+    c.cierto("etiquetas únicas", len(set(etiquetas)) == len(etiquetas))
+    c.cierto("sin placas de grupo", not rt.grupos("humidificador"))
+    c.cierto("existe «Encender / Apagar»", "Encender / Apagar" in etiquetas)
+    c.revisar("icono sugerido", rt.icono_sugerido("humidificador"), "droplets")
+    ancho, alto = rt.cuerpo("humidificador")
+    pos = [(float(b["pos_left"][:-1]) * ancho / 100,
+            float(b["pos_top"][:-1]) * alto / 100) for b in botones]
+    solapes = [
+        (etiquetas[i], etiquetas[j])
+        for i in range(len(pos)) for j in range(i + 1, len(pos))
+        if abs(pos[i][0] - pos[j][0]) < 44 and abs(pos[i][1] - pos[j][1]) < 44
+    ]
+    c.revisar("ninguna tecla se solapa", solapes, [])
     return c

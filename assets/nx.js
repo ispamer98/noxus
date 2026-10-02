@@ -788,3 +788,109 @@
     }, 1000);
   })();
 })();
+
+// ── Cuenta atrás de los paneles (electrodomésticos) ──────────────────────────
+// El servidor manda `data-fin` (epoch ms; 0 = parado) y el restante en segundos
+// como texto; aquí se pinta mm:ss / h:mm:ss cada medio segundo sin viajar al
+// servidor. Ver ui/dashboard/components/panel_control.py (anillo) y electro_panel.py.
+(function () {
+  if (window.__nxCuenta) return; window.__nxCuenta = true;
+  function fmt(s) {
+    s = Math.max(0, Math.round(s));
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+    var dd = function (n) { return (n < 10 ? '0' : '') + n; };
+    return h ? h + ':' + dd(m) + ':' + dd(ss) : m + ':' + dd(ss);
+  }
+  setInterval(function () {
+    var ahora = Date.now();
+    document.querySelectorAll('.nx-cuenta').forEach(function (el) {
+      var fin = +el.getAttribute('data-fin') || 0, txt;
+      if (fin) txt = fmt((fin - ahora) / 1000);
+      else if (/^\d+$/.test(el.textContent.trim())) txt = fmt(+el.textContent.trim());
+      else return;
+      if (el.textContent !== txt) el.textContent = txt;
+    });
+  }, 500);
+})();
+
+// ── Plano: menús de la derecha en una o dos columnas ─────────────────────────
+// La altura de los menús es la del plano (CSS, nx.css «Plano + menús»). Lo único
+// que el CSS no puede saber es si el contenido cabe en esa altura: aquí se mide
+// y, si en UNA columna no cabe y hay sitio, se pone data-cols="2" en el aside
+// (el menú secundario). Los suelos de ancho vienen de CSS; una banda muerta
+// mantiene estable el cambio vertical entre una y dos columnas.
+(function () {
+  if (window.__nxPlanoMenus) return; window.__nxPlanoMenus = true;
+  var pendiente = 0, vistos = new Set();
+  var ro = new ResizeObserver(programar);
+  function num(el, nombre, defecto) {
+    var v = parseFloat(getComputedStyle(el).getPropertyValue(nombre));
+    return isNaN(v) ? defecto : v;
+  }
+  function programar() { if (!pendiente) pendiente = requestAnimationFrame(ajustar); }
+  function ajustar() {
+    pendiente = 0;
+    vistos.forEach(function (el) { if (!el.isConnected) { ro.unobserve(el); vistos.delete(el); } });
+    var lat = document.querySelector('.nx-plano-lateral-der');
+    if (!lat) return;
+    var menu = lat.querySelector('.nx-plano-menu');
+    var vista = lat.closest('.nx-plano-vista');
+    var paneles = Array.prototype.slice.call(lat.querySelectorAll('.nx-plano-panel'));
+    // No observar los paneles: su altura cambia al pasar a dos columnas y
+    // observarlos realimentaría la decisión con el layout que esa misma
+    // decisión acaba de cambiar. El aside/vista y el árbol sí bastan.
+    [lat, vista].forEach(function (el) {
+      if (el && !vistos.has(el)) { vistos.add(el); ro.observe(el); }
+    });
+    var layout = vista.querySelector('.nx-plano-layout');
+    if (!layout) return;
+    var sideMin = num(layout, '--nx-side-min', 460);
+    var colMin = num(layout, '--nx-col-min', 270);
+    var gap = num(layout, '--nx-lat-gap', 12);
+    var sitioUna = vista.clientWidth >= sideMin + colMin + gap;
+    var altoUtil = window.innerHeight - 64 - 152;
+    layout.setAttribute('data-layout', sitioUna ? 'side' : 'stack');
+    layout.setAttribute('data-flujo', altoUtil >= sideMin ? 'alto' : 'scroll');
+    var quiere = lat.getAttribute('data-cols') === '2' ? 2 : 1;
+    // Edición: UNA tarjeta con pestañas, nunca dos columnas.
+    // El ancho del aside (y con él el tamaño del plano) es el mismo que en la
+    // vista normal: se copian las columnas que esa vista usó la última vez.
+    var edicion = lat.getAttribute('data-editando') === 'true';
+    if (edicion) quiere = window.__nxColsNormal === 2 ? 2 : 1;
+    // Con overflow-y:hidden (flujo alto) nadie puede volver a subir: si la
+    // página llegó a desplazarse antes de decidir el flujo, la cabecera quedaba cortada.
+    var scroller = vista.closest('.nx-scroll');
+    if (scroller && layout.getAttribute('data-flujo') === 'alto' && sitioUna && scroller.scrollTop) scroller.scrollTop = 0;
+    if (edicion) {
+      var sitioDosE = vista.clientWidth >= sideMin + 2 * colMin + 2 * gap;
+      if (!(sitioUna && sitioDosE)) quiere = 1;
+    } else if (menu && vista && getComputedStyle(menu).position === 'absolute') {
+      var alto = menu.clientHeight, h1 = gap * Math.max(0, paneles.length - 1);
+      paneles.forEach(function (p) { h1 += p.offsetHeight; });
+      var sitioDos = vista.clientWidth >= sideMin + 2 * colMin + 2 * gap;
+      // Entrar exige que no quepa; salir deja un margen del 18 % para que un
+      // resize no alterne repetidamente en el mismo umbral.
+      if (quiere === 2) quiere = (sitioUna && sitioDos && h1 > alto * 0.82) ? 2 : 1;
+      else quiere = (sitioUna && sitioDos && h1 > alto + 1) ? 2 : 1;
+    }
+    if (!edicion && sitioUna) window.__nxColsNormal = quiere;
+    if (lat.getAttribute('data-cols') !== String(quiere)) lat.setAttribute('data-cols', String(quiere));
+  }
+  new MutationObserver(programar).observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener('resize', programar);
+  programar();
+})();
+
+// ── Edición del plano: flechas del teclado en las pestañas (role=tablist) ───
+(function () {
+  if (window.__nxEdTabs) return; window.__nxEdTabs = true;
+  document.addEventListener('keydown', function (e) {
+    var t = e.target && e.target.closest && e.target.closest('.nx-ed-tab');
+    if (!t || ['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(e.key) < 0) return;
+    var tabs = Array.prototype.slice.call(t.parentNode.querySelectorAll('.nx-ed-tab'));
+    var i = tabs.indexOf(t);
+    var n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+      : (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    e.preventDefault(); tabs[n].focus(); tabs[n].click();
+  });
+})();

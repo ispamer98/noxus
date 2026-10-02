@@ -95,11 +95,11 @@ def _remote_card(remote: dict) -> rx.Component:
 def _edit_remote_dialog(remote: dict) -> rx.Component:
     return form_dialog_content(
         icon="tv",
-        title="Editar mando",
+        title="Ajustes del mando",
         accent=theme.ACCENT,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=remote["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=remote["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=remote["name"], placeholder="TV Salón")),
                 field("Icono", icon_field(
                     name="icon", key=remote["id"].to(str) + ":icon",
@@ -108,7 +108,7 @@ def _edit_remote_dialog(remote: dict) -> rx.Component:
                 # Sin selector de icono para el plano: el mando usa allí el
                 # mismo icono que se ha elegido arriba (ver store.update_ir_remote).
                 *floor_plan_fields(
-                    remote["floor_top"],
+                    False,
                     remote["icon"].to(str),
                     key=remote["id"].to(str),
                     con_icono=False,
@@ -203,28 +203,8 @@ _REMOTE_DRAG_SCRIPT = """
     // truco del <input switch> de iOS 17.4 y no funciona en la práctica, así
     // que no se deja código muerto intentándolo — en iPhone la confirmación
     // de que la tecla ha entrado es la visual (ver _active en la tecla).
-    // ── Cerrar al tocar fuera ────────────────────────────────────────────
-    // Solo las ventanas marcadas con data-nx-dismiss (el mando abierto desde
-    // el plano). Se hace pulsando su propia aspa en vez de con un evento
-    // nuevo: así el cierre pasa por el mismo sitio que el botón de cerrar y
-    // no hay dos caminos que mantener.
-    document.addEventListener('pointerdown', function(e){
-        if (!e.target.closest) return;
-        // Los diálogos y desplegables de Radix se dibujan FUERA de la
-        // ventana (en un portal al final del body): sin esta excepción,
-        // abrir cualquiera de ellos contaría como "tocar fuera" y cerraría
-        // el mando por debajo.
-        if (e.target.closest('[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]')) return;
-        // Tampoco cuenta pulsar el marcador del plano que lo acaba de abrir.
-        if (e.target.closest('.nx-plan-marker')) return;
-        var dentro = e.target.closest('.nx-window');
-        document.querySelectorAll('.nx-window[data-nx-dismiss="1"]').forEach(function(win){
-            if (win !== dentro) {
-                var aspa = win.querySelector('.nx-window-close');
-                if (aspa) aspa.click();
-            }
-        });
-    }, true);
+    // (El cierre al tocar fuera y el anclaje de los bocadillos viven ahora en
+    // pages/dashboard.py:_BOCADILLOS_SCRIPT: aquí solo se cargaban con un mando abierto.)
 
     document.addEventListener('pointerdown', function(e){
         if (!navigator.vibrate || !e.target.closest) return;
@@ -368,13 +348,13 @@ def _remote_button_marker(remote_id, editing, boton: dict, boton_w) -> rx.Compon
             editing,
             rx.fragment(
                 rx.icon(
-                    "pencil", size=10, color="white", cursor="pointer",
+                    "settings", size=10, color="white", cursor="pointer",
                     class_name="nx-remote-btn-delete",
                     on_click=NodesState.open_button_editor(remote_id, boton["id"]).stop_propagation,
                     position="absolute", top="-5px", left="-5px", z_index="6",
                     background=theme.ACCENT, border_radius="50%", padding="3px",
                     border=f"1px solid {theme.BG_WINDOW}",
-                    title="Editar / aprender señal",
+                    title="Ajustes / aprender señal",
                 ),
                 rx.icon(
                     "x", size=10, color="white", cursor="pointer",
@@ -473,6 +453,32 @@ def _remote_button_marker(remote_id, editing, boton: dict, boton_w) -> rx.Compon
     )
 
 
+def _remote_mode_panel(remote: dict) -> rx.Component:
+    """Selector de modo del accesorio que usa este mando, si lo hay."""
+    light_id = remote.get("modo_light_id", "").to(str)
+    modo_actual = remote.get("modo_encendido", "").to(str)
+    opciones = (("continuo", "Continuo"), ("1h", "1 h"),
+                ("2h", "2 h"), ("3h", "3 h"))
+    return rx.box(
+        rx.text("Encendido", class_name="nx-remote-mode-title"),
+        rx.box(
+            *[
+                rx.el.button(
+                    etiqueta,
+                    type="button",
+                    class_name="nx-remote-mode-option",
+                    data_activo=modo_actual == modo,
+                    on_click=NodesState.elegir_modo_encendido(light_id, modo),
+                )
+                for modo, etiqueta in opciones
+            ],
+            class_name="nx-remote-mode-options",
+        ),
+        rx.text("Se aplica al volver a encender", class_name="nx-remote-mode-note"),
+        class_name="nx-remote-mode-panel",
+    )
+
+
 def _remote_body(remote: dict) -> rx.Component:
     """La silueta del mando: cuerpo oscuro tipo plástico/metal (mismo
     lenguaje que el mando de la app Home de Apple), altura fija con hueco de
@@ -500,6 +506,17 @@ def _remote_body(remote: dict) -> rx.Component:
             botones,
             lambda b: _remote_button_marker(
                 remote["id"], editing, b, remote["btn_css_width"].to(str),
+            ),
+        ),
+        # El selector vive dentro del mando y desaparece al recolocar botones:
+        # en edición no debe robar toques ni confundirse con una tecla.
+        rx.cond(
+            editing,
+            rx.fragment(),
+            rx.cond(
+                remote.get("modo_light_id", "").to(str) != "",
+                _remote_mode_panel(remote),
+                rx.fragment(),
             ),
         ),
         class_name=rx.cond(editing, "nx-remote-container nx-remote-editing", "nx-remote-container"),
@@ -541,7 +558,7 @@ def _add_button_dialog(remote: dict) -> rx.Component:
             form=rx.vstack(
                 rx.form.root(
                     rx.vstack(
-                        rx.input(name="remote_id", value=remote["id"], type="hidden"),
+                        rx.el.input(name="remote_id", value=remote["id"], type="hidden"),
                         field("Nombre del botón", styled_input(
                             name="label", placeholder="Encender, Vol +, Canal 1...",
                             disabled=aprendiendo,
@@ -625,7 +642,7 @@ def _button_editor_dialog(remote: dict) -> rx.Component:
     return rx.dialog.root(
         form_dialog_content(
             icon="sliders-horizontal",
-            title="Editar botón",
+            title="Ajustes del botón",
             accent=theme.ACCENT,
             form=rx.vstack(
                 field("Nombre", styled_input(

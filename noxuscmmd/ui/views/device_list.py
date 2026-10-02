@@ -9,19 +9,17 @@ cual, ver ui/dashboard/views/floor_plan.py— y el enganche de la suscripción d
 avisos, que se monta una vez a nivel de página.
 """
 import reflex as rx
-from ...domains.security.state import SecurityState
-from ...domains.cameras.state import CameraState
 from ...domains.notifications.state import PushState
 from ...domains.notifications.push import VAPID_PUBLIC as _VAPID_PUBLIC
-from ...domains.devices import registry
-from ...domains.devices.registry_state import RegistryState
 from ...domains.auth.state import AuthState
 from ...domains.nodes.state import NodesState
 from ...domains.nodes.host_actions_state import HostActionsState
 from ...domains.nodes.kiosco_state import KioscoState
+from ...domains.electro.state import ElectroState
 from ..dashboard.state import DashboardState
 from ..dashboard import theme
 from ..components.status_row import status_row
+from ..dashboard.components.icono_propio import icono
 
 VAPID_PUBLIC = _VAPID_PUBLIC
 
@@ -105,14 +103,21 @@ _PLAN_DRAG_SCRIPT = """
 
 # Lo ejecuta el botón "Listo": se lleva TODAS las posiciones acumuladas y deja
 # el acumulador vacío. Devuelve "{}" si no se movió nada.
+# Borra las posiciones que el ARRASTRE dejó escritas en línea en cada icono.
+# Sin esto, al cambiar de plano React reutiliza ese mismo nodo del DOM para OTRO
+# elemento (los marcadores van en un foreach) y ese otro aparecía donde se soltó
+# el primero: parecía que mover una cámara en un plano movía la de otro.
+_LIMPIAR_ARRASTRE = ("document.querySelectorAll('.nx-plan-marker').forEach(function(m){"
+                     "m.style.left='';m.style.top='';});")
+
 PLAN_COMMIT_SCRIPT = (
     "(function(){var p = window.__nxPlanPending || {};"
-    " window.__nxPlanPending = {}; return JSON.stringify(p);})()"
+    " window.__nxPlanPending = {}; " + _LIMPIAR_ARRASTRE + " return JSON.stringify(p);})()"
 )
 
-# Lo ejecuta el botón "Editar plano" al ENTRAR: descarta cualquier resto de
+# Lo ejecuta el botón de ajustes del plano (engranaje) al ENTRAR: descarta cualquier resto de
 # una sesión anterior que no llegara a guardarse.
-PLAN_RESET_SCRIPT = "window.__nxPlanPending = {};"
+PLAN_RESET_SCRIPT = "window.__nxPlanPending = {}; " + _LIMPIAR_ARRASTRE
 
 
 # Paleta de los marcadores del plano.
@@ -195,7 +200,7 @@ def _quiet(subtle, *activos):
 
 def _marker_animation(alarmed, animation_override):
     """La animación base es el parpadeo de ALARMA (`alarmed`: sensor o puerta
-    abierta): rojo, con halo y a 0.35s por ciclo — el mismo tipo de latido que
+    abierta): rojo, con halo y a 0.8s por ciclo — el mismo tipo de latido que
     el pulso de apertura de una puerta pero mucho más rápido, para que se
     distinga de un simple "hay algo pasando" y no se pueda pasar por alto.
     `animation_override` (hoy solo ese pulso de apertura) tiene prioridad
@@ -205,14 +210,15 @@ def _marker_animation(alarmed, animation_override):
     # dentro de sus keyframes (ver noxuscmmd.py). Con el "pulse" genérico, la
     # animación pisaba el transform del marcador y el icono se descolocaba al
     # cambiar de estado.
-    base = rx.cond(alarmed, "nxAlarmPulse 0.35s ease-out infinite", "none") if alarmed is not None else "none"
+    base = rx.cond(alarmed, "nxAlarmPulse 0.8s ease-out infinite", "none") if alarmed is not None else "none"
     if animation_override is None:
         return base
     return rx.cond(animation_override != "", animation_override, base)
 
 
 def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=None,
-            animation_override=None, subtle=None, forma="50%") -> rx.Component:
+            animation_override=None, subtle=None, forma="50%",
+            extra_attrs: dict | None = None) -> rx.Component:
     """Marcador genérico del plano — el MISMO componente para sensores,
     cámaras, puertas y luces: solo cambian icono, color, título y qué hace al
     pulsarlo. `color` puede ser un Var (rx.cond) para los que tienen estado en
@@ -222,8 +228,11 @@ def _marker(entity_id, icon, color, title, top, left, on_click=None, alarmed=Non
     props = {}
     if on_click is not None:
         props["on_click"] = on_click
+    # Atributos data-* extra (p. ej. el efecto visual del coche, ver
+    # pages/dashboard.py:_EFECTOS_SCRIPT).
+    props.update(extra_attrs or {})
     return rx.box(
-        rx.icon(icon, size=14, color=color),
+        icono(icon, 14, color),
         # rgba() no se puede componer con un Var, así que el relleno/halo se
         # hacen con color-mix/box-shadow sobre currentColor-like: usamos el
         # propio color con transparencia vía CSS color-mix, soportado en todos
@@ -310,18 +319,18 @@ def _door_marker(entity_id, name, icon, is_open, pulsing, top, left, on_click, s
         rx.cond(
             pulsing,
             name + ": ABRIENDO...",
-            rx.cond(is_open, name + ": ABIERTA — pulsa para abrir", name + ": Cerrada — pulsa para abrir"),
+            rx.cond(is_open, name + ": ABIERTA", name + ": Cerrada"),
         ),
         top, left, on_click=on_click, alarmed=is_open,
         subtle=_quiet(subtle, is_open, pulsing),
         # Prevalece sobre la animación "pulse" normal: es la señal de que hay
         # un pulso de apertura en marcha ahora mismo.
-        animation_override=rx.cond(pulsing, "nxDoorPulse 0.9s ease-out infinite", ""),
+        animation_override=rx.cond(pulsing, "nxDoorPulse 1.8s ease-in-out infinite", ""),
     )
 
 
 def _light_marker(entity_id, name, icon, is_on, top, left, on_click, subtle=None,
-                   color=None, color_on=None) -> rx.Component:
+                   color=None, color_on=None, extra_attrs=None) -> rx.Component:
     """Luz: al pulsarla se conmuta. En reposo (apagada) va del color elegido en
     el plano, igual que el resto de familias; encendida se pone ámbar cálido,
     que es el estado que interesa ver de un vistazo.
@@ -332,53 +341,8 @@ def _light_marker(entity_id, name, icon, is_on, top, left, on_click, subtle=None
         entity_id, icon,
         rx.cond(is_on, _active_color(color_on, _AMBER), _resting_color(color)),
         rx.cond(is_on, name + ": ENCENDIDA — pulsa para apagar", name + ": Apagada — pulsa para encender"),
-        top, left, on_click=on_click, subtle=_quiet(subtle, is_on),
+        top, left, on_click=on_click, subtle=_quiet(subtle, is_on), extra_attrs=extra_attrs,
     )
-
-
-def _factory_sensor_markers() -> list[rx.Component]:
-    """Sensores "de fábrica" (puerta_ppal, y cualquier otro con "mostrar en
-    el plano" activado) — se enumeran TODOS en Python (el conjunto de
-    sensores de fábrica es fijo, viene de registry.binary_sensors()) pero su
-    posición/icono/visibilidad se leen de RegistryState.floor_pos, una Var
-    reactiva — así el arrastre y el toggle "mostrar en el plano" se ven al
-    instante, sin reiniciar el servicio. Los tampers no tienen floor_top
-    (se quitaron del plano) así que su rx.cond nunca se muestra."""
-    markers = []
-    for sid, entity in registry.binary_sensors().items():
-        pos = RegistryState.floor_pos[sid]
-        default_icon = "door-open" if entity.kind == "door" else "lock"
-        icon = rx.cond(pos["icon"] != "", pos["icon"], default_icon)
-        is_open = SecurityState.sensor_abierto[sid]
-        marker = _sensor_marker(sid, RegistryState.names[sid], icon, is_open, pos["top"], pos["left"],
-                                subtle=pos["subtle"] != "", color=pos["color"],
-                                color_on=pos["color_on"])
-        markers.append(rx.cond(pos["top"] != "", marker, rx.fragment()))
-    return markers
-
-
-def _factory_camera_markers() -> list[rx.Component]:
-    """Cámaras "de fábrica" — mismo mecanismo que _factory_sensor_markers
-    (posición/icono/visibilidad reactivos vía RegistryState.floor_pos).
-    cam_fija/cam_ptz conservan su comportamiento clásico de clic (abren el
-    visor de la vista clásica); cualquier otra cámara de fábrica futura
-    abriría su ventana flotante del panel nuevo, igual que las dinámicas."""
-    markers = []
-    for cid, entity in registry.cameras().items():
-        pos = RegistryState.floor_pos[cid]
-        default_icon = entity.icon or "cctv"
-        icon = rx.cond(pos["icon"] != "", pos["icon"], default_icon)
-        if cid == "cam_fija":
-            on_click = CameraState.toggle_fija_stream
-        elif cid == "cam_ptz":
-            on_click = CameraState.toggle_ptz_stream
-        else:
-            on_click = DashboardState.open_window(cid)
-        marker = _camera_marker(cid, RegistryState.names[cid], icon, pos["top"], pos["left"], on_click,
-                                subtle=pos["subtle"] != "", color=pos["color"],
-                                color_on=pos["color_on"])
-        markers.append(rx.cond(pos["top"] != "", marker, rx.fragment()))
-    return markers
 
 
 def _dynamic_sensor_marker(s: dict) -> rx.Component:
@@ -401,25 +365,76 @@ def _dynamic_camera_marker(c: dict) -> rx.Component:
     return _camera_marker(
         c["id"].to(str), c["name"].to(str), icon,
         c["floor_top"].to(str), c["floor_left"].to(str),
-        DashboardState.open_window(c["id"]),
+        DashboardState.open_camera(c["id"]),
         subtle=c["floor_subtle"], color=c["floor_color"].to(str),
         color_on=c["floor_color_on"].to(str),
     )
 
 
 def _dynamic_door_marker(d: dict) -> rx.Component:
-    """Puerta del sistema — al pulsarla lanza su pulso de apertura, con la
-    duración configurada en su propia ficha (pestaña Accesos)."""
-    icon = rx.cond(d["floor_icon"], d["floor_icon"].to(str), "door-closed")
+    return _door_marker_de(d, en_kiosco=False)
+
+
+def _kiosco_door_marker(d: dict) -> rx.Component:
+    # Función aparte y no un parámetro: rx.foreach pasa el ÍNDICE como segundo
+    # argumento a cualquier función que acepte dos.
+    return _door_marker_de(d, en_kiosco=True)
+
+
+def _door_marker_de(d: dict, en_kiosco: bool) -> rx.Component:
+    """Puerta del sistema: UN marcador con magnético y cerradura juntos. El
+    color sale del magnético (si tiene uno asociado) y el ámbar, del pulso de
+    la cerradura. En el panel se abre su ventanita (estado de las dos piezas,
+    pulso, mantener abierta, soltar); en el kiosco sigue siendo pulso directo."""
     did = d["id"].to(str)
+    # El ICONO es el MAGNÉTICO: puerta abierta o cerrada de verdad (con un
+    # portón, también cuando se sabe abierto por la orden dada). El ÁMBAR lento
+    # dice que se está MOVIENDO: cerradura liberada o maniobrando en una puerta
+    # normal; en un portón, solo mientras sube o baja. Quieta, el color vuelve a
+    # ser el del magnético (rojo si está abierta). Lo decide
+    # NodesState._puerta_con_estado; aquí solo se suma el pulso en curso.
+    libre = d["ambar"].to(bool) | (
+        ~d["maniobra"].to(bool) & NodesState.pulsing_doors[d["lock_id"].to(str)])
+    icon = d["icono_plano"].to(str)
     return _door_marker(
         did, d["name"].to(str), icon,
-        NodesState.sensor_state[did], NodesState.pulsing_doors[did],
+        d["is_open"].to(bool), libre,
         d["floor_top"].to(str), d["floor_left"].to(str),
-        NodesState.open_door(did),
+        NodesState.open_door(d["lock_id"].to(str)) if en_kiosco else DashboardState.open_window_compact(did),
         subtle=d["floor_subtle"], color=d["floor_color"].to(str),
         color_on=d["floor_color_on"].to(str),
     )
+
+
+def _electro_marker_de(e: dict, en_kiosco: bool) -> rx.Component:
+    """Electrodoméstico (simulado): cuadrado como los equipos, porque abre su
+    panel en vez de conmutar. Ámbar mientras está en marcha; rojo si avisa
+    (nevera con la puerta abierta más de un minuto)."""
+    eid = e["id"].to(str)
+    sitio = e["posiciones"].to(dict)[NodesState.plano_actual].to(dict)
+    aviso = e["aviso_puerta"].to(bool)
+    marcha = e["en_marcha"].to(bool)
+    return rx.cond(
+        sitio,
+        _marker(
+            eid, e["floor_icon"].to(str),
+            rx.cond(aviso, _RED, rx.cond(marcha, _active_color(e["floor_color_on"].to(str), _AMBER),
+                                         _resting_color(e["floor_color"].to(str)))),
+            e["name"].to(str) + ": " + e["texto"].to(str),
+            sitio["top"].to(str), sitio["left"].to(str),
+            on_click=(KioscoState.abrir_overlay("electro", eid) if en_kiosco
+                      else DashboardState.open_window_compact(eid)),
+            alarmed=aviso, subtle=_quiet(e["floor_subtle"], marcha), forma="7px",
+        ),
+    )
+
+
+def _dynamic_electro_marker(e: dict) -> rx.Component:
+    return _electro_marker_de(e, en_kiosco=False)
+
+
+def _kiosco_electro_marker(e: dict) -> rx.Component:
+    return _electro_marker_de(e, en_kiosco=True)
 
 
 def _ir_remote_marker(entity_id, name, icon, top, left, on_click, subtle=None, color=None) -> rx.Component:
@@ -480,18 +495,44 @@ def _dynamic_host_marker(h: dict) -> rx.Component:
     )
 
 
+def _dynamic_node_marker(node: dict) -> rx.Component:
+    """Nodo MQTT colocado en el plano: informativo, sin acción al pulsar."""
+    icon = rx.cond(node["floor_icon"], node["floor_icon"].to(str), "cpu")
+    online = node["online"].to(bool)
+    # Id con prefijo: la Raspberry es nodo Y equipo con el MISMO id, y el
+    # guardado del arrastre va por id (ver NodesState._persistir_posiciones).
+    return _marker(
+        "nodes:" + node["id"].to(str), icon,
+        rx.cond(online, theme.ACCENT, _GREY),
+        rx.cond(online, node["name"].to(str) + ": en línea",
+                node["name"].to(str) + ": sin conexión"),
+        node["floor_top"].to(str), node["floor_left"].to(str),
+        subtle=_quiet(node["floor_subtle"], online),
+    )
+
+
 def _dynamic_light_marker(l: dict) -> rx.Component:
     """Luz del sistema — al pulsarla se enciende/apaga, igual que desde la
     pestaña Luces."""
     icon = rx.cond(l["floor_icon"], l["floor_icon"].to(str), "lightbulb")
     lid = l["id"].to(str)
-    return _light_marker(
-        lid, l["name"].to(str), icon, l["is_on"],
-        l["floor_top"].to(str), l["floor_left"].to(str),
-        NodesState.toggle_light(lid),
-        subtle=l["floor_subtle"], color=l["floor_color"].to(str),
-        color_on=l["floor_color_on"].to(str),
-    )
+
+    def _con(al_pulsar):
+        return _light_marker(
+            lid, l["name"].to(str), icon, l["is_on"],
+            l["floor_top"].to(str), l["floor_left"].to(str),
+            al_pulsar,
+            subtle=l["floor_subtle"], color=l["floor_color"].to(str),
+            color_on=l["floor_color_on"].to(str),
+            extra_attrs={"data_nx_efecto": l["efecto"].to(str),
+                         "data_nx_puntos": l["efecto_json"].to(str)},
+        )
+
+    # Un APARATO con mando (el aire, la tele) o una persiana abre su bocadillo
+    # con todas sus teclas; una luz se conmuta de un toque, como siempre.
+    return rx.cond(l["abre_bocadillo"].to(bool),
+                   _con(DashboardState.open_window_compact(lid)),
+                   _con(NodesState.toggle_light(lid)))
 
 
 def _kiosco_camera_marker(c: dict) -> rx.Component:
@@ -601,11 +642,9 @@ def floor_plan_content():
             pointer_events="none",
             user_select="none",
         ),
-        *_factory_sensor_markers(),
         # Las camaras del plano tambien piden permiso: el marcador abre su
         # imagen en directo, asi que ensenarlo a quien no puede verlas seria
         # dejar la puerta abierta por el otro lado.
-        rx.cond(AuthState.puede_camaras, rx.fragment(*_factory_camera_markers())),
         rx.foreach(NodesState.sensors_on_floor, _dynamic_sensor_marker),
         rx.cond(
             AuthState.puede_camaras,
@@ -614,6 +653,8 @@ def floor_plan_content():
         rx.foreach(NodesState.doors_on_floor, _dynamic_door_marker),
         rx.foreach(NodesState.lights_on_floor, _dynamic_light_marker),
         rx.foreach(NodesState.ir_remotes_on_floor, _dynamic_ir_remote_marker),
+        rx.foreach(NodesState.nodes_on_floor, _dynamic_node_marker),
+        rx.foreach(ElectroState.electrodomesticos, _dynamic_electro_marker),
         # Los equipos solo se le pintan a quien puede accionarlos: enseñar el
         # icono de un ordenador a un invitado, que al pulsarlo solo recibiría
         # un «no puedes», es prometer algo que no va a pasar. Mismo criterio
@@ -664,8 +705,9 @@ def kiosco_floor_plan_content() -> rx.Component:
             rx.foreach(NodesState.kiosco_cameras_on_floor,
                        _kiosco_camera_marker),
         ),
-        rx.foreach(NodesState.kiosco_doors_on_floor, _dynamic_door_marker),
+        rx.foreach(NodesState.kiosco_doors_on_floor, _kiosco_door_marker),
         rx.foreach(NodesState.kiosco_lights_on_floor, _dynamic_light_marker),
+        rx.foreach(ElectroState.kiosco_electros, _kiosco_electro_marker),
         rx.cond(
             AuthState.puede_mandos,
             rx.foreach(NodesState.kiosco_remotes_on_floor,
@@ -676,6 +718,7 @@ def kiosco_floor_plan_content() -> rx.Component:
             rx.foreach(NodesState.kiosco_hosts_on_floor,
                        _kiosco_host_marker),
         ),
+        rx.foreach(NodesState.nodes_on_floor, _dynamic_node_marker),
         class_name="nx-plan-container nx-kiosco-plan-container",
         position="relative", width="100%",
         aspect_ratio=NodesState.plano_aspecto,

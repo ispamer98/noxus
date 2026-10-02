@@ -180,7 +180,7 @@ def categorias_desactivadas(id_dispositivo: str) -> list[str]:
     sitio de la interfaz."""
     from ..notifications import categorias
     ficha = dispositivo(id_dispositivo) or {}
-    return [c for c in ficha.get("categorias_desactivadas", []) if c in categorias.CATEGORIAS]
+    return [c for c in ficha.get("categorias_desactivadas", []) if c in categorias.catalogo()]
 
 
 def dispositivo(id_dispositivo: str) -> dict | None:
@@ -289,6 +289,34 @@ def eliminar(id_dispositivo: str) -> None:
     datos = leer()
     if datos["dispositivos"].pop(id_dispositivo, None) is not None:
         escribir(datos)
+
+
+# Lo que NO se hereda al sustituir: es del aparato físico nuevo, no de quién es.
+_PROPIO_DEL_APARATO = ("creado", "visto", "endpoint", "pide_acceso", "nota_acceso")
+
+
+def sustituir(id_nuevo: str, id_viejo: str) -> dict | None:
+    """El aparato `id_nuevo` pasa a ser el que era `id_viejo`: hereda nombre,
+    rol, caducidad, icono, preferencias, avisos y ajustes de kiosco, y el viejo
+    desaparece. Devuelve la ficha vieja (para borrar su suscripción), o None.
+
+    Es lo que hace falta al reinstalar la app: el navegador estrena identidad y,
+    sin esto, había que pedir acceso, darlo desde otro aparato, volver a subirlo
+    a admin y pelearse con que el nombre «ya existe»."""
+    if id_nuevo == id_viejo:
+        return None
+    datos = leer()
+    nuevo = datos["dispositivos"].get(id_nuevo)
+    viejo = datos["dispositivos"].get(id_viejo)
+    if nuevo is None or viejo is None:
+        return None
+    nuevo.update({k: v for k, v in viejo.items() if k not in _PROPIO_DEL_APARATO})
+    nuevo.pop("pide_acceso", None)
+    nuevo.pop("nota_acceso", None)
+    nuevo["visto"] = time.time()
+    del datos["dispositivos"][id_viejo]
+    escribir(datos)
+    return viejo
 
 
 def todos() -> list[dict]:

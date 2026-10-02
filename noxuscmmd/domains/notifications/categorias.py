@@ -22,3 +22,24 @@ CATEGORIAS = {
     ALARMA: "Alarma (un sensor se abre con la casa armada)",
     DESCONOCIDO: "Dispositivo desconocido pidiendo entrar",
 }
+
+# Además de «Alarma» en general, una por zona de armado: así un aparato puede
+# recibir solo lo del garaje, o todo menos el salón. Un aviso de alarma lleva
+# las dos (ver security/watcher.py) y se calla si CUALQUIERA está desactivada:
+# quitar «Alarma» sigue callándolas todas, como hasta ahora.
+PREFIJO_ZONA = "alarma:"
+
+
+def de_zona(grupo_id: str) -> str:
+    return f"{PREFIJO_ZONA}{grupo_id}"
+
+
+def catalogo() -> dict[str, str]:
+    """Todas las categorías que se pueden elegir por dispositivo, zonas
+    incluidas. Las zonas se leen cada vez: se crean y borran desde la web."""
+    from ..security import groups_store
+    zonas = {
+        de_zona(g["id"]): f"Alarma · {g.get('name') or g['id']}"
+        for g in groups_store.read_all()
+    }
+    return {**CATEGORIAS, **zonas}

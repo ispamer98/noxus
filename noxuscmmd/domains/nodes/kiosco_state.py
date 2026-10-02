@@ -63,10 +63,6 @@ class KioscoState(rx.State):
             nodes._vaciar_kiosco()
             return para_cliente
 
-        # Los marcadores integrados leen su posición desde RegistryState.
-        from ..devices.registry_state import RegistryState
-        registry = await self.get_state(RegistryState)
-        registry.cargar_plano(nodes.plano_actual)
         from . import store as nodes_store
         if (nodes_store.get_room_mural(eid)["activo"]
                 and auth._ve(permisos.CAMARAS)):
@@ -75,7 +71,7 @@ class KioscoState(rx.State):
 
     @rx.event
     def abrir_overlay(self, clase: str, entity_id: str):
-        if clase not in {"mando", "equipo", "camara"}:
+        if clase not in {"mando", "equipo", "camara", "puerta", "electro"}:
             return
         self.overlay_kind = clase
         self.overlay_id = entity_id
@@ -171,9 +167,7 @@ class KioscoState(rx.State):
 
     @rx.event(background=True)
     async def mural_revelar(self):
-        """Abre las cámaras una a una: cada cámara Tuya pide un token a su nube y
-        varias a la vez topan con su límite de peticiones (ver
-        cameras/wall_state.reveal_gradually, que hace lo mismo con el Mural)."""
+        """Abre las cámaras una a una para no negociar todos los streams a la vez."""
         from ...domains.cameras.wall_state import _ESPERA_ESCALONADO, VideoWallState
         async with self:
             if not self.mural_abierto:

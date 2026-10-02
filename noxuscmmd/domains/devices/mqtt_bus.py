@@ -108,8 +108,23 @@ class MQTTBus:
         # sesión al bus y dejaba la pantalla a medio cargar.
         if not topic:
             return
+        # Al arrancar, algunos sensores ya pueden venir del registro de
+        # compatibilidad. En cuanto NodesState los engancha al camino común,
+        # se retira cualquier topic anterior del mismo id para que una edición
+        # no deje una suscripción fantasma.
+        self.unsubscribe_entity(entity_id)
         self._dynamic_topic_to_entity[topic] = entity_id
         self.client.subscribe(topic)
+
+    def unsubscribe_entity(self, entity_id: str) -> None:
+        topics = {
+            topic for mapping in (self._topic_to_entity, self._dynamic_topic_to_entity)
+            for topic, mapped_id in mapping.items() if mapped_id == entity_id
+        }
+        for topic in topics:
+            self._topic_to_entity.pop(topic, None)
+            self._dynamic_topic_to_entity.pop(topic, None)
+            self.client.unsubscribe(topic)
 
     def unsubscribe_dynamic(self, topic: str) -> None:
         if not topic:

@@ -97,8 +97,12 @@ def _registrar_cambios_de_conexion(estados: dict[str, bool], hosts: dict) -> Non
 
         _REGISTRADO[host_id] = online
         host = hosts.get(host_id)
-        nombre = getattr(host, "name", host_id)
-        ip = getattr(getattr(host, "ssh", None), "host", "")
+        if isinstance(host, dict):
+            nombre = host.get("name") or host_id
+            ip = host.get("ip") or ""
+        else:
+            nombre = getattr(host, "name", host_id)
+            ip = getattr(getattr(host, "ssh", None), "host", "")
         audit.registrar_sistema(
             logs.EQUIPOS,
             "EQUIPO_CONECTADO" if online else "EQUIPO_DESCONECTADO",
@@ -113,11 +117,27 @@ async def una_vuelta() -> dict[str, bool]:
     Aparte de run_forever para poder comprobarla sin poner en marcha el bucle.
     """
     host_items = list(registry.hosts().items())
+    ids = {host_id for host_id, _ in host_items}
+    # Los nodos hablan MQTT, pero su disponibilidad se comprueba por IP igual
+    # que la de los equipos. Raspberry y Pi Zero existen en ambas colecciones:
+    # el id común evita pingarlas dos veces y conserva la ficha de equipo.
+    data = await asyncio.to_thread(nodes_store.read_all)
+    node_items = [
+        (node["id"], node)
+        for node in data.get("nodes", [])
+        if node["id"] not in ids
+    ]
+    ping_items = host_items + node_items
     resultados = await NetUtils.ping_all(
-        [(h.ssh.host, h.ping_retries) for _, h in host_items]
+        [
+            ((item.get("ip") or ""), 1) if isinstance(item, dict)
+            else (item.ssh.host, item.ping_retries)
+            for _, item in ping_items
+        ]
     )
-    estados = {hid: online for (hid, _), online in zip(host_items, resultados)}
-    _registrar_cambios_de_conexion(estados, dict(host_items))
+    estados = {entity_id: online
+               for (entity_id, _), online in zip(ping_items, resultados)}
+    _registrar_cambios_de_conexion(estados, dict(ping_items))
     await asyncio.to_thread(nodes_store.set_host_online_bulk, estados)
     return estados
 

@@ -6,6 +6,7 @@ Dos bloques y en este orden: primero las frases, que es lo que se viene a hacer
 aquí, y debajo la clave, que se saca una vez y no se vuelve a tocar.
 """
 import reflex as rx
+from ..components.boton_ajustes import boton_ajustes
 
 from ....domains.devices.voz_state import DIAS_CLAVE, VozState
 from .. import theme
@@ -630,8 +631,8 @@ def _tarjeta_alexa(item: rx.Var) -> rx.Component:
             spacing="1", align="start", min_width="0",
         ),
         rx.spacer(),
-        rx.button(rx.icon("pencil", size=13), size="1", variant="surface",
-                  on_click=VozState.editar_alexa(item["id"]), title="Editar"),
+        boton_ajustes(VozState.editar_alexa(item["id"]),
+                      titulo="Ajustes del elemento de Alexa", tamano=13),
         confirm_delete_dialog(
             rx.button(rx.icon("trash-2", size=13), size="1", variant="surface",
                       color_scheme="red"),

@@ -18,7 +18,7 @@ SUSCRIPTORES_FILE = "suscriptores.json"
 TODOS = "todos"
 
 
-def _categoria_bloqueada(nombre_usuario: str, categoria: str) -> bool:
+def _categoria_bloqueada(nombre_usuario: str, categoria) -> bool:
     """¿Este dispositivo tiene esa categoría de aviso silenciada?
 
     Import diferido: auth/store.py no depende de notifications a nivel de
@@ -28,13 +28,29 @@ def _categoria_bloqueada(nombre_usuario: str, categoria: str) -> bool:
     id_dispositivo, _ = auth_store.por_nombre(nombre_usuario)
     if not id_dispositivo:
         return False
-    return categoria in auth_store.categorias_desactivadas(id_dispositivo)
+    # Un aviso puede llevar varias (alarma + su zona): basta con que el aparato
+    # tenga UNA silenciada para que no le llegue.
+    pedidas = {categoria} if isinstance(categoria, str) else set(categoria)
+    return bool(pedidas & set(auth_store.categorias_desactivadas(id_dispositivo)))
+
+
+def _olvidar(endpoints: list[str]) -> None:
+    from ..auth import store as auth_store
+    from . import suscriptores
+    for endpoint in endpoints:
+        if not endpoint:
+            continue
+        suscriptores.eliminar(endpoint)
+        id_dispositivo, _ = auth_store.por_endpoint(endpoint)
+        if id_dispositivo:
+            auth_store.actualizar(id_dispositivo, endpoint="")
+        print(f"🧹 Push: suscripción caducada eliminada ({endpoint[:40]}…)")
 
 
 def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
                         tag: str = "", silencioso: bool = False,
                         acciones: tuple | list = (), url: str = "",
-                        categoria: str = "") -> None:
+                        categoria: str | tuple = "") -> None:
     """`destino`: "todos", el nombre de un dispositivo, o una lista de nombres.
 
     Acepta las tres formas porque las llamadas automáticas (una alarma que
@@ -95,6 +111,7 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
             # origen: aquí solo se ponen rutas del panel.
             "url": url or "",
         })
+        muertas = []
         for sub in subs:
             nombre = sub.get("nombre_usuario", "")
             if not a_todos and nombre not in elegidos:
@@ -110,5 +127,13 @@ def enviar_notificacion(titulo: str, mensaje: str, destino=TODOS,
                 print(f"✅ Push → {sub.get('nombre_usuario', '?')}")
             except Exception as ex:
                 print(f"❌ Push → {sub.get('nombre_usuario', '?')}: {ex}")
+                # 404/410: el servicio de avisos dice que esa suscripción ya no
+                # existe (app desinstalada, permiso quitado). Guardarla solo
+                # servía para ocupar su nombre y fallar en cada aviso.
+                estado = getattr(getattr(ex, "response", None), "status_code", None)
+                if estado in (404, 410):
+                    muertas.append(sub.get("endpoint", ""))
+        if muertas:
+            _olvidar(muertas)
     except Exception as e:
         print(f"❌ enviar_notificacion: {e}")

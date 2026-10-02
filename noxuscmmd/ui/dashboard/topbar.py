@@ -348,6 +348,14 @@ def topbar() -> rx.Component:
         # en la barra de direcciones es una vista que no existe.
         _icono_barra("chart-line", "Ver métricas",
                      on_click=DashboardState.set_view("metricas")),
+        # La terminal del despliegue: solo en los aparatos que la tienen
+        # marcada en Dispositivos. La ventana es JavaScript puro (ver
+        # pages/dashboard.py) para que siga viva mientras el servicio reinicia.
+        rx.cond(
+            AuthState.ve_despliegue,
+            _icono_barra("square-terminal", "Estado del despliegue",
+                         on_click=rx.call_script("window.__nxTerminal && window.__nxTerminal.toggle()")),
+        ),
         _panel_dispositivo(),
         class_name="nx-topbar",
     )

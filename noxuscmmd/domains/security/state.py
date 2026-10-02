@@ -19,7 +19,6 @@ import os
 import reflex as rx
 
 from ..auth import permisos
-from ..devices import registry
 from ..devices.mqtt_bus import get_mqtt_bus
 from ..nodes import sensor_events
 from ..nodes import store as nodes_store
@@ -27,7 +26,7 @@ from ..notifications.state import PushState
 from . import shared_state
 from . import abiertos
 from . import arming
-from ...core import bus
+from ...core import bus, pruebas
 from ...core import sesiones
 
 _MQTT_STARTED = False
@@ -72,7 +71,12 @@ class SecurityState(rx.State):
 
     @rx.var
     def lista_abiertos(self) -> str:
-        lista = self.obtener_abiertos()
+        """Sale de `sensor_abierto` (lo que ya sigue el bucle, con las pruebas
+        aplicadas) y no de releer el disco: una var que no lee ninguna var de la
+        sesión no sabe cuándo recalcularse, y se quedaba en «Ninguno» con la
+        puerta abierta."""
+        nombres = abiertos.nombres_actuales()
+        lista = abiertos.filtrar(nombres.keys(), self.sensor_abierto, nombres)
         return ", ".join(lista) if lista else "Ninguno"
 
     # ── Logs ─────────────────────────────────────────────────────────────
@@ -91,7 +95,8 @@ class SecurityState(rx.State):
         global _MQTT_STARTED
         self.refresh_logs()
         self.sistema_armado = await asyncio.to_thread(shared_state.get_sistema_armado)
-        self.sensor_abierto = await asyncio.to_thread(nodes_store.get_all_sensor_states)
+        self.sensor_abierto = pruebas.aplicar_sensores(
+            await asyncio.to_thread(nodes_store.get_all_sensor_states))
         self.status = self._status_text()
 
         yield SecurityState.sync_loop
@@ -152,7 +157,11 @@ class SecurityState(rx.State):
         while True:
             try:
                 real_armado = await asyncio.to_thread(shared_state.get_sistema_armado)
-                real_abierto = await asyncio.to_thread(nodes_store.get_all_sensor_states)
+                # Con los valores forzados desde Ajustes → Pruebas encima, igual
+                # que NodesState.sensor_state: el plano y este resumen tienen
+                # que contar lo mismo.
+                real_abierto = pruebas.aplicar_sensores(
+                    await asyncio.to_thread(nodes_store.get_all_sensor_states))
 
                 async with self:
                     if self.sistema_armado != real_armado:

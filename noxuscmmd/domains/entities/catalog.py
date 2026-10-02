@@ -11,8 +11,8 @@ from collections.abc import Mapping
 
 _FAMILIA = {
     "hosts": "equipos", "nodes": "nodos", "sensors": "sensores",
-    "factory_sensors": "sensores", "doors": "puertas", "lights": "luces",
-    "cameras": "camaras", "factory_cameras": "camaras", "ir_remotes": "mandos",
+    "doors": "puertas", "lights": "luces", "cameras": "camaras",
+    "ir_remotes": "mandos",
     "rooms": "estancias", "planos": "planos", "overview_widgets": "widgets",
     "host_buttons": "botones", "ir_buttons": "botones",
     "metricas_paneles": "metricas", "comandos_voz": "voz",
@@ -32,8 +32,8 @@ _ICONO = {
 
 def _floor(item: Mapping) -> dict[str, object]:
     return {
-        "top": item.get("floor_top") or "",
-        "left": item.get("floor_left") or "",
+        "top": "",
+        "left": "",
         "icon": item.get("floor_icon") or "",
         "subtle": "1" if item.get("floor_subtle") else "",
         "color": item.get("floor_color") or "",
@@ -47,7 +47,7 @@ def common_fields(collection: str, item: Mapping, *, family: str | None = None,
                   parent_id: str = "", can_delete: bool = True) -> dict:
     """Contrato comun de identidad, presentacion y ciclo de vida."""
     familia = family or _FAMILIA.get(collection, collection)
-    origen = source or ("registry" if collection.startswith("factory_") else "managed")
+    origen = source or "managed"
     if physical is None:
         physical = familia not in {
             "planos", "grupos", "automatizaciones", "widgets", "metricas", "voz",
@@ -60,14 +60,14 @@ def common_fields(collection: str, item: Mapping, *, family: str | None = None,
     icon = str(item.get("icon") or item.get("floor_icon")
                or _ICONO.get(familia, "box"))
     capabilities = ["edit", "inventory"]
-    if item.get("floor_top") or item.get("floor_left") or item.get("posiciones"):
+    if item.get("posiciones"):
         capabilities.append("floor")
     if collection in {
         "hosts", "nodes", "sensors", "doors", "lights", "cameras",
-        "factory_sensors", "factory_cameras", "ir_remotes",
+        "ir_remotes",
     }:
         capabilities.append("control")
-    if collection in {"sensors", "factory_sensors", "doors", "lights", "hosts"}:
+    if collection in {"sensors", "doors", "lights", "hosts"}:
         capabilities.append("automation")
     return {
         "entity_id": str(item.get("id") or ""),

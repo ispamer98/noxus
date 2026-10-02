@@ -165,19 +165,18 @@ def construir() -> dict[str, list[dict]]:
         })
         tablas["nodos"].append(fila)
 
-    # ── Sensores (los de alta a mano y los de fábrica) ───────────────────
-    for collection in ("sensors", "factory_sensors"):
-        for s in datos.get(collection, []):
-            campos = manual.get(s["id"], {})
-            fila = _fila_base(s["id"], s.get("name", ""), campos, collection, s,
-                              "sensores")
-            fila.update({
-                "tipo": _texto(s.get("kind")),
-                "nodo": _texto(s.get("node_name") or s.get("node_id")),
-                "pin": _texto(s.get("pin")),
-                "vigilado": "no" if s.get("isolated") else "sí",
-            })
-            tablas["sensores"].append(fila)
+    # ── Sensores ──────────────────────────────────────────────────────────
+    for s in datos.get("sensors", []):
+        campos = manual.get(s["id"], {})
+        fila = _fila_base(s["id"], s.get("name", ""), campos, "sensors", s,
+                          "sensores")
+        fila.update({
+            "tipo": _texto(s.get("kind")),
+            "nodo": _texto(s.get("node_name") or s.get("node_id")),
+            "pin": _texto(s.get("pin")),
+            "vigilado": "no" if s.get("isolated") else "sí",
+        })
+        tablas["sensores"].append(fila)
 
     # ── Cerraderos ───────────────────────────────────────────────────────
     for d in datos.get("doors", []):
@@ -211,17 +210,15 @@ def construir() -> dict[str, list[dict]]:
             tablas["accesorios"].append(accesorio)
 
     # ── Cámaras ──────────────────────────────────────────────────────────
-    for collection in ("cameras", "factory_cameras"):
-        for c in datos.get(collection, []):
-            campos = manual.get(c["id"], {})
-            fila = _fila_base(c["id"], c.get("name", ""), campos, collection, c,
-                              "camaras")
-            origen = (c.get("stream_src") or "").strip()
-            fila.update({
-                "origen": _texto(origen or ("Tuya" if c.get("tuya_device_id") else "")),
-                "ptz": "sí" if c.get("has_ptz") else "no",
-            })
-            tablas["camaras"].append(fila)
+    for c in datos.get("cameras", []):
+        campos = manual.get(c["id"], {})
+        fila = _fila_base(c["id"], c.get("name", ""), campos, "cameras", c,
+                          "camaras")
+        origen = (c.get("url") or c.get("stream_src") or "").strip()
+        fila.update({
+            "origen": _texto(origen),
+        })
+        tablas["camaras"].append(fila)
 
     # ── Mandos ───────────────────────────────────────────────────────────
     for m in datos.get("ir_remotes", []):
@@ -347,8 +344,8 @@ def ids_vivos() -> set[str]:
     """Los ids que existen ahora mismo, para poder limpiar los huérfanos."""
     datos = nodes_store.read_all()
     vivos = set()
-    for clave in ("hosts", "nodes", "sensors", "factory_sensors", "doors",
-                  "lights", "cameras", "factory_cameras", "ir_remotes",
+    for clave in ("hosts", "nodes", "sensors", "doors",
+                  "lights", "cameras", "ir_remotes",
                   "host_buttons", "overview_widgets", "metricas_paneles",
                   "planos", "comandos_voz"):
         for item in datos.get(clave, []) or []:

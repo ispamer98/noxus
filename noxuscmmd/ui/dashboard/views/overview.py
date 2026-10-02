@@ -15,6 +15,7 @@ El bloque "EQUIPOS DE LA CASA" es fijo (no es un widget) porque no es un dato
 suelto sino la rejilla de todos los equipos con su estado de ping en vivo.
 """
 import reflex as rx
+from ..components.boton_ajustes import boton_ajustes
 
 from ....domains.auth.state import AuthState
 from ..components.modos import fila_modos
@@ -27,7 +28,6 @@ from ....domains.nodes.state import NodesState
 from ....domains.nodes.store import ACTION_FAMILIES
 from ....domains.nodes.host_actions_state import HostActionsState
 from ....domains.automations.state import AutomationsState
-from ....domains.devices import registry
 from .. import theme
 
 from ..components.enviar_alerta import dialogo_enviar_alerta
@@ -311,8 +311,8 @@ def _stat_host_temp(w) -> rx.Component:
 
 
 def _stat_cameras(w) -> rx.Component:
-    total = len(registry.visible_cameras()) + NodesState.cameras.length()
-    return _stat_tile("Cámaras", total, "video", color=theme.PURPLE, controls=_widget_controls(w))
+    return _stat_tile("Cámaras", NodesState.cameras.length(), "video",
+                      color=theme.PURPLE, controls=_widget_controls(w))
 
 
 def _stat_equipment(w) -> rx.Component:
@@ -321,14 +321,12 @@ def _stat_equipment(w) -> rx.Component:
 
 
 def _stat_nodes(w) -> rx.Component:
-    hidden = registry.hidden_ids()
-    total = len({k for k in registry.gpio_hosts() if k not in hidden}) + NodesState.nodes.length()
-    return _stat_tile("Nodos", total, "cpu", color=theme.ACCENT, controls=_widget_controls(w))
+    return _stat_tile("Nodos", NodesState.nodes.length(), "cpu", color=theme.ACCENT, controls=_widget_controls(w))
 
 
 def _stat_sensors(w) -> rx.Component:
-    total = len(registry.visible_binary_sensors()) + NodesState.sensors.length()
-    return _stat_tile("Sensores", total, "radar", color=theme.ACCENT, controls=_widget_controls(w))
+    return _stat_tile("Sensores", NodesState.sensors.length(), "radar",
+                      color=theme.ACCENT, controls=_widget_controls(w))
 
 
 def _stat_lights(w) -> rx.Component:
@@ -753,11 +751,9 @@ def _cabecera_accesos() -> rx.Component:
                 ),
                 spacing="2",
             ),
-            rx.el.button(
-                rx.icon("pencil", size=14), rx.el.span("Personalizar"),
-                on_click=DashboardState.toggle_editing_overview,
-                class_name="nx-ghost-btn",
-                type="button",
+            boton_ajustes(
+                DashboardState.toggle_editing_overview,
+                titulo="Ajustes del resumen",
             ),
         ),
         class_name="nx-section-head",

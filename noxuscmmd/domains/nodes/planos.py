@@ -18,7 +18,7 @@ ancho de la pantalla.
 `room.png` es el plano que ya existía y vive en `assets/` desde antes de todo
 esto. En vez de moverlo (y arriesgarse a dejar el plano de la casa en blanco si
 la copia falla), `ruta()` lo busca ahí cuando no está en `planos/`. Es un caso
-especial de una línea, y el día que se sustituya por otra imagen desaparece solo.
+especial de una línea, y el día que se reemplace por otra imagen desaparece solo.
 """
 import os
 import re

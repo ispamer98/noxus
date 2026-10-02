@@ -88,7 +88,7 @@ def actions_menu(
     remove_style: str = "destructive",  # "destructive" | "reversible"
     remove_confirm_title: str = "¿Eliminar este elemento?",
     remove_confirm_description: str = "Esta acción no se puede deshacer.",
-    edit_label: str = "Editar",
+    edit_label: str = "Ajustes",
     on_isolate=None,
     isolate_label: str = "",
     isolate_icon: str = "eye-off",
@@ -100,12 +100,12 @@ def actions_menu(
     if edit_content is not None:
         rows = [
             rx.dialog.root(
-                rx.dialog.trigger(_menu_row("pencil", edit_label)),
+                rx.dialog.trigger(_menu_row("settings", edit_label)),
                 edit_content,
             ),
         ]
     elif on_edit is not None:
-        rows = [_menu_row("pencil", edit_label, on_click=on_edit)]
+        rows = [_menu_row("settings", edit_label, on_click=on_edit)]
     else:
         rows = []
 

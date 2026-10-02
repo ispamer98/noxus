@@ -18,7 +18,6 @@ from . import store, sensor_events, rdp, referencias, operations, planos
 from ..auth import permisos
 from ..infra.deshacer import DeshacerState
 from ..devices import mqtt_bus, registry, ir_bus
-from ..devices.registry_state import RegistryState
 from ..security import audit, groups_store, logs
 from ..infra.state import InfraState
 from ...core import bus, pruebas
@@ -33,11 +32,41 @@ _STARTED = False
 _cancel_pulse = operations.cancel_door_pulse
 
 
+# Icono que se ve de una puerta en el plano según esté abierta o cerrada. Con
+# un icono propio que no tenga pareja se respeta y el estado lo dice el color:
+# si no, todas las puertas se verían iguales.
+_ICONOS_PUERTA = {
+    "": ("door-closed", "door-open"),
+    "door-closed": ("door-closed", "door-open"),
+    "door-open": ("door-closed", "door-open"),
+    # El portón: el de cerrado es el de Lucide; el de levantado se dibuja en
+    # ui/views/device_list.py (no existe en Lucide).
+    "warehouse": ("warehouse", "warehouse-open"),
+    "warehouse-open": ("warehouse", "warehouse-open"),
+}
+
+
+def _maniobra_de_formulario(form_data: dict) -> dict:
+    """Cómo trabaja la cerradura y sus tiempos, tal como llegan del formulario
+    de Accesos. store los sanea (modo desconocido o tiempos raros)."""
+    return {"modo": form_data.get("modo") or store.MODO_PULSO,
+            **{k: form_data.get(k) or 0 for k in ("apertura_s", "espera_s", "cierre_s")}}
+
+
+def _icono_puerta(propio: str, abierta: bool) -> str:
+    pareja = _ICONOS_PUERTA.get(propio)
+    return pareja[int(abierta)] if pareja else propio
+
+
+def _etiqueta_modo_encendido(modo: str) -> str:
+    return {"continuo": "Continuo", "1h": "1 h", "2h": "2 h", "3h": "3 h"}.get(modo, "")
+
+
 # Icono por defecto de cada familia al ponerla en el plano — el usuario puede
 # cambiarlo después desde el propio plano (modo edición) o desde la ficha del
 # elemento. Los sensores afinan según su tipo (ver _sensor_default_icon).
 _FLOOR_DEFAULT_ICONS = {
-    "cameras": "cctv", "factory_cameras": "cctv",
+    "cameras": "cctv",
     "doors": "door-closed", "lights": "lightbulb",
 }
 
@@ -48,10 +77,9 @@ _ROOM_FAMILIES = (
     ("doors", "Puertas", "door-open"),
     ("ir_remotes", "Mandos", "gamepad-2"),
     ("hosts", "Equipos", "server"),
+    ("electrodomesticos", "Cocina", "cooking-pot"),
     ("cameras", "Cámaras", "video"),
-    ("factory_cameras", "Cámaras integradas", "cctv"),
     ("sensors", "Sensores", "radar"),
-    ("factory_sensors", "Sensores integrados", "shield-check"),
 )
 
 
@@ -79,6 +107,14 @@ def _build_room_catalog(data: dict, room_id: str,
     return secciones
 
 
+def _clave_nombre(texto: str) -> str:
+    """«Habitación 3» y «habitacion3» son lo mismo: sin tildes, mayúsculas ni
+    espacios. Para emparejar un plano con la estancia del mismo nombre."""
+    import unicodedata
+    plano = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
+    return "".join(c for c in plano.lower() if c.isalnum())
+
+
 def _build_floor_catalog(data: dict, plano_actual: str = "",
                          nombres_plano: dict[str, str] | None = None) -> list[dict]:
     """Todo lo que puede aparecer en el plano, en una sola lista plana, para
@@ -88,9 +124,16 @@ def _build_floor_catalog(data: dict, plano_actual: str = "",
     catalog: list[dict] = []
 
     nombres = nombres_plano or {}
+    # A qué estancia pertenece cada cosa, para poder agrupar «añadir al plano»
+    # por estancias. La primera estancia que la contenga manda.
+    estancia_de: dict[str, dict] = {}
+    for room in data["rooms"]:
+        for ref in store.referencias_estancia(room["id"], data):
+            estancia_de.setdefault(ref, room)
 
     def add(collection: str, item: dict, kind_label: str, default_icon: str):
         posiciones = item.get("posiciones") or {}
+        room = estancia_de.get(f"{collection}:{item['id']}") or {}
         # En qué OTROS planos está ya colocado. Es lo que permite ofrecer
         # «traerlo de la Planta baja» en vez de tener que colocarlo a ciegas y
         # buscarle el sitio otra vez (ver NodesState.duplicar_desde_plano).
@@ -101,25 +144,42 @@ def _build_floor_catalog(data: dict, plano_actual: str = "",
             "kind_label": kind_label,
             # "on_floor" es «está en el plano que se está mirando», no «está en
             # alguno»: es lo que decide en qué lista sale.
-            "on_floor": plano_actual in posiciones if plano_actual
-                        else bool(item.get("floor_top")),
+            "on_floor": plano_actual in posiciones,
             "origen": otros[0] if otros else "",
             "origen_nombre": nombres.get(otros[0], "") if otros else "",
             "icon": item.get("floor_icon") or default_icon,
+            "estancia_id": room.get("id", ""),
+            "estancia": room.get("name") or "",
             "subtle": bool(item.get("floor_subtle")),
             "color": item.get("floor_color") or "",
             "color_on": item.get("floor_color_on") or "",
         })
 
-    for collection in ("factory_sensors", "sensors"):
-        for s in data[collection]:
-            add(collection, s, "Sensor", _SENSOR_KIND_ICONS.get(s.get("kind"), "circle-dot"))
-    for collection in ("factory_cameras", "cameras"):
-        for c in data[collection]:
-            add(collection, c, "Cámara", _FLOOR_DEFAULT_ICONS[collection])
+    # Un magnético unido a una puerta se coloca Y se ve como esa puerta: no
+    # sale suelto (ver store.asociar_magnetico).
+    asociados = store.magneticos_asociados(data)
+    for s in data["sensors"]:
+        if s["id"] in asociados:
+            continue
+        # Un magnético de puerta suelto se ofrece como PUERTA: al ponerlo se
+        # crea la Puerta del plano con él dentro (ver add_to_floor).
+        add("sensors", s, "Puerta" if s.get("kind") == "door" else "Sensor",
+            _SENSOR_KIND_ICONS.get(s.get("kind"), "circle-dot"))
+    for c in data["cameras"]:
+        add("cameras", c, "Cámara", _FLOOR_DEFAULT_ICONS["cameras"])
+    anclados = store.anclados_a_puertas(data)
+    prestadas = store.cerraduras_prestadas(data)
+    # Las Puertas del plano, y las cerraduras de Accesos que aún no están en
+    # ninguna (al ponerlas se crea su Puerta, ver add_to_floor).
+    for p in data.get("puertas", []):
+        add("puertas", p, "Puerta", p.get("floor_icon") or "door-closed")
     for d in data["doors"]:
+        if d["id"] in prestadas:
+            continue
         add("doors", d, "Puerta", _FLOOR_DEFAULT_ICONS["doors"])
     for l in data["lights"]:
+        if f"lights:{l['id']}" in anclados:
+            continue
         # Luces y accesorios comparten colección pero NO grupo en el plano: la
         # tele del salón entre las bombillas no hay quien la encuentre.
         if store.es_luz(l):
@@ -132,11 +192,18 @@ def _build_floor_catalog(data: dict, plano_actual: str = "",
         # una Raspberry), no uno fijo de familia: igual que los mandos IR, cada
         # equipo ya trae el suyo elegido en su ficha.
         add("hosts", h, "Equipo", h.get("icon") or "server")
+    for n in data["nodes"]:
+        add("nodes", n, "Nodo", "cpu")
     for r in data["ir_remotes"]:
+        if f"ir_remotes:{r['id']}" in anclados:
+            continue
         # El icono por defecto es el propio del mando (TV, ventilador...), no
         # uno fijo por familia como puertas/luces — cada mando IR es de un
         # accesorio distinto.
         add("ir_remotes", r, "Mando IR", r.get("icon") or "tv")
+    for electro in data["electrodomesticos"]:
+        add("electrodomesticos", electro, "Electrodoméstico",
+            store.ICONOS_ELECTRO.get(electro.get("tipo"), "cooking-pot"))
     return catalog
 
 
@@ -224,19 +291,10 @@ def _build_widget_catalog(data: dict) -> list[dict]:
     ])
 
     section("Cámaras", [
-        (f"Acción · Ver {c.name}", f"action_camera:{cid}")
-        for cid, c in registry.visible_cameras().items()
-    ] + [
         (f"Acción · Ver {c['name']}", f"action_camera:{c['id']}") for c in data["cameras"]
     ])
 
-    # Los sensores "de fábrica" y los dados de alta desde la web son dos tipos
-    # de widget distintos (stat_sensor / stat_sensor_dyn) porque su estado en
-    # vivo viene de sitios distintos — ver overview.py.
     section("Sensores", [
-        (f"Contador · Estado de {s.name}", f"stat_sensor:{sid}")
-        for sid, s in registry.visible_binary_sensors().items()
-    ] + [
         (f"Contador · Estado de {s['name']}", f"stat_sensor_dyn:{s['id']}") for s in data["sensors"]
     ])
 
@@ -491,7 +549,7 @@ def _lado_de_tecla(botones: list[dict], ancho: int, alto: int) -> float:
     return max(_TECLA_MIN, min(_TECLA_MAX, separacion * _PROPORCION_TECLA))
 
 
-def _remote_para_ui(remote: dict) -> dict:
+def _remote_para_ui(remote: dict, lights: list[dict] | None = None) -> dict:
     """Añade al mando las medidas CSS que la vista necesita pero que no se
     guardan en su ficha.
 
@@ -504,7 +562,17 @@ def _remote_para_ui(remote: dict) -> dict:
     alto = int(remote.get("body_h") or 850)
     botones = remote.get("buttons", [])
 
-    origen_x, origen_y, vista_w, vista_h = _recorte(remote, ancho, alto)
+    accesorio = next((l for l in (lights or [])
+                      if l.get("kind") == store.LUZ_MANDO
+                      and l.get("remote_id") == remote.get("id")
+                      and (l.get("btn_continuo") or l.get("btn_timing"))), None)
+    # El panel de modos ocupa el hueco inferior del cuerpo del humidificador.
+    # En estos mandos no se puede recortar la carcasa a la última tecla, o el
+    # selector acabaría sobre la segunda fila.
+    if accesorio:
+        origen_x, origen_y, vista_w, vista_h = 0.0, 0.0, float(ancho), float(alto)
+    else:
+        origen_x, origen_y, vista_w, vista_h = _recorte(remote, ancho, alto)
     lado = _lado_de_tecla(botones, ancho, alto)
 
     # Las teclas se recolocan al espacio recortado. Es solo para pintar: en el
@@ -525,7 +593,7 @@ def _remote_para_ui(remote: dict) -> dict:
     ]
 
     limite_vh = _ALTO_MAXIMO_VH * vista_w / vista_h
-    return {
+    salida = {
         **remote,
         "buttons_render": botones_vista,
         "group_plates": placas,
@@ -536,6 +604,12 @@ def _remote_para_ui(remote: dict) -> dict:
         "btn_css_width": f"{lado / vista_w * 100:.2f}%",
         "window_css_width": f"calc(min({vista_w:.0f}px, {limite_vh:.2f}vh) + 56px)",
     }
+    if accesorio:
+        salida.update({
+            "modo_light_id": accesorio["id"],
+            "modo_encendido": accesorio.get("modo_encendido", ""),
+        })
+    return salida
 
 
 # ── Elemento de la alarma -> cámara que lo mira ──────────────────────────────
@@ -556,8 +630,6 @@ def _camaras_vigilancia(data: dict) -> list[dict]:
     return [
         {"id": SIN_CAMARA, "nombre": "Sin cámara"},
         *({"id": c["id"], "nombre": _nombre_camara(c)}
-          for c in data["factory_cameras"]),
-        *({"id": c["id"], "nombre": _nombre_camara(c)}
           for c in data["cameras"] if c.get("kind") == "go2rtc"),
     ]
 
@@ -566,24 +638,18 @@ def _elementos_vigilados(data: dict) -> list[dict]:
     """Cada elemento que puede disparar la alarma, con la cámara que tiene
     puesta. Van los de fábrica y los dados de alta desde la web, porque los que
     disparan están repartidos entre las dos colecciones."""
-    nombres = {c["id"]: _nombre_camara(c)
-               for c in data["factory_cameras"] + data["cameras"]}
+    nombres = {c["id"]: _nombre_camara(c) for c in data["cameras"]}
     salida = []
-    for coleccion in ("factory_sensors", "sensors"):
-        for s in data[coleccion]:
-            camara = s.get("camara", "") or ""
-            existe = camara in nombres
-            salida.append({
-                "id": s["id"],
-                "nombre": (s.get("name") or s["id"]).strip(),
-                # Si apunta a una cámara borrada, el desplegable vuelve a "Sin
-                # cámara" y el aviso lo cuenta. Dejar seleccionado un id que ya
-                # no está en la lista deja el desplegable en blanco y parece que
-                # no hay nada puesto, que es peor que decirlo.
-                "camara": camara if existe else SIN_CAMARA,
-                "aviso": ("la cámara que tenía puesta ya no existe"
-                          if camara and not existe else ""),
-            })
+    for s in data["sensors"]:
+        camara = s.get("camara", "") or ""
+        existe = camara in nombres
+        salida.append({
+            "id": s["id"],
+            "nombre": (s.get("name") or s["id"]).strip(),
+            "camara": camara if existe else SIN_CAMARA,
+            "aviso": ("la cámara que tenía puesta ya no existe"
+                      if camara and not existe else ""),
+        })
     return salida
 
 
@@ -600,16 +666,33 @@ class NodesState(rx.State):
     # personas pueden estar mirando plantas distintas a la vez.
     planos: list[dict] = []
     plano_actual: str = ""
+    # Grupos de «añadir al plano» que el usuario ha abierto o cerrado a mano en
+    # esta sesión (ver floor_available_por_estancia). Se guarda el CAMBIO
+    # respecto a lo de partida, no el estado, para que la estancia del plano
+    # que se mira salga abierta sola al cambiar de plano.
+    estancias_alternadas: list[str] = []
+    # «Luces y aparatos» en modo edición (quitar, añadir, cambiar icono).
+    editando_baldosas: bool = False
+    # Lista de equipos/nodos de la estancia del plano en modo edición.
+    editando_equipos_vista: bool = False
+    # Pestaña abierta en la tarjeta única del modo edición del plano:
+    # «plano» (En el plano), «anadir» (Añadir al plano) o «planos» (Planos).
+    pestana_edicion_plano: str = "plano"
     _nombres_plano: dict[str, str] = {}
     _elementos_por_plano: dict[str, int] = {}
     doors: list[dict] = []
+    # Puertas DEL PLANO (store «puertas»): juntan magnético, cerradura y anclados.
+    puertas: list[dict] = []
     lights: list[dict] = []
     cameras: list[dict] = []
-    factory_sensors: list[dict] = []
-    factory_cameras: list[dict] = []
     hosts: list[dict] = []
     rooms: list[dict] = []
     widgets: list[dict] = []
+
+    @rx.var
+    def window_cameras(self) -> list[dict]:
+        """Todas las cámaras usan el mismo visor."""
+        return self.cameras
 
     @rx.var
     def actions_by_family(self) -> dict[str, list[dict]]:
@@ -649,6 +732,12 @@ class NodesState(rx.State):
 
     sensor_state: dict[str, bool] = {}
     host_online: dict[str, bool] = {}
+    accessory_form_kind: str = store.LUZ_MANDO
+
+    @rx.event
+    def set_accessory_form_kind(self, value: str):
+        """Setter explícito para mostrar solo los campos de accesorios IR."""
+        self.accessory_form_kind = value
 
     # "<remote_id>:<label>" del botón que se está aprendiendo ahora mismo, o
     # "" si no hay ningún aprendizaje en curso — solo puede haber uno a la vez
@@ -693,6 +782,15 @@ class NodesState(rx.State):
     # _DOOR_PULSE_TASKS, que es lo que de verdad controla/cancela el pulso: eso
     # es de proceso, y esto es por sesión, solo para pintar.
     pulsing_doors: dict[str, bool] = {}
+    # Puertas en plena maniobra: {door_id: "abriendo" | "cerrando"} durante su
+    # transito_s. Lo pone y lo quita la propia orden (open_door/set_door_hold).
+    en_transito: dict[str, str] = {}
+    # Contador privado para que una maniobra anterior no borre visualmente otra
+    # más reciente de la misma cerradura al terminar su espera.
+    _maniobra_version: dict[str, int] = {}
+    # Cómo está cada persiana (store «persianas_estado»): subiendo, bajando,
+    # subida, bajada o parada. Compartido: lo ve cualquier aparato.
+    persianas_estado: dict[str, str] = {}
 
     # ── Carga inicial ────────────────────────────────────────────────────
     @rx.event
@@ -737,23 +835,28 @@ class NodesState(rx.State):
         self.nodes = data["nodes"]
         self.sensors = data["sensors"]
         self.doors = data["doors"]
+        self.puertas = data["puertas"]
         self.lights = data["lights"]
         self.cameras = data["cameras"]
-        self.factory_sensors = data["factory_sensors"]
-        self.factory_cameras = data["factory_cameras"]
         self.hosts = [_host_para_ui(h) for h in data["hosts"]]
         self.rooms = data["rooms"]
-        self.ir_remotes = [_remote_para_ui(r) for r in data["ir_remotes"]]
+        self.ir_remotes = [_remote_para_ui(r, data["lights"]) for r in data["ir_remotes"]]
         self.widgets = sorted(data["overview_widgets"], key=lambda w: w.get("order", 0))
         self.sensor_state = pruebas.aplicar_sensores(data["sensor_states"])
+        self.persianas_estado = dict(data.get("persianas_estado") or {})
         self.host_online = pruebas.aplicar_equipos(data["host_online"])
+        self.planos = sorted(data["planos"], key=lambda p: p.get("orden", 0))
+        self._nombres_plano = {p["id"]: p["nombre"] for p in self.planos}
+        # Al entrar se mira el principal. Y si el que se estaba mirando ya no
+        # existe, se vuelve al principal antes de construir el catálogo: éste
+        # consulta `posiciones[plano_actual]`, nunca el espejo floor_top.
+        if not any(p["id"] == self.plano_actual for p in self.planos):
+            self.plano_actual = (store.plano_principal(data) or {}).get("id", "")
         self.floor_catalog = _build_floor_catalog(data, self.plano_actual,
                                                   self._nombres_plano)
         self.widget_catalog = _build_widget_catalog(data)
         self.camaras_vigilancia = _camaras_vigilancia(data)
         self.elementos_vigilados = _elementos_vigilados(data)
-        self.planos = sorted(data["planos"], key=lambda p: p.get("orden", 0))
-        self._nombres_plano = {p["id"]: p["nombre"] for p in self.planos}
         self._elementos_por_plano = {
             p["id"]: sum(
                 1 for c in store.COLECCIONES_EN_PLANO for x in data[c]
@@ -761,11 +864,6 @@ class NodesState(rx.State):
             )
             for p in self.planos
         }
-        # Al entrar se mira el principal. Y si el que se estaba mirando ya no
-        # existe (lo ha borrado otro dispositivo), se vuelve al principal en vez
-        # de quedarse enseñando un plano fantasma.
-        if not any(p["id"] == self.plano_actual for p in self.planos):
-            self.plano_actual = (store.plano_principal(data) or {}).get("id", "")
 
     # ── Registro de acciones ─────────────────────────────────────────────
     # Todo lo que hace el usuario en esta pestaña queda apuntado con el
@@ -810,6 +908,49 @@ class NodesState(rx.State):
         return grouped
 
     @rx.var
+    def floor_available_por_estancia(self) -> list[dict]:
+        """Lo que queda por poner, por ESTANCIAS y dentro de cada una por tipo.
+
+        Van primero la estancia que se llama como el plano que se está mirando
+        (el plano «garaje» abre la estancia Garaje) y la cierra «Sin estancia».
+        La del plano sale abierta y las demás plegadas, salvo que se hayan
+        tocado a mano (ver alternar_estancia_catalogo)."""
+        plano = next((p["nombre"] for p in self.planos
+                      if p["id"] == self.plano_actual), "")
+        del_plano = _clave_nombre(plano)
+        grupos: dict[str, dict] = {}
+        for entry in self.floor_catalog:
+            if entry["on_floor"]:
+                continue
+            gid = entry.get("estancia_id") or "_sin"
+            g = grupos.setdefault(gid, {
+                "id": gid, "nombre": entry.get("estancia") or "Sin estancia",
+                "tipos": [], "total": 0,
+            })
+            tipo = next((t for t in g["tipos"] if t["kind_label"] == entry["kind_label"]), None)
+            if tipo is None:
+                tipo = {"kind_label": entry["kind_label"], "items": []}
+                g["tipos"].append(tipo)
+            tipo["items"].append(entry)
+            g["total"] += 1
+        salida = []
+        for g in grupos.values():
+            propia = g["id"] != "_sin" and del_plano != "" and _clave_nombre(g["nombre"]) == del_plano
+            g["propia"] = propia
+            g["abierta"] = propia != (g["id"] in self.estancias_alternadas)
+            g["total"] = str(g["total"])
+            salida.append(g)
+        salida.sort(key=lambda g: (not g["propia"], g["id"] == "_sin", g["nombre"].lower()))
+        return salida
+
+    @rx.event
+    def alternar_estancia_catalogo(self, estancia_id: str):
+        if estancia_id in self.estancias_alternadas:
+            self.estancias_alternadas = [e for e in self.estancias_alternadas if e != estancia_id]
+        else:
+            self.estancias_alternadas = [*self.estancias_alternadas, estancia_id]
+
+    @rx.var
     def floor_placed(self) -> list[dict]:
         return [e for e in self.floor_catalog if e["on_floor"]]
 
@@ -826,15 +967,50 @@ class NodesState(rx.State):
         collection, entity_id = ref.split(":", 1)
         entry = next((e for e in self.floor_catalog if e["ref"] == ref), None)
         icon = entry["icon"] if entry else "circle-dot"
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._place_factory_on_floor(entity_id, icon)
-        else:
+        # Una cerradura de Accesos o un magnético de puerta sueltos no van al
+        # plano por su cuenta: se crea la PUERTA con esa pieza dentro y lo que
+        # se coloca es ella.
+        sensor = next((x for x in self.sensors if x["id"] == entity_id), None) \
+            if collection == "sensors" else None
+        ya_colocada = False
+        if collection == "doors" or (sensor and sensor.get("kind") == "door"):
+            nombre = entry["label"] if entry else entity_id
+            base = nombre.removeprefix("Magnético ").strip() or nombre
+            hueco = "cerradura_id" if collection == "doors" else "sensor_id"
+            # Si ya hay una Puerta con ese nombre a la que le falta esta pieza,
+            # la pieza se UNE a ella: crear otra dejaba dos «Puerta salón»
+            # (una con el magnético y otra con la cerradura).
+            puerta = next((g for g in self.puertas
+                           if _clave_nombre(g["name"]) == _clave_nombre(base)
+                           and not g.get(hueco)), None)
+            if puerta is not None:
+                if collection == "doors":
+                    store.set_door_grupo(puerta["id"], cerradura=entity_id)
+                else:
+                    store.asociar_magnetico(puerta["id"], entity_id)
+                ya_colocada = self.plano_actual in (puerta.get("posiciones") or {})
+            else:
+                puerta = store.add_puerta(
+                    base,
+                    cerradura_id=entity_id if collection == "doors" else "",
+                    sensor_id=entity_id if collection == "sensors" else "")
+                # Que la Puerta esté en la(s) misma(s) estancia(s) que su pieza.
+                for room in self.rooms:
+                    if ref in (room.get("entidades") or []):
+                        store.update_room(room["id"], room.get("name", ""),
+                                          [*room["entidades"], f"puertas:{puerta['id']}"])
+            collection, entity_id, icon = "puertas", puerta["id"], "door-closed"
+        if ya_colocada:
+            self._reload()
+            return
+        # El icono solo se pone si el elemento no tiene uno: una Puerta que ya
+        # existía (el portón) conserva el suyo.
+        actual = next((x for x in (store.read_all().get(collection) or [])
+                       if x.get("id") == entity_id), {})
+        if not actual.get("floor_icon"):
             store.set_floor_icon(collection, entity_id, icon)
-        # La posición se escribe SIEMPRE por aquí, también la de los de fábrica.
-        # `_place_factory_on_floor` pasa por apply_override, que solo sabe de
-        # floor_top —el espejo del plano principal—, así que colocar algo
-        # mirando la segunda planta lo habría puesto en la primera.
+        # La posición pertenece al plano que se está editando, nunca al espejo
+        # floor_top/floor_left del principal.
         store.set_floor_position(collection, entity_id, "50%", "50%",
                                  self.plano_actual)
         self._reload()
@@ -856,13 +1032,6 @@ class NodesState(rx.State):
         # Y la posición también antes de quitarla, que es lo único que hace falta
         # para poder volver a ponerlo donde estaba (ver infra/deshacer.py).
         sitio = self._sitio_actual(collection, entity_id)
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._remove_factory_from_floor(entity_id)
-        # Y la posición se quita SIEMPRE por aquí. Sin esto, quitar del plano un
-        # elemento de fábrica no hacía nada: apply_override pone floor_top a
-        # None, pero floor_top es el espejo de `posiciones`, así que a la lectura
-        # siguiente volvía a aparecer donde estaba.
         store.clear_floor_position(collection, entity_id, self.plano_actual)
         self._reload()
         nombre = entry["label"] if entry else ref
@@ -895,11 +1064,7 @@ class NodesState(rx.State):
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._set_factory_floor_color(entity_id, color)
-        else:
-            store.set_floor_color(collection, entity_id, color)
+        store.set_floor_color(collection, entity_id, color)
         self._reload()
 
     @rx.event
@@ -913,11 +1078,7 @@ class NodesState(rx.State):
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._set_factory_floor_color_on(entity_id, color)
-        else:
-            store.set_floor_color_on(collection, entity_id, color)
+        store.set_floor_color_on(collection, entity_id, color)
         self._reload()
 
     @rx.event
@@ -930,11 +1091,7 @@ class NodesState(rx.State):
         if ":" not in ref:
             return
         collection, entity_id = ref.split(":", 1)
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._toggle_factory_floor_subtle(entity_id)
-        else:
-            store.toggle_floor_subtle(collection, entity_id)
+        store.toggle_floor_subtle(collection, entity_id)
         self._reload()
 
     @rx.event
@@ -946,11 +1103,7 @@ class NodesState(rx.State):
         if ":" not in ref or not icon:
             return
         collection, entity_id = ref.split(":", 1)
-        if collection in ("factory_sensors", "factory_cameras"):
-            reg_state = await self.get_state(RegistryState)
-            reg_state._set_factory_floor_icon(entity_id, icon)
-        else:
-            store.set_floor_icon(collection, entity_id, icon)
+        store.set_floor_icon(collection, entity_id, icon)
         self._reload()
 
     # ── Estancias: agrupación de luces para pintar la pestaña Luces por sala ──
@@ -1180,11 +1333,10 @@ class NodesState(rx.State):
         self.kiosco_room_id = ""
         self.nodes = []
         self.sensors = []
-        self.factory_sensors = []
         self.doors = []
+        self.puertas = []
         self.lights = []
         self.cameras = []
-        self.factory_cameras = []
         self.hosts = []
         self.rooms = []
         self.ir_remotes = []
@@ -1203,6 +1355,17 @@ class NodesState(rx.State):
 
     def _sala_kiosco(self) -> dict:
         return next((r for r in self.rooms if r["id"] == self.kiosco_room_id), {})
+
+    def _refs_equipos_estancia(self, sala: dict) -> list[str]:
+        """Selección ordenada; sin personalizar, los miembros de siempre."""
+        refs = sala.get("equipos_vista")
+        if refs is not None:
+            return refs
+        miembros = store.referencias_estancia(
+            sala.get("id", ""), {"rooms": self.rooms, "lights": self.lights})
+        return [f"{coleccion}:{item['id']}"
+                for coleccion, items in (("hosts", self.hosts), ("nodes", self.nodes))
+                for item in items if f"{coleccion}:{item['id']}" in miembros]
 
     def _miembros_kiosco(self, coleccion: str,
                          items: list[dict]) -> list[dict]:
@@ -1259,15 +1422,95 @@ class NodesState(rx.State):
         return [{**item, "is_on": self.sensor_state.get(item["id"], False)}
                 for item in self._miembros_kiosco("lights", self.lights)]
 
+    def _puerta_con_estado(self, d: dict) -> dict:
+        """Una puerta con lo que dicen sus dos piezas: el MAGNÉTICO (si tiene
+        uno asociado) dice si está abierta; la CERRADURA, si está liberada.
+        Sin magnético, «abierta» es lo que diga el relé, como hasta ahora."""
+        mag = d.get("sensor_id") or ""
+        lock_id = d.get("cerradura_id") or ""
+        lock = next((x for x in self.doors if x["id"] == lock_id), {}) if lock_id else {}
+        sin = not lock
+        cerradura = False if sin else self.sensor_state.get(lock_id, False)
+        anclados = []
+        for ref in d.get("anclados", []):
+            col, _, eid = ref.partition(":")
+            if col == "lights":
+                x = next((l for l in self.lights if l["id"] == eid), None)
+                if x and x.get("aspecto") == "persiana":
+                    rele = x.get("kind") == store.PERSIANA_RELE
+                    anclados.append({
+                        "ref": ref, "tipo": "persiana", "id": eid,
+                        "name": x["name"], "estado": self._estado_persiana(eid),
+                        "icon": x.get("floor_icon") or "blinds",
+                        "activo": self.sensor_state.get(eid, False),
+                        "botones": [{"id": a, "label": t, "icon": i} for a, t, i, ok in (
+                            ("subir", "Subir", "chevron-up", True),
+                            ("parar", "Parar", "square", rele or bool(x.get("btn_parar"))),
+                            ("bajar", "Bajar", "chevron-down", True)) if ok]})
+                elif x:
+                    anclados.append({
+                        "ref": ref, "tipo": "luz", "id": eid, "name": x["name"],
+                        "icon": x.get("floor_icon") or store.ICONO_ASPECTO.get(
+                            x.get("aspecto") or "luz", "lightbulb"),
+                        "activo": self.sensor_state.get(eid, False), "botones": [],
+                        "estado": "Encendido" if self.sensor_state.get(eid, False) else "Apagado"})
+            elif col == "ir_remotes":
+                x = next((r for r in self.ir_remotes if r["id"] == eid), None)
+                if x:
+                    anclados.append({
+                        "ref": ref, "tipo": "mando", "id": eid, "name": x["name"],
+                        "icon": x.get("icon") or "tv", "activo": False, "estado": "",
+                        "botones": [{"id": b["id"], "label": b.get("label", ""),
+                                     "icon": b.get("icon") or "circle"}
+                                    for b in (x.get("buttons") or [])][:6]})
+        # ¿Puede recibir órdenes la cerradura? Si cuelga de un equipo (la Pi
+        # Zero) y ese equipo no responde, cualquier orden va a fallar: mejor
+        # decirlo antes de que alguien se pase un rato pulsando.
+        nodo = next((h for h in self.hosts if h["id"] == lock.get("node_id")), None)
+        nodo_caido = bool(nodo) and not sin and not lock.get("simulado") \
+            and not self.host_online.get(nodo["id"], False)
+        is_open = self.sensor_state.get(mag, False) if mag else cerradura
+        transito = self.en_transito.get(lock_id, "")
+        # Un portón (tiempos de maniobra propios) no es un cerradero: tenerlo
+        # mantenido abierto no es una maniobra en curso. El ámbar es SOLO para
+        # cuando se mueve; parado —esperando a que pase el coche o mantenido—
+        # manda el color del magnético.
+        maniobra = any(lock.get(k) for k in ("apertura_s", "espera_s", "cierre_s"))
+        if maniobra:
+            ambar = transito in ("abriendo", "cerrando")
+            abierta_vista = is_open or cerradura or transito in ("abierta", "cerrando")
+        else:
+            ambar = cerradura or transito != ""
+            abierta_vista = is_open
+        return {
+            **d,
+            "is_open": is_open,
+            "ambar": ambar,
+            "maniobra": maniobra,
+            "icono_plano": _icono_puerta(d.get("floor_icon") or "", abierta_vista),
+            "modo": lock.get("modo") or store.MODO_PULSO,
+            "sin_cerradura": sin,
+            "lock_id": lock_id,
+            "cerradura_nombre": lock.get("name", ""),
+            "cerradura_sel": lock_id if lock else "_ninguna",
+            "pulse_seconds": lock.get("pulse_seconds", 2),
+            "nodo_caido": nodo_caido,
+            "nodo_nombre": nodo["name"] if nodo else "",
+            "anclados_ui": anclados,
+            "cerradura_abierta": cerradura,
+            "transito": transito,
+            "magnetico_id": mag,
+            "magnetico_nombre": next((s["name"] for s in self.sensors if s["id"] == mag), ""),
+        }
+
     @rx.var
     def kiosco_doors(self) -> list[dict]:
-        return [{**item, "is_open": self.sensor_state.get(item["id"], False)}
-                for item in self._miembros_kiosco("doors", self.doors)]
+        return [self._puerta_con_estado(item)
+                for item in self._miembros_kiosco("puertas", self.puertas)]
 
     @rx.var
     def kiosco_sensors(self) -> list[dict]:
         items = self._miembros_kiosco("sensors", self.sensors)
-        items += self._miembros_kiosco("factory_sensors", self.factory_sensors)
         return [{**item, "is_open": self.sensor_state.get(item["id"], False)}
                 for item in items]
 
@@ -1280,19 +1523,39 @@ class NodesState(rx.State):
         botones: dict[str, list[dict]] = {}
         for boton in store.read_all().get("host_buttons", []):
             botones.setdefault(boton["host_id"], []).append(boton)
-        # La tablet es un centro de control, no de estado: solo recibe los equipos
-        # sobre los que se puede actuar y nunca si están en línea (`online` fijo
-        # para que los marcadores del plano no lo delaten).
-        return [{**item, "online": True, "botones": botones.get(item["id"], [])}
-                for item in self._miembros_kiosco("hosts", self.hosts)
-                if item.get("mac") or item.get("user")
-                or botones.get(item["id"])]
+        refs = set(self._refs_equipos_estancia(self._sala_kiosco()))
+        online = pruebas.aplicar_equipos(self.host_online)
+        return [{**item, "online": online.get(item["id"], False),
+                 "botones": botones.get(item["id"], [])}
+                for item in self.hosts if f"hosts:{item['id']}" in refs]
+
+    @rx.var
+    def kiosco_equipos(self) -> list[dict]:
+        """Hosts y nodos elegidos para esta tablet, con estado ya resuelto."""
+        sala = self._sala_kiosco()
+        online = pruebas.aplicar_equipos(self.host_online)
+        hosts = {h["id"]: h for h in self.kiosco_hosts}
+        nodes = {n["id"]: n for n in self.nodes}
+        salida = []
+        for ref in self._refs_equipos_estancia(sala):
+            coleccion, _, entity_id = ref.partition(":")
+            item = hosts.get(entity_id) if coleccion == "hosts" else nodes.get(entity_id)
+            if item is None:
+                continue
+            salida.append({
+                **item, "ref": ref,
+                "tipo": "host" if coleccion == "hosts" else "node",
+                "icon": (item.get("floor_icon") or item.get("icon")
+                         or ("server" if coleccion == "hosts" else "cpu")),
+                "online": online.get(entity_id, False),
+                "accionable": bool(coleccion == "hosts" and (
+                    item.get("mac") or item.get("user") or item.get("botones"))),
+            })
+        return salida
 
     @rx.var
     def kiosco_cameras(self) -> list[dict]:
-        return (self._miembros_kiosco("cameras", self.cameras)
-                + self._miembros_kiosco("factory_cameras",
-                                        self.factory_cameras))
+        return self._miembros_kiosco("cameras", self.cameras)
 
     @rx.var
     def kiosco_lights_on_floor(self) -> list[dict]:
@@ -1304,7 +1567,8 @@ class NodesState(rx.State):
 
     @rx.var
     def kiosco_sensors_on_floor(self) -> list[dict]:
-        return self._en_plano(self.kiosco_sensors)
+        dentro = {d.get("sensor_id") for d in self.puertas if d.get("sensor_id")}
+        return [s for s in self._en_plano(self.kiosco_sensors) if s["id"] not in dentro]
 
     @rx.var
     def kiosco_remotes_on_floor(self) -> list[dict]:
@@ -1381,6 +1645,7 @@ class NodesState(rx.State):
         entidades_vistas = bus.version(bus.ENTIDADES)
         while True:
             try:
+                await asyncio.to_thread(operations.expirar_accesorios)
                 entidades_ahora = bus.version(bus.ENTIDADES)
                 if entidades_ahora != entidades_vistas:
                     entidades_vistas = entidades_ahora
@@ -1458,9 +1723,6 @@ class NodesState(rx.State):
         await self._log(logs.SENSORES, "NODO_EDITADO", f"{cambio} · {ip} · {kind}")
 
     def _node_name(self, node_id: str) -> str:
-        host = registry.gpio_hosts().get(node_id)
-        if host:
-            return host.name
         node = next((n for n in self.nodes if n["id"] == node_id), None)
         return node["name"] if node else "?"
 
@@ -1481,6 +1743,7 @@ class NodesState(rx.State):
             return
         item = store.add_sensor(name, kind, node_id, self._node_name(node_id), pin,
                                  show_on_floor, floor_icon)
+        registry.sync_sensor(item)
         self._reload()
         self._subscribe_if_running(item["topic"], item["id"])
         await self._log(logs.SENSORES, "SENSOR_CREADO",
@@ -1492,8 +1755,13 @@ class NodesState(rx.State):
         # puede USAR todo y no cambiar nada (ver auth/permisos.py).
         if (no := await permisos.denegar(self, permisos.AJUSTES)):
             return no
-        nombre = self._nombre(self.sensors, sensor_id)
+        old = next((s for s in self.sensors if s["id"] == sensor_id), None)
+        nombre = old["name"] if old else sensor_id
         store.delete_sensor(sensor_id)
+        registry.forget_entity(sensor_id)
+        bus = mqtt_bus.get_running_bus()
+        if bus is not None:
+            bus.unsubscribe_entity(sensor_id)
         self._reload()
         await self._log(logs.SENSORES, "SENSOR_ELIMINADO", nombre)
 
@@ -1504,9 +1772,12 @@ class NodesState(rx.State):
         if (no := await permisos.denegar(self, permisos.ARMAR)):
             return no
         nombre = self._nombre(self.sensors, sensor_id)
-        actualizado = store.toggle_sensor_isolated(sensor_id)
+        if registry.is_isolated(sensor_id):
+            registry.unisolate(sensor_id)
+        else:
+            registry.isolate(sensor_id)
         self._reload()
-        aislado = bool(actualizado and actualizado.get("isolated"))
+        aislado = registry.is_isolated(sensor_id)
         await self._log(
             logs.SENSORES, "SENSOR_AISLADO" if aislado else "SENSOR_REINTEGRADO",
             f"{nombre} — {'la alarma deja de vigilarlo' if aislado else 'vuelve a vigilarse'}",
@@ -1557,6 +1828,8 @@ class NodesState(rx.State):
         old = next((s for s in self.sensors if s["id"] == sensor_id), None)
         item = store.update_sensor(sensor_id, name, kind, node_id, self._node_name(node_id), pin,
                                     show_on_floor, floor_icon)
+        if item:
+            registry.sync_sensor(item)
         # Los grupos guardan copiado el nombre de sus miembros: hay que
         # propagarlo o el sensor sigue saliendo con el viejo en Grupos, y con ese
         # nombre viejo se avisa y se registra su apertura.
@@ -1568,7 +1841,7 @@ class NodesState(rx.State):
         if item and old and old["topic"] != item["topic"]:
             bus = mqtt_bus.get_running_bus()
             if bus:
-                bus.unsubscribe_dynamic(old["topic"])
+                bus.unsubscribe_entity(sensor_id)
                 bus.subscribe_dynamic(item["topic"], sensor_id)
 
     # ── Alta: puertas / cerraduras ──────────────────────────────────────
@@ -1587,7 +1860,7 @@ class NodesState(rx.State):
         if not name or not node_id or not pin:
             return
         item = store.add_door(name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                              show_on_floor, floor_icon)
+                              show_on_floor, floor_icon, **_maniobra_de_formulario(form_data))
         self._reload()
         self._subscribe_if_running(item["topic_state"], item["id"])
         await self._log(logs.PUERTAS, "PUERTA_CREADA",
@@ -1622,7 +1895,8 @@ class NodesState(rx.State):
             return
         old = next((d for d in self.doors if d["id"] == door_id), None)
         item = store.update_door(door_id, name, node_id, self._node_name(node_id), pin, pulse_seconds,
-                                 show_on_floor, floor_icon)
+                                 show_on_floor, floor_icon,
+                                 maniobra=_maniobra_de_formulario(form_data))
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         await self._log(logs.PUERTAS, "PUERTA_EDITADA",
@@ -1664,6 +1938,43 @@ class NodesState(rx.State):
                 self.pulsing_doors.pop(door_id, None)
 
         operations.pulse_door(door_id, on_finish=_acabado)
+        await self._maniobra(door_id, "abriendo", pulso=True)
+
+    async def _maniobra(self, door_id: str, sentido: str, pulso: bool = False):
+        """Pinta la maniobra real del portón o el tránsito simple de una puerta.
+
+        Si hay tiempos específicos, un pulso recorre apertura, espera y cierre;
+        mantener abierta solo recorre apertura. Con los tres a cero conserva el
+        comportamiento histórico de ``transito_s``."""
+        async with self:
+            door = next((d for d in self.doors if d["id"] == door_id), None)
+            if door is None:
+                return
+            apertura = float(door.get("apertura_s") or 0)
+            espera = float(door.get("espera_s") or 0)
+            cierre = float(door.get("cierre_s") or 0)
+            personalizada = any((apertura, espera, cierre))
+            if personalizada and pulso:
+                fases = [("abriendo", apertura), ("abierta", espera),
+                         ("cerrando", cierre)]
+            elif personalizada:
+                fases = [(sentido, apertura if sentido == "abriendo" else cierre)]
+            else:
+                fases = [(sentido, float(door.get("transito_s") or 3))]
+            version = self._maniobra_version.get(door_id, 0) + 1
+            self._maniobra_version[door_id] = version
+
+        for fase, segundos in fases:
+            if segundos <= 0:
+                continue
+            async with self:
+                if self._maniobra_version.get(door_id) != version:
+                    return
+                self.en_transito[door_id] = fase
+            await asyncio.sleep(segundos)
+        async with self:
+            if self._maniobra_version.get(door_id) == version:
+                self.en_transito.pop(door_id, None)
 
     @rx.event(background=True)
     async def cut_door_pulse(self, door_id: str):
@@ -1675,6 +1986,8 @@ class NodesState(rx.State):
         _cancel_pulse(door_id)
         async with self:
             self.pulsing_doors.pop(door_id, None)
+            self.en_transito.pop(door_id, None)
+            self._maniobra_version[door_id] = self._maniobra_version.get(door_id, 0) + 1
             door = next((d for d in self.doors if d["id"] == door_id), None)
             if door is None:
                 return
@@ -1690,22 +2003,31 @@ class NodesState(rx.State):
 
     @rx.event(background=True)
     async def set_door_hold(self, door_id: str, state: bool):
-        """Mantener abierto (state=True) / Mantener cerrado (state=False):
-        fuerza el relé a ese estado y lo mantiene — cancela cualquier pulso
-        en curso para que no lo pise el auto-cierre."""
+        """Mantener abierta (state=True) / Mantener cerrada (state=False).
+        Cómo se consigue depende de la cerradura (operations.hold_door): un
+        relé que se queda activado, o un único pulso en las de dos pulsos.
+        Cancela cualquier pulso en curso para que no lo pise el auto-cierre.
+
+        La maniobra solo se pinta si la puerta se mueve de verdad: mantener
+        cerrada una puerta que ya lo estaba no la pone en ámbar."""
         async with self:
-            if (no := await permisos.denegar(self, permisos.PUERTAS)):
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.PUERTAS, f"doors:{door_id}")):
                 return no
-        _cancel_pulse(door_id)
-        async with self:
+            # El pulso cortado ya no va a acabar solo: sin esto la marca de
+            # «abriendo» se quedaba puesta y la puerta seguía en ámbar después
+            # de soltarla.
+            self.pulsing_doors.pop(door_id, None)
             door = next((d for d in self.doors if d["id"] == door_id), None)
             if door is None:
                 return
         try:
-            await operations.send_door_state(door_id, state)
+            _, se_mueve = await operations.hold_door(door_id, state)
             msg = f"🔒 {door['name']} mantenida {'ABIERTA' if state else 'CERRADA'}"
+            ok = True
         except operations.OperationError as e:
             msg = f"❌ {door['name']}: {e}"
+            ok = se_mueve = False
         async with self:
             infra = await self.get_state(InfraState)
             infra.status = msg
@@ -1714,6 +2036,16 @@ class NodesState(rx.State):
                 "PUERTA_MANTENIDA_ABIERTA" if state else "PUERTA_MANTENIDA_CERRADA",
                 door["name"],
             )
+            if not se_mueve:
+                # Quieta: se borra cualquier maniobra que se estuviera pintando
+                # (un «abrir para pasar» que se acaba de dejar mantenido).
+                self.en_transito.pop(door_id, None)
+                self._maniobra_version[door_id] = self._maniobra_version.get(door_id, 0) + 1
+        if se_mueve:
+            await self._maniobra(door_id, "abriendo" if state else "cerrando")
+        elif not ok:
+            return rx.toast.error(f"{msg} — la orden no ha llegado a la cerradura.",
+                                  duration=8000)
 
     # ── Alta: luces ──────────────────────────────────────────────────────
     @rx.var
@@ -1756,8 +2088,17 @@ class NodesState(rx.State):
         remote_on, _, btn_on = form_data.get("btn_on", "").partition(":")
         remote_off, _, btn_off = form_data.get("btn_off", "").partition(":")
         remote_id = remote_on
+        remote_cont, _, btn_continuo = form_data.get("btn_continuo", "").partition(":")
+        remote_timing, _, btn_timing = form_data.get("btn_timing", "").partition(":")
+        remote_luz, _, btn_luz = form_data.get("btn_luz", "").partition(":")
         aspecto = form_data.get("aspecto", "luz")
         mando_modo = form_data.get("mando_modo", store.DOS_TECLAS)
+        modo_encendido = form_data.get("modo_encendido", "")
+        pausa_secuencia_s = form_data.get("pausa_secuencia_s", 1.0)
+        auto_apagado_min = store._entero(form_data.get("auto_apagado_min"), 0, 0)
+        apagar_luz_al_encender = bool(form_data.get("apagar_luz_al_encender"))
+        luz_repeticiones = form_data.get("luz_repeticiones", 25)
+        luz_intervalo_s = form_data.get("luz_intervalo_s", 0.12)
         if not name:
             return
         if kind == store.LUZ_MANDO:
@@ -1775,13 +2116,25 @@ class NodesState(rx.State):
             if remote_on != remote_off:
                 self.status = ("⚠️ Las dos teclas tienen que ser del mismo mando.")
                 return
+            if (remote_cont and remote_cont != remote_id) or (remote_timing and remote_timing != remote_id):
+                self.status = "⚠️ Las teclas de modo tienen que ser del mismo mando."
+                return
+            if remote_luz and remote_luz != remote_id:
+                self.status = "⚠️ La tecla Luz tiene que ser del mismo mando."
+                return
             node_id, pin = "", ""
         elif not node_id or not pin:
             return
         item = store.add_light(name, node_id, self._node_name(node_id), pin, room_id,
                                show_on_floor, floor_icon, kind=kind,
                                remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
-                               aspecto=aspecto, mando_modo=mando_modo)
+                               aspecto=aspecto, mando_modo=mando_modo,
+                               auto_apagado_min=auto_apagado_min,
+                               modo_encendido=modo_encendido, btn_continuo=btn_continuo,
+                               btn_timing=btn_timing, pausa_secuencia_s=pausa_secuencia_s,
+                               apagar_luz_al_encender=apagar_luz_al_encender,
+                               btn_luz=btn_luz, luz_repeticiones=luz_repeticiones,
+                               luz_intervalo_s=luz_intervalo_s)
         self._reload()
         # Una luz de mando no tiene topic al que suscribirse (ver store._campos_luz).
         if item["topic_state"]:
@@ -1822,8 +2175,17 @@ class NodesState(rx.State):
         remote_on, _, btn_on = form_data.get("btn_on", "").partition(":")
         remote_off, _, btn_off = form_data.get("btn_off", "").partition(":")
         remote_id = remote_on
+        remote_cont, _, btn_continuo = form_data.get("btn_continuo", "").partition(":")
+        remote_timing, _, btn_timing = form_data.get("btn_timing", "").partition(":")
+        remote_luz, _, btn_luz = form_data.get("btn_luz", "").partition(":")
         aspecto = form_data.get("aspecto", "luz")
         mando_modo = form_data.get("mando_modo", store.DOS_TECLAS)
+        modo_encendido = form_data.get("modo_encendido", "")
+        pausa_secuencia_s = form_data.get("pausa_secuencia_s", 1.0)
+        auto_apagado_min = store._entero(form_data.get("auto_apagado_min"), 0, 0)
+        apagar_luz_al_encender = bool(form_data.get("apagar_luz_al_encender"))
+        luz_repeticiones = form_data.get("luz_repeticiones", 25)
+        luz_intervalo_s = form_data.get("luz_intervalo_s", 0.12)
         if not light_id or not name:
             return
         if kind == store.LUZ_MANDO:
@@ -1841,6 +2203,12 @@ class NodesState(rx.State):
             if remote_on != remote_off:
                 self.status = ("⚠️ Las dos teclas tienen que ser del mismo mando.")
                 return
+            if (remote_cont and remote_cont != remote_id) or (remote_timing and remote_timing != remote_id):
+                self.status = "⚠️ Las teclas de modo tienen que ser del mismo mando."
+                return
+            if remote_luz and remote_luz != remote_id:
+                self.status = "⚠️ La tecla Luz tiene que ser del mismo mando."
+                return
             node_id, pin = "", ""
         elif not node_id or not pin:
             return
@@ -1848,7 +2216,13 @@ class NodesState(rx.State):
         item = store.update_light(light_id, name, node_id, self._node_name(node_id), pin, room_id,
                                   show_on_floor, floor_icon, kind=kind,
                                   remote_id=remote_id, btn_on=btn_on, btn_off=btn_off,
-                                  aspecto=aspecto, mando_modo=mando_modo)
+                                  aspecto=aspecto, mando_modo=mando_modo,
+                                  auto_apagado_min=auto_apagado_min,
+                                  modo_encendido=modo_encendido, btn_continuo=btn_continuo,
+                                  btn_timing=btn_timing, pausa_secuencia_s=pausa_secuencia_s,
+                                  apagar_luz_al_encender=apagar_luz_al_encender,
+                                  btn_luz=btn_luz, luz_repeticiones=luz_repeticiones,
+                                  luz_intervalo_s=luz_intervalo_s)
         self._reload()
         cambio = f"{old['name']} -> {name}" if old and old["name"] != name else name
         estancia = self._nombre(self.rooms, room_id) if room_id else "sin estancia"
@@ -1866,6 +2240,27 @@ class NodesState(rx.State):
                     bus.unsubscribe_dynamic(old["topic_state"])
                 if item["topic_state"]:
                     bus.subscribe_dynamic(item["topic_state"], light_id)
+
+    async def _pulso_coche(self, light: dict):
+        """Pulso de ABRIR del coche: su tecla, «abierto» mientras parpadean los
+        intermitentes y, al acabar (~2 s), cerrado/en reposo otra vez."""
+        lid = light["id"]
+        try:
+            await operations.send_remote_button(light.get("remote_id", ""),
+                                                light.get("btn_on", ""), apuntar_estado=False)
+        except operations.OperationError as e:
+            async with self:
+                infra = await self.get_state(InfraState)
+                infra.status = f"❌ {light['name']}: {e}"
+            return
+        await asyncio.to_thread(store.set_sensor_state, lid, True)
+        async with self:
+            self.sensor_state[lid] = True
+            await self._log(logs.LUCES, "COCHE_ABIERTO", light["name"])
+        await asyncio.sleep(2.0)
+        await asyncio.to_thread(store.set_sensor_state, lid, False)
+        async with self:
+            self.sensor_state[lid] = False
 
     @rx.event(background=True)
     async def toggle_light(self, light_id: str):
@@ -1892,6 +2287,13 @@ class NodesState(rx.State):
             light = next((l for l in self.lights if l["id"] == light_id), None)
             if light is None:
                 return
+        # El COCHE (efecto "coche"): cada toque es un pulso de ABRIR; se ve
+        # «abierto» mientras parpadean los intermitentes (~2 s, ver
+        # pages/dashboard.py:_EFECTOS_SCRIPT) y vuelve solo a cerrado/reposo.
+        if light.get("efecto") == "coche":
+            await self._pulso_coche(light)
+            return
+        async with self:
             nuevo_estado = not self.sensor_state.get(light_id, False)
 
         async def _pintar(nuevo: bool):
@@ -1933,7 +2335,8 @@ class NodesState(rx.State):
         kind = form_data.get("kind", "embed")
         if not name or not url:
             return
-        store.add_camera(name, url, icon, kind)
+        item = store.add_camera(name, url, icon, kind)
+        registry.sync_camera(item)
         self._reload()
         await self._log(logs.CCTV, "CAMARA_CREADA", f"{name} · {kind} · {url}")
 
@@ -1945,6 +2348,7 @@ class NodesState(rx.State):
             return no
         nombre = self._nombre(self.cameras, camera_id)
         store.delete_camera(camera_id)
+        registry.forget_entity(camera_id)
         self._reload()
         await self._log(logs.CCTV, "CAMARA_ELIMINADA", nombre)
 
@@ -1964,7 +2368,10 @@ class NodesState(rx.State):
         if not camera_id or not name or not url:
             return
         anterior = self._nombre(self.cameras, camera_id)
-        store.update_camera(camera_id, name, url, icon, kind, show_on_floor, floor_icon)
+        item = store.update_camera(camera_id, name, url, icon, kind, show_on_floor,
+                                   floor_icon)
+        if item:
+            registry.sync_camera(item)
         self._reload()
         cambio = f"{anterior} -> {name}" if anterior != name else name
         await self._log(logs.CCTV, "CAMARA_EDITADA", f"{cambio} · {kind} · {url}")
@@ -2400,7 +2807,45 @@ class NodesState(rx.State):
 
     @rx.var
     def ir_remotes_on_floor(self) -> list[dict]:
-        return self._en_plano(self.ir_remotes)
+        # El aparato (el aire, la tele) se enciende/apaga de un toque desde su
+        # icono, y su MANDO COMPLETO va aparte, en el suyo: los dos salen.
+        return self._sin_anclados("ir_remotes", self._en_plano(self.ir_remotes))
+
+    def _aparato(self, l: dict) -> dict:
+        """Un aparato del plano con lo que necesita su bocadillo: encendido,
+        y sus teclas (las del mando que no son encender/apagar) o, si es una
+        persiana, subir/parar/bajar."""
+        persiana = l.get("aspecto") == "persiana"
+        botones = []
+        if persiana:
+            botones = [{"id": a, "label": t, "icon": i, "tipo": "persiana"} for a, t, i in (
+                ("subir", "Subir", "chevron-up"), ("parar", "Parar", "square"),
+                ("bajar", "Bajar", "chevron-down"))]
+        elif l.get("remote_id"):
+            mando = next((r for r in self.ir_remotes if r["id"] == l["remote_id"]), None)
+            propias = {l.get("btn_on"), l.get("btn_off")}
+            botones = [{"id": b["id"], "label": b.get("label", ""), "icon": b.get("icon") or "circle",
+                        "tipo": "ir"}
+                       for b in (mando or {}).get("buttons", []) if b["id"] not in propias][:8]
+        on = self.sensor_state.get(l["id"], False)
+        return {
+            **l, "is_on": on, "persiana": persiana, "botones": botones,
+            # Efecto visual al pulsarlo (hoy: "coche" = intermitentes y faros
+            # sobre la imagen del plano). Los puntos son de ESTE plano.
+            "efecto": l.get("efecto") or "",
+            "efecto_json": json.dumps((l.get("efecto_puntos") or {}).get(self.plano_actual) or {}),
+            "estado": self._estado_persiana(l["id"]) if persiana
+                      else ("Encendido" if on else "Apagado"),
+            # Solo la persiana: un toque no puede parar, hacen falta ▲ ■ ▼.
+            "abre_bocadillo": persiana,
+        }
+
+    @rx.var
+    def aparatos_on_floor(self) -> list[dict]:
+        """Lo colocado en el plano que abre bocadillo al tocarlo (persianas)."""
+        return [a for a in (self._aparato(l) for l in
+                            self._sin_anclados("lights", self._en_plano(self.lights)))
+                if a["abre_bocadillo"]]
 
     # ── Posición en el plano de planta (arrastrar un marcador) ───────────
     @rx.event
@@ -2449,11 +2894,15 @@ class NodesState(rx.State):
         coleccion_de = {}
         for e in self.floor_catalog:
             col, eid = e["ref"].split(":", 1)
-            coleccion_de[eid] = col
+            if col != "nodes":  # los nodos llegan con prefijo, ver abajo
+                coleccion_de[eid] = col
 
-        cambios, de_fabrica = [], []
+        cambios = []
         for eid, pos in pendientes.items():
-            col = coleccion_de.get(eid)
+            if eid.startswith("nodes:"):
+                col, eid = "nodes", eid.split(":", 1)[1]
+            else:
+                col = coleccion_de.get(eid)
             if not col or not isinstance(pos, dict):
                 continue
             top, left = pos.get("top"), pos.get("left")
@@ -2461,31 +2910,34 @@ class NodesState(rx.State):
                 continue
             cambios.append({"collection": col, "id": eid, "top": top,
                             "left": left, "plano": self.plano_actual})
-            if col in ("factory_sensors", "factory_cameras"):
-                de_fabrica.append((eid, top, left))
         if not cambios:
             return
 
         store.set_floor_positions_bulk(cambios)
-        # Los de fábrica no viven en ninguna colección reactiva: hay que
-        # refrescarles a mano lo que se pinta (el disco ya está escrito).
-        if de_fabrica:
-            reg_state = await self.get_state(RegistryState)
-            for eid, top, left in de_fabrica:
-                reg_state._reflect_factory_floor_pos(eid, top, left)
         self._reload()
 
     # ── Qué plano se está mirando ────────────────────────────────────────
     @rx.event
     async def ver_plano(self, plano_id: str):
-        """Cambia de plano. Los de fábrica no viven en ninguna colección
-        reactiva, así que hay que reconstruirles a mano sus posiciones para el
-        plano nuevo (ver RegistryState.cargar_plano)."""
+        """Cambia el plano de esta sesión y reconstruye sus listas derivadas."""
         if not any(p["id"] == plano_id for p in self.planos):
             return
         self.plano_actual = plano_id
-        reg_state = await self.get_state(RegistryState)
-        reg_state.cargar_plano(plano_id)
+        # El catálogo («qué falta por poner», «está en otros planos») es POR
+        # PLANO: sin rehacerlo seguía enseñando el del plano anterior.
+        self._reload()
+
+    _TEXTO_PERSIANA = {"subiendo": "▲ Subiendo…", "bajando": "▼ Bajando…",
+                       "subida": "Subida", "bajada": "Bajada", "parada": "■ Parada"}
+
+    def _estado_persiana(self, light_id: str) -> str:
+        est = self.persianas_estado.get(light_id) or (
+            "subida" if self.sensor_state.get(light_id, False) else "bajada")
+        return self._TEXTO_PERSIANA.get(est, est)
+
+    def _sin_anclados(self, coleccion: str, items: list[dict]) -> list[dict]:
+        dentro = {r for d in self.puertas for r in d.get("anclados", [])}
+        return [x for x in items if f"{coleccion}:{x['id']}" not in dentro]
 
     def _en_plano(self, items: list[dict]) -> list[dict]:
         """Los elementos colocados en el plano que se está mirando, con
@@ -2664,9 +3116,10 @@ class NodesState(rx.State):
 
     @rx.var
     def sensors_on_floor(self) -> list[dict]:
+        dentro = {d.get("sensor_id") for d in self.puertas if d.get("sensor_id")}
         return [
             {**s, "is_open": self.sensor_state.get(s["id"], False)}
-            for s in self._en_plano(self.sensors)
+            for s in self._en_plano(self.sensors) if s["id"] not in dentro
         ]
 
     @rx.var
@@ -2675,17 +3128,243 @@ class NodesState(rx.State):
 
     @rx.var
     def doors_on_floor(self) -> list[dict]:
-        return self._en_plano(self.doors)
+        return [self._puerta_con_estado(d) for d in self._en_plano(self.puertas)]
+
+    @rx.var
+    def opciones_cerradura(self) -> list[dict]:
+        """Cerraduras de Accesos que se pueden meter en una puerta."""
+        return [{"id": d["id"], "nombre": d["name"]} for d in self.doors]
+
+    @rx.event
+    async def elegir_cerradura(self, door_id: str, valor: str):
+        return await self._cambiar_grupo(door_id, f"cerradura {valor}", cerradura=valor)
+
+    # ── «Luces y aparatos» bajo el plano ────────────────────────────────
+    def _refs_baldosas(self) -> list[str]:
+        plano = next((p for p in self.planos if p["id"] == self.plano_actual), {})
+        refs = plano.get("baldosas")
+        if refs is None:
+            refs = ([f"lights:{l['id']}" for l in self._en_plano(self.lights)]
+                    + [f"doors:{p['cerradura_id']}" for p in self._en_plano(self.puertas)
+                       if p.get("cerradura_id")]
+                    + [r for p in self._en_plano(self.puertas) for r in p.get("anclados", [])
+                       if r.startswith("lights:")])
+        return refs
+
+    @rx.var
+    def baldosas_plano(self) -> list[dict]:
+        """Las baldosas de «Luces y aparatos»: luces/aparatos (se conmutan) y
+        cerraduras de puerta (se mantienen abiertas o se sueltan). Todo en str
+        o bool ya resuelto, para el rx.foreach."""
+        salida = []
+        for ref in self._refs_baldosas():
+            col, _, eid = ref.partition(":")
+            if col == "lights":
+                l = next((x for x in self.lights if x["id"] == eid), None)
+                if l is None:
+                    continue
+                on = self.sensor_state.get(eid, False)
+                persiana = l.get("aspecto") == "persiana"
+                salida.append({
+                    "ref": ref, "tipo": "luz", "name": l["name"], "activo": on,
+                    "light_id": eid,
+                    "icon": l.get("floor_icon") or store.ICONO_ASPECTO.get(
+                        l.get("aspecto") or "luz", "lightbulb"),
+                    "meta": (self._estado_persiana(eid) if persiana
+                             else ("Encendido" if on else "Apagado")),
+                    "modo_encendido": l.get("modo_encendido", ""),
+                    "etiqueta_modo": _etiqueta_modo_encendido(l.get("modo_encendido", "")),
+                    "tiene_modos": bool(l.get("btn_continuo") or l.get("btn_timing")),
+                })
+            elif col == "doors":
+                d = next((x for x in self.doors if x["id"] == eid), None)
+                if d is None:
+                    continue
+                # El estado de la puerta (magnético) sale de la Puerta del plano
+                # que la tiene dentro, si hay alguna.
+                grupo = next((g for g in self.puertas if g.get("cerradura_id") == eid),
+                             {"id": "", "cerradura_id": eid})
+                p = self._puerta_con_estado(grupo)
+                liberada = p["cerradura_abierta"] or self.pulsing_doors.get(eid, False)
+                salida.append({
+                    "ref": ref, "tipo": "puerta", "name": d["name"], "activo": liberada,
+                    "icon": d.get("floor_icon") or "door-closed",
+                    "meta": ({"abriendo": "Abriendo…", "cerrando": "Cerrando…"}.get(p["transito"])
+                             or ("Abierta" if p["is_open"] else "Cerrada")
+                             + (" · liberada" if liberada else "")),
+                })
+        return salida
+
+    @rx.var
+    def opciones_baldosa(self) -> list[dict]:
+        """Lo que se puede añadir a «Luces y aparatos»: cualquier luz, aparato
+        o cerradura de cualquier estancia que no esté ya."""
+        ya = set(self._refs_baldosas())
+        datos = {"rooms": self.rooms, "lights": self.lights}
+        estancia = {}
+        for r in self.rooms:
+            for ref in store.referencias_estancia(r["id"], datos):
+                estancia.setdefault(ref, r.get("name") or "")
+        opciones = []
+        for col, items in (("lights", self.lights), ("doors", self.doors)):
+            for x in items:
+                ref = f"{col}:{x['id']}"
+                if ref in ya:
+                    continue
+                sala = estancia.get(ref, "Sin estancia")
+                opciones.append({"ref": ref, "nombre": f"{sala} · {x['name']}"})
+        return sorted(opciones, key=lambda o: o["nombre"].lower())
+
+    @rx.event
+    async def accionar_baldosa(self, ref: str):
+        col, _, eid = ref.partition(":")
+        if col == "lights":
+            luz = next((x for x in self.lights if x["id"] == eid), None)
+            if luz and luz.get("aspecto") == "persiana":
+                return NodesState.mover_persiana(eid, "auto")
+            return NodesState.toggle_light(eid)
+        if col == "doors":
+            if not any(x["id"] == eid for x in self.doors):
+                return
+            return NodesState.set_door_hold(eid, not self.sensor_state.get(eid, False))
+
+    @rx.event
+    async def elegir_modo_encendido(self, light_id: str, modo: str):
+        if (no := await permisos.denegar_entidad(
+                self, permisos.LUCES, f"lights:{light_id}")):
+            return no
+        if store.set_modo_encendido(light_id, modo) is not None:
+            self._reload()
+
+    @rx.event(background=True)
+    async def mover_persiana(self, light_id: str, accion: str):
+        """Subir / bajar / parar una persiana. "auto" = lo lógico según cómo
+        está: si se mueve, parar; si está bajada, subir; si subida, bajar.
+
+        La de DOS RELÉS va por operations.mover_persiana_rele (enclavamiento:
+        nunca los dos relés a la vez). La de mando manda su tecla."""
+        async with self:
+            if (no := await permisos.denegar_entidad(
+                    self, permisos.LUCES, f"lights:{light_id}")):
+                return no
+            luz = next((l for l in self.lights if l["id"] == light_id), None)
+            if luz is None:
+                return
+            if accion == "auto":
+                est = self.persianas_estado.get(light_id, "")
+                if est in ("subiendo", "bajando"):
+                    accion = "parar"
+                else:
+                    accion = "bajar" if self.sensor_state.get(light_id, False) else "subir"
+        if accion not in ("subir", "bajar", "parar"):
+            return
+        try:
+            if luz.get("kind") == store.PERSIANA_RELE:
+                await operations.mover_persiana_rele(light_id, accion)
+            else:
+                boton = {"subir": luz.get("btn_on"), "bajar": luz.get("btn_off"),
+                         "parar": luz.get("btn_parar")}[accion]
+                await operations.send_remote_button(luz.get("remote_id", ""), boton or "",
+                                                    apuntar_estado=False)
+                if accion != "parar":
+                    await asyncio.to_thread(store.set_sensor_state, light_id, accion == "subir")
+        except operations.OperationError as e:
+            return rx.toast.error(str(e))
+
+    @rx.event
+    def elegir_pestana_edicion(self, pestana: str):
+        # Solo UI: no toca datos de la casa. Un valor desconocido se ignora.
+        if pestana in ("plano", "anadir", "planos"):
+            self.pestana_edicion_plano = pestana
+
+    @rx.event
+    def alternar_edicion_baldosas(self):
+        self.editando_baldosas = not self.editando_baldosas
+
+    async def _guardar_baldosas(self, refs: list[str]):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        store.set_plano_baldosas(self.plano_actual, refs)
+        self._reload()
+
+    @rx.event
+    async def quitar_baldosa(self, ref: str):
+        return await self._guardar_baldosas([r for r in self._refs_baldosas() if r != ref])
+
+    @rx.event
+    async def anadir_baldosa(self, ref: str):
+        return await self._guardar_baldosas([*self._refs_baldosas(), ref])
+
+    @rx.event
+    async def icono_baldosa(self, ref: str, icono: str):
+        """El icono es el del ELEMENTO: cambia también su marcador del plano."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        col, _, eid = ref.partition(":")
+        if col in ("lights", "doors") and icono:
+            store.set_floor_icon(col, eid, icono)
+            self._reload()
+
+    @rx.var
+    def opciones_magnetico(self) -> list[dict]:
+        """Magnéticos que se pueden unir a una puerta (los de tipo puerta)."""
+        return [{"id": s["id"], "nombre": s["name"]} for s in self.sensors
+                if s.get("kind") == "door"]
+
+    @rx.var
+    def opciones_anclar(self) -> list[dict]:
+        """Lo que se puede anclar a una puerta: aparatos, luces y mandos."""
+        return sorted(
+            [{"ref": f"lights:{l['id']}", "nombre": l["name"]} for l in self.lights]
+            + [{"ref": f"ir_remotes:{r['id']}", "nombre": f"Mando · {r['name']}"}
+               for r in self.ir_remotes],
+            key=lambda o: o["nombre"].lower())
+
+    async def _cambiar_grupo(self, door_id: str, detalle: str, **cambios):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        puerta = store.set_door_grupo(door_id, **cambios)
+        if puerta is None:
+            return
+        self._reload()
+        await self._log(logs.PUERTAS, "PUERTA_GRUPO", f"{puerta['name']}: {detalle}")
+
+    @rx.event
+    async def anclar_a_puerta(self, door_id: str, ref: str):
+        d = next((x for x in self.puertas if x["id"] == door_id), None)
+        if d is None or not ref:
+            return
+        return await self._cambiar_grupo(
+            door_id, f"ancla {ref}", anclados=[*d.get("anclados", []), ref])
+
+    @rx.event
+    async def soltar_de_puerta(self, door_id: str, ref: str):
+        d = next((x for x in self.puertas if x["id"] == door_id), None)
+        if d is None:
+            return
+        return await self._cambiar_grupo(
+            door_id, f"suelta {ref}", anclados=[r for r in d.get("anclados", []) if r != ref])
+
+    @rx.event
+    async def asociar_magnetico(self, door_id: str, sensor_id: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        sensor_id = "" if sensor_id == "_ninguno" else sensor_id
+        puerta = store.asociar_magnetico(door_id, sensor_id)
+        if puerta is None:
+            return rx.toast.error("No se pudo: ese magnético o esa puerta ya no existen.")
+        self._reload()
+        mag = next((s["name"] for s in self.sensors if s["id"] == sensor_id), "")
+        await self._log(logs.PUERTAS, "PUERTA_MAGNETICO",
+                        f"{puerta['name']}: {mag or 'sin magnético'}")
 
     @rx.var
     def lights_on_floor(self) -> list[dict]:
         """Cada luz lleva su "is_on" ya resuelto: el marcador del plano se
         pinta encendido/apagado sin tener que cruzar sensor_state en el
         frontend (mismo criterio que sensors_on_floor)."""
-        return [
-            {**l, "is_on": self.sensor_state.get(l["id"], False)}
-            for l in self._en_plano(self.lights)
-        ]
+        return [self._aparato(l)
+                for l in self._sin_anclados("lights", self._en_plano(self.lights))]
 
     @rx.var
     def luces_encendidas_en_plano(self) -> int:
@@ -2719,6 +3398,136 @@ class NodesState(rx.State):
              "botones": botones.get(h["id"], [])}
             for h in self._en_plano(self.hosts)
         ]
+
+    @rx.var
+    def equipos_del_plano(self) -> list[dict]:
+        """Equipos y nodos de la estancia cuyo nombre coincide con el plano.
+
+        Si no existe esa estancia, conserva el criterio anterior: solo los
+        elementos colocados físicamente en el plano actual."""
+        nombre_plano = next((p["nombre"] for p in self.planos
+                             if p["id"] == self.plano_actual), "")
+        clave_plano = _clave_nombre(nombre_plano)
+        estancia = next((r for r in self.rooms
+                         if clave_plano and _clave_nombre(r.get("name", "")) == clave_plano), None)
+        refs = self._refs_equipos_estancia(estancia) if estancia else None
+        online = pruebas.aplicar_equipos(self.host_online)
+        hosts = {h["id"]: h for h in (
+            self.hosts if refs is not None else self._en_plano(self.hosts))}
+        nodes = {n["id"]: n for n in (
+            self.nodes if refs is not None else self._en_plano(self.nodes))}
+        orden = refs if refs is not None else [
+            *(f"hosts:{entity_id}" for entity_id in hosts),
+            *(f"nodes:{entity_id}" for entity_id in nodes),
+        ]
+        salida = []
+        for ref in orden:
+            coleccion, _, entity_id = ref.partition(":")
+            item = hosts.get(entity_id) if coleccion == "hosts" else nodes.get(entity_id)
+            if item is None:
+                continue
+            salida.append({
+                "id": entity_id, "ref": ref, "name": item["name"],
+                "icon": (item.get("icon") or "server" if coleccion == "hosts"
+                         else item.get("floor_icon") or "cpu"),
+                "tipo": "host" if coleccion == "hosts" else "node",
+                "online": online.get(entity_id, False),
+            })
+        return salida
+
+    @rx.var
+    def opciones_equipo_vista(self) -> list[dict]:
+        """Todos los hosts/nodos que aún no están en la estancia del plano."""
+        estancia = self._estancia_del_plano()
+        if estancia is None:
+            return []
+        ya = set(self._refs_equipos_estancia(estancia))
+        return [
+            {"ref": ref, "nombre": f"{tipo} · {item['name']}"}
+            for coleccion, tipo, items in (
+                ("hosts", "Equipo", self.hosts), ("nodes", "Nodo", self.nodes))
+            for item in items
+            for ref in [f"{coleccion}:{item['id']}"]
+            if ref not in ya
+        ]
+
+    def _estancia_del_plano(self) -> dict | None:
+        nombre = next((p["nombre"] for p in self.planos
+                       if p["id"] == self.plano_actual), "")
+        clave = _clave_nombre(nombre)
+        return next((r for r in self.rooms
+                     if clave and _clave_nombre(r.get("name", "")) == clave), None)
+
+    @rx.event
+    async def alternar_edicion_equipos_vista(self):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        self.editando_equipos_vista = not self.editando_equipos_vista
+
+    async def _guardar_equipos_vista(self, refs: list[str], accion: str,
+                                     detalle: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        estancia = self._estancia_del_plano()
+        if estancia is None:
+            return rx.toast.error("Este plano no tiene una estancia asociada.")
+        store.set_room_equipos_vista(estancia["id"], refs)
+        self._reload()
+        await self._log(logs.EQUIPOS, accion, detalle)
+
+    @rx.event
+    async def quitar_equipo_vista(self, ref: str):
+        estancia = self._estancia_del_plano()
+        if estancia is None:
+            return
+        refs = self._refs_equipos_estancia(estancia)
+        return await self._guardar_equipos_vista(
+            [r for r in refs if r != ref], "EQUIPO_QUITADO_DE_ESTANCIA", ref)
+
+    @rx.event
+    async def anadir_equipo_vista(self, ref: str):
+        estancia = self._estancia_del_plano()
+        if estancia is None:
+            return
+        validas = {o["ref"] for o in self.opciones_equipo_vista}
+        if ref not in validas:
+            return
+        return await self._guardar_equipos_vista(
+            [*self._refs_equipos_estancia(estancia), ref],
+            "EQUIPO_ANADIDO_A_ESTANCIA", ref)
+
+    @rx.var
+    def nodes_on_floor(self) -> list[dict]:
+        """Nodos colocados en el plano, con el estado de prueba ya aplicado."""
+        online = pruebas.aplicar_equipos(self.host_online)
+        return [
+            {**node,
+             "floor_icon": node.get("floor_icon") or "cpu",
+             "floor_subtle": bool(node.get("floor_subtle", False)),
+             "online": online.get(node["id"], False)}
+            for node in self._en_plano(self.nodes)
+        ]
+
+    @rx.event
+    async def probar_nodos_plano(self):
+        """Alterna entre forzar en línea y estado real los nodos de este plano."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        node_ids = [node["id"] for node in self._en_plano(self.nodes)]
+        if not node_ids:
+            return rx.toast.info("No hay nodos colocados en este plano.")
+        forzados = pruebas.equipos_forzados()
+        volver_a_real = all(forzados.get(node_id) is True for node_id in node_ids)
+        for node_id in node_ids:
+            pruebas.forzar_equipo(node_id, None if volver_a_real else True)
+        self.host_online = pruebas.aplicar_equipos(
+            await asyncio.to_thread(store.get_all_host_online, real=True))
+        bus.publicar(bus.EQUIPOS)
+        modo = "real" if volver_a_real else "en línea durante 10 minutos"
+        await self._log(
+            logs.SENSORES, "PRUEBA_NODOS",
+            f"Prueba: {len(node_ids)} nodos del plano forzados a {modo}",
+        )
 
     # ── Equipos (todos, sin distinción de origen) ────────────────────────
     # Alta y edición comparten el mismo juego de campos y la misma

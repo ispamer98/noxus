@@ -58,6 +58,21 @@ def renombrar(endpoint: str, nombre: str) -> tuple[bool, str]:
     return False, "Este dispositivo no aparece en la lista. Prueba a activarlo de nuevo."
 
 
+def quitar_de(ficha: dict) -> int:
+    """Borra las suscripciones de un aparato: la de su endpoint y cualquiera
+    con su nombre (los nombres son únicos, así que es la del mismo aparato,
+    p. ej. de antes de reinstalar). Devuelve cuántas se fueron."""
+    endpoint = ficha.get("endpoint") or ""
+    nombre = ficha.get("nombre") or ""
+    subs = leer()
+    quedan = [s for s in subs
+              if not ((endpoint and s.get("endpoint") == endpoint)
+                      or (nombre and s.get("nombre_usuario") == nombre))]
+    if len(quedan) != len(subs):
+        _escribir(quedan)
+    return len(subs) - len(quedan)
+
+
 def eliminar(endpoint: str) -> None:
     subs = leer()
     quedan = [s for s in subs if s.get("endpoint") != endpoint]

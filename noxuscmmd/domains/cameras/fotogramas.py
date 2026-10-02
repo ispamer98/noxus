@@ -68,10 +68,36 @@ MAX_DIAS = int(os.getenv("FOTOGRAMAS_MAX_DIAS", "365"))
 _NOMBRE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{6}_evt\d+\.jpg$")
 
 
+# Nombres de stream de go2rtc, para saber si un stream tiene su «_raw» (la
+# fuente directa: `fija` es un ffmpeg encima de `fija_raw` para arreglar el
+# vídeo en Safari). Solo los NOMBRES: la respuesta trae las fuentes con la
+# contraseña de Tuya dentro y aquí no se guarda ni se imprime nada de eso.
+_NOMBRES: dict = {"t": 0.0, "nombres": set()}
+
+
+async def _stream_para_fotograma(src: str) -> str:
+    """El fotograma se saca de la fuente DIRECTA (`<src>_raw`) si existe: la
+    mantiene abierta el `preload` de go2rtc, así que no abre sesiones nuevas en
+    la nube de Tuya (con el motor de movimiento pidiendo cada 0,5 s, cada
+    sesión nueva acababa en «请求过于频繁») y no arranca ningún ffmpeg."""
+    if time.monotonic() - _NOMBRES["t"] > 60:
+        try:
+            tiempo = aiohttp.ClientTimeout(total=3)
+            async with aiohttp.ClientSession(timeout=tiempo) as s:
+                async with s.get(f"{GO2RTC}/api/streams") as r:
+                    _NOMBRES["nombres"] = set((await r.json()).keys()) if r.status == 200 else set()
+        except Exception:
+            _NOMBRES["nombres"] = set()
+        _NOMBRES["t"] = time.monotonic()
+    crudo = f"{src}_raw"
+    return crudo if crudo in _NOMBRES["nombres"] else src
+
+
 async def capturar(src: str) -> bytes | None:
     """El fotograma de ese stream, o None si no se pudo. Nunca levanta."""
     if not src:
         return None
+    src = await _stream_para_fotograma(src)
     url = f"{GO2RTC}/api/frame.jpeg"
     try:
         tiempo = aiohttp.ClientTimeout(total=ESPERA)

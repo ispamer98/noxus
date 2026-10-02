@@ -25,21 +25,18 @@ from ..nodes import store as nodes_store
 from . import groups_store
 
 
-def _nombres_actuales() -> dict[str, str]:
+def nombres_actuales() -> dict[str, str]:
     """id -> nombre de AHORA de cada sensor que existe, de fábrica o dado de
     alta desde la web. Que un id no esté aquí significa que ese sensor se
     borró: puede seguir apuntado como miembro de un grupo (los miembros se
     guardan denormalizados) y por eso hay que comprobarlo, o el registro
     acabaría nombrando cosas que ya no están."""
     datos = nodes_store.read_all()
-    return {
-        **{s["id"]: s["name"] for s in datos["factory_sensors"]},
-        **{s["id"]: s["name"] for s in datos["sensors"]},
-    }
+    return {s["id"]: s["name"] for s in datos["sensors"]}
 
 
-def _filtrar(ids, estados: dict, nombres: dict[str, str]) -> list[str]:
-    descartados = registry.isolated_ids() | registry.hidden_ids()
+def filtrar(ids, estados: dict, nombres: dict[str, str]) -> list[str]:
+    descartados = registry.isolated_ids()
     return [
         nombres[sid]
         for sid in ids
@@ -51,8 +48,8 @@ def abiertos_ahora() -> list[str]:
     """Todo lo que está abierto en la casa — para el contador "Abiertos ahora".
     No mira grupos a propósito: ahí la pregunta es qué hay abierto, no qué
     afecta a un armado concreto."""
-    nombres = _nombres_actuales()
-    return _filtrar(nombres.keys(), nodes_store.get_all_sensor_states(), nombres)
+    nombres = nombres_actuales()
+    return filtrar(nombres.keys(), nodes_store.get_all_sensor_states(), nombres)
 
 
 def abiertos_de_grupo(grupo: dict | None) -> list[str]:
@@ -61,9 +58,9 @@ def abiertos_de_grupo(grupo: dict | None) -> list[str]:
     exactamente con lo que ese armado deja de vigilar."""
     if not grupo:
         return []
-    nombres = _nombres_actuales()
+    nombres = nombres_actuales()
     ids = [m["id"] for m in grupo.get("members", [])]
-    return _filtrar(ids, nodes_store.get_all_sensor_states(), nombres)
+    return filtrar(ids, nodes_store.get_all_sensor_states(), nombres)
 
 
 def abiertos_del_principal() -> list[str]:
@@ -80,7 +77,7 @@ def nombres_de(ids: list[str]) -> list[str]:
     con el que tenía cuando se excluyó. Uno que ya no existe se dice tal cual
     en vez de callarlo — que en el registro falte un excluido sería peor que
     verlo marcado como desaparecido."""
-    nombres = _nombres_actuales()
+    nombres = nombres_actuales()
     return [nombres.get(i, f"(borrado: {i})") for i in ids]
 
 
@@ -90,9 +87,9 @@ def con_id_de_grupo(grupo: dict | None) -> list[dict]:
     devuelve nombres porque es lo único que necesita el registro."""
     if not grupo:
         return []
-    nombres = _nombres_actuales()
+    nombres = nombres_actuales()
     estados = nodes_store.get_all_sensor_states()
-    descartados = registry.isolated_ids() | registry.hidden_ids()
+    descartados = registry.isolated_ids()
     return [
         {"id": m["id"], "nombre": nombres[m["id"]]}
         for m in grupo.get("members", [])

@@ -142,8 +142,7 @@ _SIN_SUJETO = {
 _ICONO_CATEGORIA = {cid: icono for cid, _, icono in logs.CATEGORIAS}
 _ICONOS_POR_COLECCION = {
     "lights": "lightbulb", "doors": "door-closed",
-    "sensors": "radar", "factory_sensors": "radar",
-    "cameras": "cctv", "factory_cameras": "cctv",
+    "sensors": "radar", "cameras": "cctv",
 }
 
 

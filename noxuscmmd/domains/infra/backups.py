@@ -76,10 +76,10 @@ def ficheros() -> list[tuple[str, Path]]:
     """(etiqueta legible, ruta) de todo lo que compone la casa, resuelto EN LA
     LLAMADA — ver la decisión 1 de la cabecera.
 
-    No están aquí `.env`, `tinytuya.json` ni `webos_key.json`: son credenciales,
-    no estado de la casa. Una copia que las incluyera convertiría esta carpeta
-    en algo que no se puede mover ni enseñar sin cuidado, y esas tres no cambian
-    solas: se escriben una vez al configurar el servicio.
+    No están aquí los ficheros locales de credenciales ni `.env`: son secretos,
+    no estado de la casa. Una copia que los incluyera convertiría esta carpeta
+    en algo que no se puede mover ni enseñar sin cuidado, y esos datos no cambian
+    solos: se escriben una vez al configurar el servicio.
 
     El último de la lista no es un JSON, es la base de datos del histórico. Se
     copia y se comprueba de otra manera (`_copiar` y `_legible`), porque un

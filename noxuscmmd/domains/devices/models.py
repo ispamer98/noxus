@@ -78,10 +78,8 @@ class BinarySensorEntity(Entity):
 
 @dataclass(frozen=True)
 class CameraEntity(Entity):
-    """Cámara con stream local (go2rtc) y control opcional en la nube (Tuya)."""
+    """Cámara con un origen de vídeo."""
     stream_src: str                 # ej. "fija" / "ptz", usado en la URL de go2rtc
-    tuya_device_id: str | None = None
-    has_ptz: bool = False
     icon: str | None = None         # None = icono por defecto pasado al construir la tarjeta
     floor_top: str | None = None    # posición en % sobre room.png (plano de planta) — None = no se muestra
     floor_left: str | None = None

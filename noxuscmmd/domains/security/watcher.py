@@ -76,11 +76,8 @@ async def _capturar(evento_id: int, sensor_id: str) -> None:
 
 
 def _aislados() -> set[str]:
-    """Sensores que la alarma trata como si no existieran. registry.isolated_ids()
-    ya cubre los de fábrica leyendo del disco; aquí se le suman los dados de
-    alta desde la web, que guardan la marca en su propia ficha."""
-    dinamicos = {s["id"] for s in nodes_store.read_all()["sensors"] if s.get("isolated")}
-    return registry.isolated_ids() | dinamicos
+    """Sensores que la alarma trata como si no existieran."""
+    return registry.isolated_ids()
 
 
 async def _alertar(g: dict, nombre_sensor: str, sensor_id: str,
@@ -107,7 +104,8 @@ async def _alertar(g: dict, nombre_sensor: str, sensor_id: str,
         return
     await asyncio.to_thread(
         enviar_notificacion, titulo, cuerpo, "todos", clave,
-        False, alertas.ACCIONES_ALARMA, categoria=categorias.ALARMA,
+        False, alertas.ACCIONES_ALARMA,
+        categoria=(categorias.ALARMA, categorias.de_zona(g["id"])),
     )
     # Queda pendiente de que alguien diga «visto». Si nadie lo dice, se repite.
     await asyncio.to_thread(alertas.crear, clave, titulo, cuerpo)
@@ -116,6 +114,42 @@ async def _alertar(g: dict, nombre_sensor: str, sensor_id: str,
     # El aviso ya ha salido: la foto se pide después y por su cuenta, para que
     # nadie espere a la cámara para enterarse de que ha saltado la alarma.
     _capturar_fotograma(evento, sensor_id)
+
+
+async def alertar_movimiento(camara_id: str, nombre_camara: str,
+                             detalle: str) -> int | None:
+    """Movimiento en una cámara con la casa ARMADA: esto ya no es un aviso, es
+    la alarma. Mismo tratamiento que un sensor abierto (_alertar): aviso de
+    alarma con «Visto» y «Silenciar», pendiente que se repite si nadie lo
+    confirma y que hace sonar la sirena de las tablets.
+
+    Devuelve el id del evento para que quien tiene el fotograma lo cuelgue.
+    None significa «no toca alarma»: hay un retardo de entrada corriendo, o sea
+    que alguien ha abierto la puerta y va camino de desarmar. Verlo por la
+    cámara del salón es justo lo esperado; si no desarma a tiempo ya saltará la
+    alarma por la puerta."""
+    if (await asyncio.to_thread(retardos.leer))["entradas"]:
+        return None
+    g = await asyncio.to_thread(groups_store.get_principal) or {
+        "id": "principal", "name": "Casa"}
+    titulo = f"🚨 ALERTA: {g['name']}"
+    cuerpo = f"Movimiento en {nombre_camara} con la alarma armada."
+    # Misma forma que las de los sensores: _repetir_sin_confirmar saca la zona
+    # del segundo trozo.
+    clave = f"alerta:{g['id']}:{camara_id}"
+    if await asyncio.to_thread(alertas.silenciado, clave):
+        return logs.registrar(logs.ALARMA, "GRUPO_ALERTA", "sistema",
+                              f"{g['name']}: movimiento en {nombre_camara} "
+                              f"(silenciado) · {detalle}", entidad=camara_id)
+    await asyncio.to_thread(
+        enviar_notificacion, titulo, cuerpo, "todos", clave,
+        False, alertas.ACCIONES_ALARMA,
+        categoria=(categorias.ALARMA, categorias.de_zona(g["id"])),
+    )
+    await asyncio.to_thread(alertas.crear, clave, titulo, cuerpo)
+    return logs.registrar(logs.ALARMA, "GRUPO_ALERTA", "sistema",
+                          f"{g['name']}: movimiento en {nombre_camara} · {detalle}",
+                          entidad=camara_id)
 
 
 async def _repetir_sin_confirmar() -> None:
@@ -132,7 +166,9 @@ async def _repetir_sin_confirmar() -> None:
             f"🔁 SIN CONFIRMAR ({vuelta}) · {ficha['titulo']}",
             ficha["cuerpo"] + " Nadie lo ha confirmado todavía.",
             "todos", clave, False, alertas.ACCIONES_ALARMA,
-            categoria=categorias.ALARMA,
+            # La clave es "alerta:<zona>:<sensor>" (ver _alertar).
+            categoria=(categorias.ALARMA,
+                       categorias.de_zona(clave.split(":")[1] if clave.count(":") >= 2 else "")),
         )
         await asyncio.to_thread(alertas.marcar_repetida, clave)
         logs.registrar(logs.ALARMA, "ALERTA_REPETIDA", "sistema",

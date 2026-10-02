@@ -15,7 +15,7 @@ que llega del navegador (middleware de Reflex), y aplica tres reglas:
    cerrada de eventos (PERMITIDOS_KIOSCO). Todo lo demás se rechaza, exista o no
    una comprobación dentro del manejador. Lo que sí permite (luces, puertas,
    mandos, botones de equipos) ya comprueba además que el control sea de SU
-   habitación (permisos.denegar_entidad).
+   habitación (permisos.denegar_entidad). Armar y desarmar es de toda la casa.
 2. Quien no tiene acceso al panel solo puede identificarse y pedirlo
    (PERMITIDOS_SIN_ACCESO).
 3. Una lista de manejadores delicados (comandos SSH, GPIO, deshacer…) exige su
@@ -55,16 +55,17 @@ def tablas() -> dict:
         return _TABLAS
     from ..domains.auth import permisos
     from ..domains.auth.state import AuthState
-    from ..domains.cameras.state import CameraState
     from ..domains.infra.deshacer import DeshacerState
     from ..domains.infra.pruebas_state import PruebasState
     from ..domains.infra.state import InfraState
+    from ..domains.electro.state import ElectroState
     from ..domains.nodes.estancias_state import EstanciasState
     from ..domains.nodes.host_actions_state import HostActionsState
     from ..domains.nodes.kiosco_state import KioscoState
     from ..domains.nodes.state import NodesState
     from ..domains.notifications.alertas_state import AlertasState
     from ..domains.notifications.state import PushState
+    from ..domains.security.arming_state import ArmingState
     from ..ui.dashboard.state import DashboardState
 
     # AuthState y PushState conservan `setvar`: son las pantallas de pedir acceso
@@ -75,14 +76,18 @@ def tablas() -> dict:
     )
     kiosco = (
         sin_acceso | _handlers(KioscoState) | _handlers(AlertasState)
-        | _uno(NodesState, "toggle_light", "open_door", "send_ir_button",
-               "send_ir_button_combined")
+        | _uno(NodesState, "toggle_light", "open_door", "set_door_hold",
+               "send_ir_button", "send_ir_button_combined")
+        | _uno(ElectroState, "electro_cmd")
         | _uno(HostActionsState, "accion_rapida", "encender_wol", "run_button")
+        # Armar y desarmar la casa, con su aviso de «esto está abierto» y la
+        # cuenta atrás de salida. Solo ArmingState: tocar grupos sigue fuera.
+        | _handlers(ArmingState)
     )
-    camaras_kiosco = _handlers(CameraState)
+    camaras_kiosco: set[str] = set()
 
     requiere: dict[str, str] = {}
-    for h in ("ejecutar_comando_personalizado", "set_custom_command", "gpio_17_test"):
+    for h in ("ejecutar_comando_personalizado", "set_custom_command"):
         requiere.update({n: permisos.AJUSTES for n in _uno(InfraState, h)})
     for h in ("run_accion_extra", "accion_apagar", "accion_reiniciar", "accion_gpio",
               "wake_pc", "rdp_pc", "rdp_portatil", "rdp_raspberry"):

@@ -133,15 +133,6 @@ class InfraState(rx.State):
         await gpio_bus.set_relay(relay, estado == "on")
         async with self: self.status = f"✅ {relay.name} {estado}"
 
-    @rx.event(background=True)
-    async def gpio_17_test(self):
-        async with self: self.status = "🌬️ Ventilador ON..."
-        try:
-            await device_actions.gpio_17_test()
-            async with self: self.status = "🌬️ Test completado"
-        except Exception as e:
-            async with self: self.status = f"❌ GPIO: {e}"
-
     # ── Acciones especiales cableadas a un equipo concreto (RDP, WOL, foto) ──
     # Cada equipo lleva en su ficha una lista de acciones_extra con el NOMBRE
     # del handler; esto las resuelve al handler real en el servidor. Hace falta
@@ -155,7 +146,6 @@ class InfraState(rx.State):
             "rdp_pc": InfraState.rdp_pc,
             "rdp_portatil": InfraState.rdp_portatil,
             "rdp_raspberry": InfraState.rdp_raspberry,
-            "gpio_17_test": InfraState.gpio_17_test,
             "tomar_foto_raspberry": InfraState.tomar_foto_raspberry,
         }
         handler = handlers.get(handler_name)

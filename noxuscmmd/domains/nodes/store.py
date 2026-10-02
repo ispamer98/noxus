@@ -31,7 +31,7 @@ ARCHIVO = Path(os.getenv("NODOS_FILE", "nodos_dinamicos.json"))
 
 _COLLECTIONS = (
     "nodes", "sensors", "doors", "lights", "cameras", "hosts", "host_buttons", "rooms",
-    "factory_sensors", "factory_cameras", "overview_widgets", "ir_remotes", "planos",
+    "overview_widgets", "ir_remotes", "electrodomesticos", "planos", "puertas",
     "metricas_paneles", "comandos_voz",
 )
 
@@ -90,6 +90,81 @@ def _migrar_equipos(data: dict) -> None:
     data["hosts"] = fusion
 
 
+def _migrar_nodos_desde_equipos(data: dict) -> None:
+    """La Raspberry y la Pi Zero eran «nodos» por estar en una lista del código
+    (la antigua lista GPIO_HOSTS del registry) y se pintaban y editaban aparte. Pasan a ser nodos
+    NORMALES de `nodes`, con el MISMO id (así todo lo que cuelga de ellas —
+    luces, puertas, sensores— sigue apuntando bien). Una sola vez: con la
+    marca, borrar luego uno de esos nodos no lo resucita."""
+    if data.get("nodos_desde_equipos"):
+        return
+    nodos = data.setdefault("nodes", [])
+    for host in data.get("hosts", []):
+        if host.get("id") in ("raspberry", "pi_zero") and not any(
+                n.get("id") == host["id"] for n in nodos):
+            nodos.append({"id": host["id"], "name": host.get("name") or host["id"],
+                          "ip": host.get("ip", ""), "kind": "raspberry", "user": ""})
+    data["nodos_desde_equipos"] = True
+
+
+def _migrar_entidades_estaticas(data: dict) -> None:
+    """Integra las antiguas colecciones separadas en sensors/cameras.
+
+    La lectura aplica esta migracion sin escribir y ``_mutate`` la persiste en
+    su siguiente operación. Se conserva el diccionario completo de cada
+    entidad. Si el id ya existe, manda su ficha gestionada y solo se rellenan
+    campos que le faltasen; nunca se crea un duplicado.
+    """
+    data.setdefault("sensors", [])
+    data.setdefault("cameras", [])
+    pares = (
+        ("factory_sensors", "sensors"),
+        ("factory_cameras", "cameras"),
+    )
+    for origen, destino in pares:
+        existentes = {item.get("id"): item for item in data[destino]}
+        for antiguo in data.pop(origen, []) or []:
+            entity_id = antiguo.get("id")
+            actual = existentes.get(entity_id)
+            if actual is None:
+                actual = dict(antiguo)
+                data[destino].append(actual)
+                existentes[entity_id] = actual
+            else:
+                for campo, valor in antiguo.items():
+                    if campo == "posiciones" and isinstance(valor, dict):
+                        actuales = actual.get(campo)
+                        if isinstance(actuales, dict):
+                            actual[campo] = {**valor, **actuales}
+                            continue
+                    if campo not in actual or actual[campo] in (None, "", [], {}):
+                        actual[campo] = valor
+
+    # Las referencias de estancia sí incluyen la colección en su identidad.
+    # Se migran junto con las fichas para que ninguna tablet pierda miembros.
+    reemplazos = {
+        "factory_sensors:": "sensors:",
+        "factory_cameras:": "cameras:",
+    }
+
+    def reemplazar(valor):
+        if isinstance(valor, str):
+            for viejo, nuevo in reemplazos.items():
+                if valor.startswith(viejo):
+                    return nuevo + valor[len(viejo):]
+            return valor
+        if isinstance(valor, list):
+            return [reemplazar(item) for item in valor]
+        if isinstance(valor, dict):
+            return {reemplazar(k): reemplazar(v) for k, v in valor.items()}
+        return valor
+
+    for room in data.get("rooms", []):
+        for campo in ("entidades", "orden", "personalizado"):
+            if campo in room:
+                room[campo] = reemplazar(room[campo])
+
+
 def _normalizar_equipos(data: dict) -> None:
     """Deja TODOS los equipos con exactamente las mismas claves, en el mismo
     orden y con los mismos tipos — da igual de dónde vinieran. Se ejecuta en
@@ -124,7 +199,10 @@ def _normalizar_equipos(data: dict) -> None:
             # para nada. Se enciende el que se quiera vigilar (pestaña
             # Métricas). El recuento total sí se guarda siempre.
             "en_metricas": bool(host.get("en_metricas", False)),
-            "acciones_extra": host.get("acciones_extra") or [],
+            # «Test Ventilador» (gpio_17_test) se retiró: pulsaba el GPIO17 de
+            # la Raspberry, que es el pin de la puerta de la habitación.
+            "acciones_extra": [a for a in (host.get("acciones_extra") or [])
+                               if a.get("handler_name") != "gpio_17_test"],
             # Plano. Se copian tal cual y sin inventar nada: un equipo que no
             # se ha colocado nunca los tiene a None y no sale pintado en
             # ninguna parte. `posiciones` es {plano_id: {top, left}} — el mismo
@@ -153,13 +231,54 @@ def _entero(valor, por_defecto: int, minimo: int) -> int:
         return por_defecto
 
 
+def _repeticiones_luz(valor) -> int:
+    try:
+        return min(60, max(1, int(valor)))
+    except (TypeError, ValueError):
+        return 25
+
+
+def _intervalo_luz(valor) -> float:
+    try:
+        return min(1.0, max(0.05, float(valor)))
+    except (TypeError, ValueError):
+        return 0.12
+
+
 def _apply_defaults(data: dict) -> dict:
     """Rellena colecciones y campos que puedan faltar (ficheros de versiones
     anteriores del programa). Se aplica tanto al leer como dentro de _mutate,
     para que ambos caminos vean siempre la misma forma."""
     _migrar_equipos(data)
+    _migrar_entidades_estaticas(data)
+    _migrar_nodos_desde_equipos(data)
     for k in _COLLECTIONS:
         data.setdefault(k, [])
+    # `doors` son las CERRADURAS de Accesos. Los segundos que tardan en
+    # abrirse o cerrarse de verdad (puerta ~3, portón ~10): mientras, el plano
+    # dice «Abriendo…» en vez de enseñar un magnético que no ha tenido tiempo.
+    for cerradura in data["doors"]:
+        cerradura.setdefault("transito_s", 3)
+        # Los tres tiempos describen portones con una maniobra completa. Cero
+        # conserva el comportamiento anterior basado únicamente en transito_s.
+        cerradura["apertura_s"] = _entero(cerradura.get("apertura_s"), 0, 0)
+        cerradura["espera_s"] = _entero(cerradura.get("espera_s"), 0, 0)
+        cerradura["cierre_s"] = _entero(cerradura.get("cierre_s"), 0, 0)
+        # Cómo mueve el relé la puerta (ver MODOS_CERRADURA). Lo de antes era
+        # siempre un pulso que abre y deja que la puerta se cierre sola.
+        if cerradura.get("modo") not in MODOS_CERRADURA:
+            cerradura["modo"] = MODO_PULSO
+    # `puertas` son las PUERTAS DEL PLANO: un elemento propio que junta lo que
+    # tenga esa puerta — magnético, cerradura de Accesos y anclados (una
+    # persiana...). Ninguna pieza es obligatoria.
+    sensores = {x.get("id") for x in data["sensors"]}
+    cerraduras = {x.get("id") for x in data["doors"]}
+    for puerta in data["puertas"]:
+        if puerta.get("sensor_id") not in sensores:
+            puerta["sensor_id"] = ""
+        if puerta.get("cerradura_id") not in cerraduras:
+            puerta["cerradura_id"] = ""
+        puerta.setdefault("anclados", [])
     for room in data["rooms"]:
         # Las luces conservan room_id por compatibilidad. El resto de cosas de
         # una estancia se referencia como "colección:id", la misma identidad
@@ -169,6 +288,19 @@ def _apply_defaults(data: dict) -> dict:
             ref for ref in (entidades if isinstance(entidades, list) else [])
             if isinstance(ref, str) and ":" in ref
         ))
+        # La selección de equipos solo admite las dos colecciones vigilables.
+        # Ausente/None conserva el comportamiento heredado de la estancia.
+        if room.get("equipos_vista") is not None:
+            validas = {
+                f"{coleccion}:{item['id']}"
+                for coleccion in ("hosts", "nodes")
+                for item in data[coleccion]
+            }
+            refs = room.get("equipos_vista")
+            room["equipos_vista"] = list(dict.fromkeys(
+                ref for ref in (refs if isinstance(refs, list) else [])
+                if isinstance(ref, str) and ref in validas
+            ))
     data.setdefault("sensor_states", {})
     data.setdefault("host_online", {})
     vw = data.get("video_wall")
@@ -182,15 +314,15 @@ def _apply_defaults(data: dict) -> dict:
         node.setdefault("kind", "esp32")
         node.setdefault("user", "")
     for cam in data["cameras"]:
-        cam.setdefault("kind", "embed")
+        cam.setdefault("kind", "go2rtc" if cam.get("stream_src") else "embed")
     # Qué cámara mira a ese elemento, para guardar un fotograma cuando salte la
-    # alarma (ver domains/cameras/fotogramas.py). Vacío = ninguna. Va también en
-    # los de fábrica, que son justo los de la puerta y los tampers.
-    for sensor in data["factory_sensors"]:
-        sensor.setdefault("camara", "")
+    # alarma (ver domains/cameras/fotogramas.py). Vacío = ninguna.
     for sensor in data["sensors"]:
         sensor.setdefault("camara", "")
         sensor.setdefault("isolated", False)
+        sensor.setdefault("pin", (sensor.get("topic") or "").rsplit("/", 1)[-1])
+        sensor.setdefault("node_id", "")
+        sensor.setdefault("node_name", "")
         sensor.setdefault("floor_top", None)
         sensor.setdefault("floor_left", None)
         sensor.setdefault("floor_icon", None)
@@ -210,9 +342,31 @@ def _apply_defaults(data: dict) -> dict:
         light.setdefault("kind", LUZ_RELE)
         light.setdefault("aspecto", "luz")
         light.setdefault("mando_modo", DOS_TECLAS)
+        light["auto_apagado_min"] = _entero(
+            light.get("auto_apagado_min"), por_defecto=0, minimo=0)
+        light["modo_encendido"] = _modo_encendido(light.get("modo_encendido", ""))
+        light["pausa_secuencia_s"] = _pausa_secuencia(light.get("pausa_secuencia_s", 1.0))
+        light["apagar_luz_al_encender"] = bool(light.get("apagar_luz_al_encender", False))
+        light["luz_repeticiones"] = _repeticiones_luz(light.get("luz_repeticiones", 25))
+        light["luz_intervalo_s"] = _intervalo_luz(light.get("luz_intervalo_s", 0.12))
+        # Solo los accesorios por mando necesitan recordar el inicio del ciclo.
+        # Se guarda en su propia ficha: ``sensor_states`` conserva estrictamente
+        # su contrato booleano para el plano, Alexa y las automatizaciones.
+        if light["kind"] != LUZ_MANDO:
+            light.pop("encendido_en", None)
+            light.pop("ciclo_min", None)
         light.setdefault("remote_id", "")
         light.setdefault("btn_on", "")
         light.setdefault("btn_off", "")
+        light.setdefault("btn_continuo", "")
+        light.setdefault("btn_timing", "")
+        light.setdefault("btn_luz", "")
+        light["btn_continuo"] = _tecla_valida(
+            data, light.get("remote_id", ""), light.get("btn_continuo", ""))
+        light["btn_timing"] = _tecla_valida(
+            data, light.get("remote_id", ""), light.get("btn_timing", ""))
+        light["btn_luz"] = _tecla_valida(
+            data, light.get("remote_id", ""), light.get("btn_luz", ""))
         light.setdefault("room_id", "")
         light.setdefault("floor_top", None)
         light.setdefault("floor_left", None)
@@ -230,24 +384,13 @@ def _apply_defaults(data: dict) -> dict:
         if light["room_id"] and light["room_id"] not in ids_estancias:
             light["room_id"] = ""
     for cam in data["cameras"]:
-        cam.setdefault("floor_top", None)
-        cam.setdefault("floor_left", None)
-        cam.setdefault("floor_icon", None)
-        cam.setdefault("floor_subtle", False)
-        cam.setdefault("floor_color", None)
-        cam.setdefault("floor_color_on", None)
-    _normalizar_equipos(data)
-    for sensor in data["factory_sensors"]:
-        sensor.setdefault("isolated", False)
-        sensor.setdefault("floor_top", None)
-        sensor.setdefault("floor_left", None)
-        sensor.setdefault("floor_icon", None)
-        sensor.setdefault("floor_subtle", False)
-        sensor.setdefault("floor_color", None)
-        sensor.setdefault("floor_color_on", None)
-    for cam in data["factory_cameras"]:
-        cam.setdefault("tuya_device_id", None)
-        cam.setdefault("has_ptz", False)
+        if cam.get("stream_src") and not cam.get("url"):
+            cam["url"] = cam["stream_src"]
+        cam.setdefault("url", "")
+        # Migración idempotente: los controles del dispositivo ya no forman
+        # parte del modelo. Se conserva id, URL y toda su colocación.
+        cam.pop("tuya_device_id", None)
+        cam.pop("has_ptz", None)
         cam.setdefault("icon", None)
         cam.setdefault("floor_top", None)
         cam.setdefault("floor_left", None)
@@ -255,6 +398,7 @@ def _apply_defaults(data: dict) -> dict:
         cam.setdefault("floor_subtle", False)
         cam.setdefault("floor_color", None)
         cam.setdefault("floor_color_on", None)
+    _normalizar_equipos(data)
     for remote in data["ir_remotes"]:
         remote.setdefault("icon", "tv")
         remote.setdefault("buttons", [])
@@ -284,6 +428,19 @@ def _apply_defaults(data: dict) -> dict:
             # solo se distinguen por eso.
             boton.setdefault("icon_size", "46%")
         _asegurar_posiciones(remote)
+    for electro in data["electrodomesticos"]:
+        electro["tipo"] = (electro.get("tipo") if electro.get("tipo") in TIPOS_ELECTRO
+                           else "lavadora")
+        electro["simulado"] = True
+        electro.setdefault("node_id", "")
+        electro.setdefault("node_name", "")
+        electro.setdefault("estado", {})
+        electro.setdefault("floor_top", None)
+        electro.setdefault("floor_left", None)
+        electro.setdefault("floor_icon", None)
+        electro.setdefault("floor_subtle", False)
+        electro.setdefault("floor_color", None)
+        electro.setdefault("floor_color_on", None)
     # LO ÚLTIMO: los planos y la posición de cada elemento en cada plano. Va al
     # final y no en medio porque es quien tiene la última palabra sobre
     # floor_top/floor_left (los mantiene como espejo del plano principal), y
@@ -365,6 +522,11 @@ def _write(data: dict) -> None:
 
 def read_all() -> dict:
     return _read()
+
+
+def apply_migrations() -> None:
+    """Persiste de forma atómica las migraciones/defaults sobre ARCHIVO."""
+    _mutate(lambda data: None)
 
 
 def slugify(texto: str) -> str:
@@ -489,8 +651,8 @@ _MEDIDAS_INICIALES = (1254, 1254)
 # Colecciones cuyos elementos pueden estar en un plano. Es la misma lista que
 # construye el catálogo del plano (ver nodes/state._build_floor_catalog).
 COLECCIONES_EN_PLANO = (
-    "factory_sensors", "sensors", "factory_cameras", "cameras",
-    "doors", "lights", "ir_remotes",
+    "nodes", "sensors", "cameras", "doors", "lights", "ir_remotes",
+    "electrodomesticos", "puertas",
 )
 
 
@@ -574,6 +736,12 @@ def _sincronizar_planos(data: dict) -> None:
 
 
 def floor_fields(show_on_floor: bool, floor_icon: str, current: dict | None) -> dict:
+    # Al EDITAR (hay `current`) la ficha ya no toca la posición: con varios
+    # planos, «mostrar en el plano» no dice en cuál, y el toggle leía el espejo
+    # del principal — desmarcarlo no quitaba nada y marcarlo lo metía en el
+    # principal. Dónde sale cada cosa se decide solo desde el editor de cada plano.
+    if current is not None:
+        return {"floor_icon": floor_icon or None}
     if not show_on_floor:
         return {"floor_top": None, "floor_left": None, "floor_icon": floor_icon or None}
     fields = {"floor_icon": floor_icon or None}
@@ -720,9 +888,12 @@ def delete_sensor(sensor_id: str) -> None:
 def update_sensor(sensor_id: str, name: str, kind: str, node_id: str, node_name: str, pin: str,
                    show_on_floor: bool = False, floor_icon: str = "") -> dict | None:
     current = next((s for s in _read()["sensors"] if s["id"] == sensor_id), None)
+    topic = (current or {}).get("topic", "")
+    if not current or current.get("node_id") != node_id or current.get("pin") != pin:
+        topic = sensor_topic(node_name, pin)
     return _update("sensors", sensor_id, {
         "name": name, "kind": kind, "node_id": node_id, "node_name": node_name,
-        "pin": pin, "topic": sensor_topic(node_name, pin),
+        "pin": pin, "topic": topic,
         **floor_fields(show_on_floor, floor_icon, current),
     })
 
@@ -731,21 +902,13 @@ def update_sensor(sensor_id: str, name: str, kind: str, node_id: str, node_name:
 # Vive aquí y no en el dominio de cámaras porque es puro dato: este módulo es
 # el que guarda la ficha del sensor Y la de la cámara, así que es el único sitio
 # donde resolver la cadena no obliga a nadie a importar a nadie.
-_COLECCIONES_SENSOR = ("factory_sensors", "sensors")
-
-
 def set_sensor_camera(sensor_id: str, camera_id: str) -> bool:
-    """Asigna (o quita, con "") la cámara de un elemento. False si no existe.
-
-    Busca en las dos colecciones porque los elementos que disparan la alarma
-    están repartidos: la puerta y los tampers son de fábrica, los añadidos desde
-    la web viven en `sensors`."""
+    """Asigna (o quita, con "") la cámara de un sensor. False si no existe."""
     def _apply(data):
-        for coleccion in _COLECCIONES_SENSOR:
-            for s in data[coleccion]:
-                if s["id"] == sensor_id:
-                    s["camara"] = camera_id
-                    return True
+        for s in data["sensors"]:
+            if s["id"] == sensor_id:
+                s["camara"] = camera_id
+                return True
         return False
 
     return bool(_mutate(_apply))
@@ -753,10 +916,9 @@ def set_sensor_camera(sensor_id: str, camera_id: str) -> bool:
 
 def camara_de_sensor(sensor_id: str) -> str:
     data = _read()
-    for coleccion in _COLECCIONES_SENSOR:
-        for s in data[coleccion]:
-            if s["id"] == sensor_id:
-                return s.get("camara", "") or ""
+    for s in data["sensors"]:
+        if s["id"] == sensor_id:
+            return s.get("camara", "") or ""
     return ""
 
 
@@ -766,24 +928,16 @@ def src_de_sensor(sensor_id: str) -> str:
     Devuelve "" tanto si no tiene cámara asignada como si la que tiene no puede
     dar una imagen fija, y eso es lo mismo para quien captura: no hay foto.
 
-    Las dos clases de cámara guardan su stream en sitios distintos, y esto es
-    herencia, no capricho: las de fábrica lo llevan en `stream_src`, y las
-    añadidas desde la web reutilizan el campo `url` (ver cameras/wall.py). De
-    las añadidas, solo las de tipo `go2rtc` sirven: a un `embed` o a un `rtsp`
-    no hay a quién pedirle un fotograma."""
+    Solo las de tipo `go2rtc` sirven: a un `embed` o a un `rtsp` no hay a
+    quién pedirle un fotograma."""
     camara_id = camara_de_sensor(sensor_id)
     if not camara_id:
         return ""
     data = _read()
-    for c in data["factory_cameras"]:
-        if c["id"] == camara_id:
-            # El respaldo por convención (cam_ptz -> ptz) es el mismo que usa
-            # catalogo_camaras, para que las dos partes coincidan si una ficha
-            # antigua se quedó sin stream_src.
-            return c.get("stream_src") or camara_id.replace("cam_", "")
     for c in data["cameras"]:
         if c["id"] == camara_id:
-            return c.get("url", "") if c.get("kind") == "go2rtc" else ""
+            return ((c.get("url") or c.get("stream_src") or "")
+                    if c.get("kind") == "go2rtc" else "")
     # Apuntaba a una cámara que ya no está.
     return ""
 
@@ -792,11 +946,8 @@ def camaras_para_fotograma() -> list[dict]:
     """[{"id", "name"}] de las cámaras que pueden dar una imagen fija — las que
     tiene sentido ofrecer al elegir la cámara de un elemento."""
     data = _read()
-    salida = [{"id": c["id"], "name": c.get("name", c["id"])}
-              for c in data["factory_cameras"]]
-    salida += [{"id": c["id"], "name": c.get("name", c["id"])}
-               for c in data["cameras"] if c.get("kind") == "go2rtc"]
-    return salida
+    return [{"id": c["id"], "name": c.get("name", c["id"])}
+            for c in data["cameras"] if c.get("kind") == "go2rtc"]
 
 
 def toggle_sensor_isolated(sensor_id: str) -> dict | None:
@@ -812,20 +963,129 @@ def toggle_sensor_isolated(sensor_id: str) -> dict | None:
 
 
 # ── Puertas / cerraduras ─────────────────────────────────────────────────────
+# Cómo trabaja la cerradura o el motor que manda el relé:
+#   pulso       un pulso abre y la puerta vuelve sola (cerradero eléctrico, portón
+#               con cierre automático). Mantener abierta = relé activado.
+#   dos_pulsos  un pulso abre y OTRO cierra (portón paso a paso). Abrir para
+#               pasar da el segundo pulso al acabar la espera; mantener abierta o
+#               cerrada da un solo pulso, y solo si la puerta no estaba ya así.
+MODO_PULSO, MODO_DOS_PULSOS = "pulso", "dos_pulsos"
+MODOS_CERRADURA = {
+    MODO_PULSO: "Un pulso abre; se cierra sola",
+    MODO_DOS_PULSOS: "Un pulso abre y otro cierra",
+}
+
+
+def _maniobra(modo: str, apertura_s, espera_s, cierre_s) -> dict:
+    """Campos de cómo se mueve la puerta, ya saneados. Los tres tiempos a cero
+    dejan la puerta como antes (solo `transito_s`)."""
+    return {
+        "modo": modo if modo in MODOS_CERRADURA else MODO_PULSO,
+        "apertura_s": _entero(apertura_s, 0, 0),
+        "espera_s": _entero(espera_s, 0, 0),
+        "cierre_s": _entero(cierre_s, 0, 0),
+    }
+
+
 # topic_state es opcional de usar por el firmware (confirmación de estado real
 # del relé); topic_cmd es donde el sistema publica ON/OFF para actuar.
 # pulse_seconds: duración del pulso de "Abrir" antes de cerrarse solo — definible
 # por puerta (2, 3, 4, 5s...) en vez de fijo en el código.
 def add_door(name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
-             show_on_floor: bool = False, floor_icon: str = "") -> dict:
+             show_on_floor: bool = False, floor_icon: str = "", *,
+             modo: str = MODO_PULSO, apertura_s: int = 0, espera_s: int = 0,
+             cierre_s: int = 0) -> dict:
     item = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
         "pulse_seconds": pulse_seconds,
+        **_maniobra(modo, apertura_s, espera_s, cierre_s),
         **floor_fields(show_on_floor, floor_icon, None),
     }
     return _add("doors", "door", item)
+
+
+def add_puerta(name: str, cerradura_id: str = "", sensor_id: str = "") -> dict:
+    """Una Puerta del plano. Se crea al poner en el plano una cerradura de
+    Accesos o un magnético de puerta, con esa pieza ya dentro."""
+    return _add("puertas", "puerta", {
+        "name": name, "cerradura_id": cerradura_id, "sensor_id": sensor_id,
+        "anclados": [], "floor_icon": "door-closed",
+    })
+
+
+def delete_puerta(puerta_id: str) -> None:
+    """Quita la Puerta del plano. Sus piezas (cerradura, magnético...) siguen
+    existiendo: vuelven a ofrecerse sueltas para ponerlas en otra Puerta."""
+    _delete("puertas", puerta_id)
+
+
+def _una_sola(data: dict, puerta: dict, campo: str, valor: str) -> None:
+    """Una pieza solo puede estar en UNA puerta: al meterla aquí se saca de
+    cualquier otra."""
+    for otra in data["puertas"]:
+        if otra is not puerta and otra.get(campo) == valor:
+            otra[campo] = ""
+
+
+def asociar_magnetico(puerta_id: str, sensor_id: str) -> dict | None:
+    """El magnético que dice si ESTA puerta está abierta. Vacío = ninguno."""
+    def _apply(data):
+        if sensor_id and not any(x["id"] == sensor_id for x in data["sensors"]):
+            return None
+        puerta = next((p for p in data["puertas"] if p["id"] == puerta_id), None)
+        if puerta is None:
+            return None
+        puerta["sensor_id"] = sensor_id
+        if sensor_id:
+            _una_sola(data, puerta, "sensor_id", sensor_id)
+        return puerta
+    return _mutate(_apply)
+
+
+def set_door_grupo(puerta_id: str, *, anclados: list[str] | None = None,
+                   cerradura: str | None = None) -> dict | None:
+    """Cambia la cerradura ("_ninguna" o el id de una de Accesos) y/o los
+    anclados de una Puerta del plano."""
+    def _apply(data):
+        puerta = next((p for p in data["puertas"] if p["id"] == puerta_id), None)
+        if puerta is None:
+            return None
+        if cerradura is not None:
+            if cerradura == "_ninguna":
+                puerta["cerradura_id"] = ""
+            elif any(d["id"] == cerradura for d in data["doors"]):
+                puerta["cerradura_id"] = cerradura
+                _una_sola(data, puerta, "cerradura_id", cerradura)
+        if anclados is not None:
+            limpios = list(dict.fromkeys(
+                r for r in anclados
+                if isinstance(r, str) and r.split(":", 1)[0] in ("lights", "ir_remotes")))
+            for otra in data["puertas"]:
+                if otra is not puerta:
+                    otra["anclados"] = [r for r in otra.get("anclados", []) if r not in limpios]
+            puerta["anclados"] = limpios
+        return puerta
+    return _mutate(_apply)
+
+
+def cerraduras_prestadas(data: dict | None = None) -> set[str]:
+    """Cerraduras de Accesos que ya están dentro de una Puerta del plano."""
+    datos = data if data is not None else _read()
+    return {p["cerradura_id"] for p in datos.get("puertas", []) if p.get("cerradura_id")}
+
+
+def anclados_a_puertas(data: dict | None = None) -> set[str]:
+    """Refs de todo lo que va dentro de alguna Puerta (no sale suelto)."""
+    datos = data if data is not None else _read()
+    return {r for p in datos.get("puertas", []) for r in p.get("anclados", [])}
+
+
+def magneticos_asociados(data: dict | None = None) -> dict[str, str]:
+    """{sensor_id: puerta_id} de los magnéticos que ya van dentro de una Puerta."""
+    datos = data if data is not None else _read()
+    return {p["sensor_id"]: p["id"] for p in datos.get("puertas", []) if p.get("sensor_id")}
 
 
 def delete_door(door_id: str) -> None:
@@ -833,15 +1093,21 @@ def delete_door(door_id: str) -> None:
 
 
 def update_door(door_id: str, name: str, node_id: str, node_name: str, pin: str, pulse_seconds: int = 2,
-                show_on_floor: bool = False, floor_icon: str = "") -> dict | None:
+                show_on_floor: bool = False, floor_icon: str = "", *,
+                maniobra: dict | None = None) -> dict | None:
+    """`maniobra` ({modo, apertura_s, espera_s, cierre_s}) None = no tocarla."""
     current = next((d for d in _read()["doors"] if d["id"] == door_id), None)
-    return _update("doors", door_id, {
+    cambios = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
         "pulse_seconds": pulse_seconds,
         **floor_fields(show_on_floor, floor_icon, current),
-    })
+    }
+    if maniobra is not None:
+        cambios.update(_maniobra(maniobra.get("modo", MODO_PULSO), maniobra.get("apertura_s"),
+                                 maniobra.get("espera_s"), maniobra.get("cierre_s")))
+    return _update("doors", door_id, cambios)
 
 
 # ── Luces ─────────────────────────────────────────────────────────────────────
@@ -858,14 +1124,16 @@ LUZ_RELE, LUZ_MANDO = "rele", "mando"
 # el plano, en los accesos rápidos del Resumen, en las automatizaciones y en la
 # paleta de comandos. Un ventilador de techo y una tele que se encienden con el
 # mando son eso: un interruptor con otro icono.
-ASPECTOS = ("luz", "ventilador", "tv", "enchufe", "otro")
+# "persiana": dos señales, una por sentido. Sale de un mando: la tecla de
+# «encender» es SUBIR y la de «apagar», BAJAR (y opcionalmente btn_parar).
+ASPECTOS = ("luz", "ventilador", "tv", "enchufe", "persiana", "otro")
 
 # Icono de cada uno. Vive aquí y no en la vista porque lo necesitan tres sitios:
 # la pestaña Accesorios, el catálogo del plano y el del Resumen. Con una copia
 # por sitio, un accesorio nuevo salía con icono distinto según dónde se mirara.
 ICONO_ASPECTO = {
     "luz": "lightbulb", "ventilador": "fan", "tv": "tv",
-    "enchufe": "plug", "otro": "toggle-right",
+    "enchufe": "plug", "persiana": "blinds", "otro": "toggle-right",
 }
 
 
@@ -883,11 +1151,38 @@ def es_luz(item: dict) -> bool:
 # de la mano, el panel se queda creyendo lo contrario hasta que se le vuelva a
 # dar (lo mismo que le pasa a cualquier mando de toda la vida).
 DOS_TECLAS, UNA_TECLA = "dos", "una"
+MODOS_ENCENDIDO = ("", "continuo", "1h", "2h", "3h")
+
+
+def _modo_encendido(valor: str) -> str:
+    return valor if valor in MODOS_ENCENDIDO else ""
+
+
+def _pausa_secuencia(valor) -> float:
+    try:
+        return max(0.0, float(valor))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _tecla_existe(data: dict, remote_id: str, button_id: str) -> bool:
+    if not remote_id or not button_id:
+        return False
+    remote = next((r for r in data["ir_remotes"] if r.get("id") == remote_id), None)
+    return bool(remote and any(b.get("id") == button_id for b in remote.get("buttons", [])))
+
+
+def _tecla_valida(data: dict, remote_id: str, button_id: str) -> str:
+    return button_id if _tecla_existe(data, remote_id, button_id) else ""
 
 
 def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
                 btn_on: str, btn_off: str,
-                mando_modo: str = DOS_TECLAS) -> dict:
+                mando_modo: str = DOS_TECLAS, modo_encendido: str = "",
+                btn_continuo: str = "", btn_timing: str = "",
+                pausa_secuencia_s: float = 1.0,
+                apagar_luz_al_encender: bool = False, btn_luz: str = "",
+                luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict:
     """Lo que distingue a una luz de relé de una de mando.
 
     Una de mando se queda SIN topics a propósito: no hay nada publicando su
@@ -905,12 +1200,23 @@ def _campos_luz(kind: str, node_name: str, pin: str, remote_id: str,
             "kind": LUZ_MANDO, "topic_cmd": "", "topic_state": "",
             "remote_id": remote_id, "btn_on": btn_on, "btn_off": btn_off,
             "mando_modo": modo,
+            "modo_encendido": _modo_encendido(modo_encendido),
+            "btn_continuo": btn_continuo, "btn_timing": btn_timing,
+            "pausa_secuencia_s": _pausa_secuencia(pausa_secuencia_s),
+            "apagar_luz_al_encender": bool(apagar_luz_al_encender),
+            "btn_luz": btn_luz,
+            "luz_repeticiones": _repeticiones_luz(luz_repeticiones),
+            "luz_intervalo_s": _intervalo_luz(luz_intervalo_s),
         }
     return {
         "kind": LUZ_RELE,
         "topic_cmd": command_topic(node_name, pin),
         "topic_state": sensor_topic(node_name, pin),
         "remote_id": "", "btn_on": "", "btn_off": "", "mando_modo": DOS_TECLAS,
+        "modo_encendido": "", "btn_continuo": "", "btn_timing": "",
+        "pausa_secuencia_s": 1.0,
+        "apagar_luz_al_encender": False, "btn_luz": "",
+        "luz_repeticiones": 25, "luz_intervalo_s": 0.12,
     }
 
 
@@ -918,13 +1224,59 @@ def add_light(name: str, node_id: str, node_name: str, pin: str, room_id: str = 
               show_on_floor: bool = False, floor_icon: str = "",
               kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
               btn_off: str = "", aspecto: str = "luz",
-              mando_modo: str = DOS_TECLAS) -> dict:
+              mando_modo: str = DOS_TECLAS, auto_apagado_min: int = 0,
+              modo_encendido: str = "", btn_continuo: str = "",
+              btn_timing: str = "", pausa_secuencia_s: float = 1.0,
+              apagar_luz_al_encender: bool = False, btn_luz: str = "",
+              luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict:
+    datos = _read()
+    if kind == LUZ_MANDO:
+        btn_continuo = _tecla_valida(datos, remote_id, btn_continuo)
+        btn_timing = _tecla_valida(datos, remote_id, btn_timing)
+        btn_luz = _tecla_valida(datos, remote_id, btn_luz)
+        modo_encendido = _modo_encendido(modo_encendido)
+    else:
+        modo_encendido, btn_continuo, btn_timing = "", "", ""
     item = {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo,
+                       modo_encendido, btn_continuo, btn_timing, pausa_secuencia_s,
+                       apagar_luz_al_encender, btn_luz, luz_repeticiones, luz_intervalo_s),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
+        "auto_apagado_min": _entero(auto_apagado_min, por_defecto=0, minimo=0)
+        if kind == LUZ_MANDO else 0,
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, None),
+    }
+    return _add("lights", "light", item)
+
+
+PERSIANA_RELE = "persiana_rele"
+# Cómo está cada persiana, para verlo desde cualquier aparato:
+# "subiendo" | "bajando" | "subida" | "bajada" | "parada" (a medias).
+ESTADOS_PERSIANA = ("subiendo", "bajando", "subida", "bajada", "parada")
+
+
+def set_persiana_estado(light_id: str, estado: str) -> None:
+    if estado not in ESTADOS_PERSIANA:
+        return
+    _mutate(lambda data: data.setdefault("persianas_estado", {}).__setitem__(light_id, estado))
+
+
+def add_persiana(name: str, node_id: str, node_name: str, pin_subir: str,
+                 pin_bajar: str, room_id: str = "", recorrido_s: int = 7) -> dict:
+    """Persiana de motor con DOS relés (uno por sentido), en un nodo (Pi o
+    ESP32). Vive en `lights` porque se usa como cualquier aparato (plano,
+    baldosas, estancias), pero con kind propio: ver operations.mover_persiana_rele."""
+    item = {
+        "name": name, "node_id": node_id, "node_name": node_name, "pin": "",
+        "kind": PERSIANA_RELE, "aspecto": "persiana",
+        "pin_subir": pin_subir, "pin_bajar": pin_bajar,
+        "topic_subir": command_topic(node_name, pin_subir),
+        "topic_bajar": command_topic(node_name, pin_bajar),
+        "topic_cmd": "", "topic_state": "", "remote_id": "", "btn_on": "", "btn_off": "",
+        "mando_modo": DOS_TECLAS, "recorrido_s": int(recorrido_s), "room_id": room_id,
+        "floor_icon": "blinds",
     }
     return _add("lights", "light", item)
 
@@ -937,15 +1289,77 @@ def update_light(light_id: str, name: str, node_id: str, node_name: str, pin: st
                  show_on_floor: bool = False, floor_icon: str = "",
                  kind: str = LUZ_RELE, remote_id: str = "", btn_on: str = "",
                  btn_off: str = "", aspecto: str = "luz",
-                 mando_modo: str = DOS_TECLAS) -> dict | None:
-    current = next((l for l in _read()["lights"] if l["id"] == light_id), None)
+                 mando_modo: str = DOS_TECLAS, auto_apagado_min: int = 0,
+                 modo_encendido: str = "", btn_continuo: str = "",
+                 btn_timing: str = "", pausa_secuencia_s: float = 1.0,
+                 apagar_luz_al_encender: bool = False, btn_luz: str = "",
+                 luz_repeticiones: int = 25, luz_intervalo_s: float = 0.12) -> dict | None:
+    datos = _read()
+    current = next((l for l in datos["lights"] if l["id"] == light_id), None)
+    if kind == LUZ_MANDO:
+        btn_continuo = _tecla_valida(datos, remote_id, btn_continuo)
+        btn_timing = _tecla_valida(datos, remote_id, btn_timing)
+        btn_luz = _tecla_valida(datos, remote_id, btn_luz)
+        modo_encendido = _modo_encendido(modo_encendido)
+    else:
+        modo_encendido, btn_continuo, btn_timing = "", "", ""
     return _update("lights", light_id, {
         "name": name, "node_id": node_id, "node_name": node_name, "pin": pin,
-        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo),
+        **_campos_luz(kind, node_name, pin, remote_id, btn_on, btn_off, mando_modo,
+                       modo_encendido, btn_continuo, btn_timing, pausa_secuencia_s,
+                       apagar_luz_al_encender, btn_luz, luz_repeticiones, luz_intervalo_s),
         "aspecto": aspecto if aspecto in ASPECTOS else "luz",
+        "auto_apagado_min": _entero(auto_apagado_min, por_defecto=0, minimo=0)
+        if kind == LUZ_MANDO else 0,
         "room_id": room_id,
         **floor_fields(show_on_floor, floor_icon, current),
     })
+
+
+def set_modo_encendido(light_id: str, modo: str) -> dict | None:
+    if modo not in MODOS_ENCENDIDO:
+        return None
+
+    def _apply(data):
+        light = next((x for x in data["lights"] if x.get("id") == light_id), None)
+        if light is None or light.get("kind") != LUZ_MANDO:
+            return None
+        remote_id = light.get("remote_id", "")
+        if modo == "continuo" and not _tecla_existe(data, remote_id, light.get("btn_continuo", "")):
+            return None
+        if modo in ("2h", "3h") and not _tecla_existe(data, remote_id, light.get("btn_timing", "")):
+            return None
+        light["modo_encendido"] = modo
+        return light
+
+    return _mutate(_apply)
+
+
+def secuencia_encendido(light: dict) -> list[tuple[str, float]]:
+    on = light.get("btn_on", "")
+    pausa = _pausa_secuencia(light.get("pausa_secuencia_s", 1.0))
+    modo = light.get("modo_encendido", "")
+    if modo == "continuo" and light.get("btn_continuo"):
+        return [(on, 0), (light["btn_continuo"], pausa)]
+    if modo == "2h" and light.get("btn_timing"):
+        return [(on, 0), (light["btn_timing"], pausa)]
+    if modo == "3h" and light.get("btn_timing"):
+        return [(on, 0), (light["btn_timing"], pausa), (light["btn_timing"], pausa)]
+    return [(on, 0)]
+
+
+def pasos_apagar_luz(light: dict) -> list[tuple[str, float]]:
+    """Pulsaciones que emulan mantener pulsada la tecla Luz."""
+    if not light.get("apagar_luz_al_encender") or not light.get("btn_luz"):
+        return []
+    repeticiones = _repeticiones_luz(light.get("luz_repeticiones", 25))
+    intervalo = _intervalo_luz(light.get("luz_intervalo_s", 0.12))
+    return [(light["btn_luz"], 0 if indice == 0 else intervalo)
+            for indice in range(repeticiones)]
+
+
+def duracion_ciclo_min(modo: str) -> int:
+    return {"continuo": 0, "1h": 60, "2h": 120, "3h": 180}.get(modo, 0)
 
 
 # ── Estancias (agrupación de luces) ──────────────────────────────────────────
@@ -968,6 +1382,27 @@ def update_room(room_id: str, name: str, entidades: list[str]) -> dict | None:
     })
 
 
+def set_room_equipos_vista(room_id: str,
+                           refs: list[str] | None) -> dict | None:
+    """Equipos/nodos visibles en una estancia, en orden.
+
+    ``None`` elimina la personalización y recupera sus miembros efectivos.
+    La normalización común descarta duplicados, tipos ajenos e ids borrados.
+    """
+    def _apply(data):
+        for room in data["rooms"]:
+            if room["id"] != room_id:
+                continue
+            if refs is None:
+                room.pop("equipos_vista", None)
+            else:
+                room["equipos_vista"] = list(refs)
+            return room
+        return None
+
+    return _mutate(_apply)
+
+
 def referencias_estancia(room_id: str, data: dict | None = None) -> set[str]:
     """Miembros efectivos: luces por room_id más las refs añadidas a mano."""
     datos = data if data is not None else _read()
@@ -983,7 +1418,19 @@ def referencias_estancia(room_id: str, data: dict | None = None) -> set[str]:
 
 
 def referencia_en_estancia(room_id: str, referencia: str) -> bool:
-    return referencia in referencias_estancia(room_id)
+    datos = _read()
+    refs = referencias_estancia(room_id, datos)
+    if referencia in refs:
+        return True
+    # La tablet controla una Puerta del plano, pero los eventos actúan sobre
+    # su cerradura. La cerradura hereda la estancia de esa Puerta sin tener
+    # que duplicar ``doors:<id>`` en la ficha de habitación.
+    coleccion, _, entity_id = referencia.partition(":")
+    if coleccion == "doors":
+        return any(p.get("cerradura_id") == entity_id
+                   and f"puertas:{p['id']}" in refs
+                   for p in datos["puertas"])
+    return False
 
 
 def delete_room(room_id: str) -> None:
@@ -1005,7 +1452,7 @@ def delete_room(room_id: str) -> None:
     _mutate(_apply)
 
 
-# ── Cámaras extra (URL directa, sin go2rtc/Tuya) ─────────────────────────────
+# ── Cámaras ──────────────────────────────────────────────────────────────────────────────────
 def add_camera(name: str, url: str, icon: str, kind: str = "embed") -> dict:
     return _add("cameras", "cam", {"name": name, "url": url, "icon": icon, "kind": kind})
 
@@ -1156,6 +1603,51 @@ def set_sensor_state(entity_id: str, value: bool) -> None:
     bus.publicar(bus.SENSORES)
 
 
+def _aplicar_estado_mando(data: dict, light_id: str, value: bool, ahora: float,
+                          ciclo_min: int | None = None) -> bool:
+    """Camino único, dentro de una mutación ya abierta, para un accesorio IR."""
+    light = next((x for x in data["lights"] if x.get("id") == light_id), None)
+    if light is None or light.get("kind") != LUZ_MANDO:
+        return False
+    actual = bool(data["sensor_states"].get(light_id, False))
+    nuevo = bool(value)
+    data["sensor_states"][light_id] = nuevo
+    if nuevo and not actual:
+        light["encendido_en"] = float(ahora)
+        if ciclo_min is None:
+            light.pop("ciclo_min", None)
+        else:
+            light["ciclo_min"] = max(0, int(ciclo_min))
+    elif nuevo and ciclo_min is not None:
+        # Un fallo después de ON deja el aparato en su ciclo inicial de 1 h.
+        # No se toca encendido_en: el ciclo sigue contando desde la activación.
+        light["ciclo_min"] = max(0, int(ciclo_min))
+    elif not nuevo:
+        light.pop("encendido_en", None)
+        light.pop("ciclo_min", None)
+    return nuevo != actual
+
+
+def set_mando_state(light_id: str, value: bool, ahora: float | None = None,
+                    ciclo_min: int | None = None) -> bool:
+    """Actualiza el booleano de un accesorio por mando y su inicio de ciclo.
+
+    Devuelve si hubo transición. Encender de nuevo algo que ya estaba encendido
+    no alarga su ciclo; apagar siempre elimina una marca antigua que pudiera
+    quedar de una edición manual del fichero.
+    """
+    if ahora is None:
+        ahora = time.time()
+
+    def _apply(data):
+        return _aplicar_estado_mando(data, light_id, value, ahora, ciclo_min)
+
+    cambio = _mutate(_apply)
+    if cambio:
+        bus.publicar(bus.SENSORES)
+    return cambio
+
+
 def get_all_sensor_states(real: bool = False) -> dict:
     """`real=True` ignora los valores forzados de core/pruebas.py: lo usan las
     automatizaciones y todo lo que actúa sobre la casa."""
@@ -1200,46 +1692,6 @@ def add_host_button(host_id: str, label: str, kind: str, value: str) -> dict:
 
 def delete_host_button(button_id: str) -> None:
     _delete("host_buttons", button_id)
-
-
-# ── Sensores/cámaras "de fábrica" ─────────────────────────────────────────────
-# Lo que antes vivía como literales Python en devices/registry.py (puerta
-# principal, tampers, cámara fija/PTZ...) — misma forma CRUD que todo lo demás
-# en este fichero, así son editables/borrables de verdad. Colecciones separadas
-# (no dentro de sensors/cameras) para no duplicar tarjetas ni pisar el estado
-# en vivo de los sensores, que sigue viniendo de shared_state.py — ver
-# domains/devices/registry.py, que es quien construye las entidades reales a
-# partir de estas colecciones. Los EQUIPOS ya no están aquí: viven todos
-# juntos en la colección "hosts" (ver _migrar_equipos).
-def get_all_factory_sensors() -> list[dict]:
-    return _read()["factory_sensors"]
-
-
-def add_factory_sensor(item: dict) -> dict:
-    """Solo para la migración inicial — conserva el id indicado en `item`.
-    `topic` va literal (no se deriva con sensor_topic()/slugify): estos
-    sensores ya tienen un topic real desplegado en hardware físico."""
-    return _add_with_id("factory_sensors", item)
-
-
-def update_factory_sensor(sensor_id: str, **fields) -> dict | None:
-    return _update("factory_sensors", sensor_id, fields)
-
-
-def delete_factory_sensor(sensor_id: str) -> None:
-    _delete("factory_sensors", sensor_id)
-
-
-def toggle_factory_sensor_isolated(sensor_id: str) -> dict | None:
-    def _apply(data):
-        updated = None
-        for s in data["factory_sensors"]:
-            if s["id"] == sensor_id:
-                s["isolated"] = not s.get("isolated", False)
-                updated = s
-        return updated
-
-    return _mutate(_apply)
 
 
 # ── Mural de vídeo ───────────────────────────────────────────────────────────
@@ -1304,23 +1756,6 @@ def clear_video_wall() -> None:
         data["video_wall"]["slots"] = {}
 
     _mutate(_apply)
-
-
-def get_all_factory_cameras() -> list[dict]:
-    return _read()["factory_cameras"]
-
-
-def add_factory_camera(item: dict) -> dict:
-    """Solo para la migración inicial — conserva el id indicado en `item`."""
-    return _add_with_id("factory_cameras", item)
-
-
-def update_factory_camera(camera_id: str, **fields) -> dict | None:
-    return _update("factory_cameras", camera_id, fields)
-
-
-def delete_factory_camera(camera_id: str) -> None:
-    _delete("factory_cameras", camera_id)
 
 
 # ── Mandos IR (Broadlink) ─────────────────────────────────────────────────────
@@ -1432,6 +1867,51 @@ def update_ir_remote(remote_id: str, name: str, icon: str,
         # lo cambia también donde se ve en la casa, sin tener que acordarse.
         **floor_fields(show_on_floor, icon or "tv", current),
     })
+
+
+# ── Electrodomésticos simulados ─────────────────────────────────────────────
+TIPOS_ELECTRO = ("lavadora", "nevera", "placa", "horno", "extractor", "freidora", "aire")
+ICONOS_ELECTRO = {
+    "lavadora": "washing-machine", "nevera": "refrigerator",
+    "placa": "flame", "horno": "microwave",
+    "extractor": "fan", "freidora": "cooking-pot", "aire": "air-vent",
+}
+
+
+def add_electro(name: str, tipo: str, node_id: str = "", node_name: str = "",
+                 show_on_floor: bool = False, floor_icon: str = "") -> dict:
+    if tipo not in TIPOS_ELECTRO:
+        raise ValueError("tipo de electrodoméstico inválido")
+    return _add("electrodomesticos", "electro", {
+        "name": name.strip() or tipo.capitalize(), "tipo": tipo,
+        "node_id": node_id, "node_name": node_name, "simulado": True,
+        "estado": {},
+        **floor_fields(show_on_floor, floor_icon or ICONOS_ELECTRO[tipo], None),
+    })
+
+
+def update_electro(electro_id: str, name: str, tipo: str, node_id: str = "",
+                   node_name: str = "", show_on_floor: bool = False,
+                   floor_icon: str = "") -> dict | None:
+    if tipo not in TIPOS_ELECTRO:
+        raise ValueError("tipo de electrodoméstico inválido")
+    current = next((x for x in _read()["electrodomesticos"]
+                    if x["id"] == electro_id), None)
+    return _update("electrodomesticos", electro_id, {
+        "name": name.strip() or tipo.capitalize(), "tipo": tipo,
+        "node_id": node_id, "node_name": node_name, "simulado": True,
+        **floor_fields(show_on_floor, floor_icon or ICONOS_ELECTRO[tipo], current),
+    })
+
+
+def delete_electro(electro_id: str) -> None:
+    _delete("electrodomesticos", electro_id)
+
+
+def set_electro_estado(electro_id: str, estado: dict) -> dict | None:
+    if not isinstance(estado, dict):
+        raise ValueError("el estado del electrodoméstico debe ser un diccionario")
+    return _update("electrodomesticos", electro_id, {"estado": estado})
 
 
 def _hueco_libre(remote: dict) -> tuple[str, str]:
@@ -1855,6 +2335,24 @@ def rename_plano(plano_id: str, nombre: str) -> dict | None:
         for p in data["planos"]:
             if p["id"] == plano_id:
                 p["nombre"] = nombre.strip() or p["nombre"]
+                return p
+        return None
+
+    return _mutate(_apply)
+
+
+def set_plano_baldosas(plano_id: str, refs: list[str] | None) -> dict | None:
+    """Qué sale en «Luces y aparatos» bajo ESE plano: lista de refs
+    ("lights:<id>", "doors:<id>") en su orden. None = lo de partida (lo que
+    está colocado en el plano), que es lo que había antes de poder elegirlo."""
+    def _apply(data):
+        for p in data["planos"]:
+            if p["id"] == plano_id:
+                if refs is None:
+                    p.pop("baldosas", None)
+                else:
+                    p["baldosas"] = list(dict.fromkeys(
+                        r for r in refs if isinstance(r, str) and ":" in r))
                 return p
         return None
 

@@ -1,6 +1,6 @@
 """
-Estado reactivo de los grupos de armado (zonas). Todo sensor —de registry.py
-o dado de alta en caliente— se arma exclusivamente por pertenecer a un grupo
+Estado reactivo de los grupos de armado (zonas). Todo sensor se arma
+exclusivamente por pertenecer a un grupo
 armado; no hay ningún sensor con mecanismo de armado propio. El "armado
 general" de siempre no es un caso especial: es el grupo marcado is_principal
 (por defecto "Sistema", con los 3 sensores clásicos — ver
@@ -20,7 +20,6 @@ import reflex as rx
 from ..auth import permisos
 from . import arming, audit, groups_store, logs
 from .state import SecurityState
-from ..devices import registry
 from ..nodes.state import NodesState
 from ..notifications.state import PushState
 from ...core import bus, sesiones
@@ -182,12 +181,9 @@ class GroupsState(rx.State):
 
     # ── Miembros ─────────────────────────────────────────────────────────
     async def _sensor_name(self, sensor_id: str) -> str:
-        static = registry.binary_sensors().get(sensor_id)
-        if static:
-            return static.name
         nodes_state = await self.get_state(NodesState)
-        dyn = next((s for s in nodes_state.sensors if s["id"] == sensor_id), None)
-        return dyn["name"] if dyn else sensor_id
+        sensor = next((s for s in nodes_state.sensors if s["id"] == sensor_id), None)
+        return sensor["name"] if sensor else sensor_id
 
     @rx.event
     async def add_sensor_to_group(self, group_id: str, sensor_id: str):

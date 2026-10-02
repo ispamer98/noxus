@@ -40,6 +40,7 @@ from .core.ssh_manager import SSHManager
 from .core import cronometro
 from .core.portero import PorteroDeEventos
 from .domains.nodes import planos
+from .domains.infra import despliegue
 from .domains.security import logs_store
 from .domains.security import presencia_motor
 from .domains.cameras import movimiento_motor
@@ -135,6 +136,7 @@ STYLE = {
 # Las dos entran por ^/api/.*$, que es la regla que el túnel ya manda al :8000.
 _api = Starlette(routes=[*aviso_endpoint.RUTAS, *fotograma_endpoint.RUTAS,
                          *planos.RUTAS,
+                         *despliegue.RUTAS,
                          *alexa_cloud_endpoint.RUTAS,
                          *voz.RUTAS,
                          *integraciones_endpoint.RUTAS])
@@ -181,7 +183,7 @@ app = rx.App(
         # que ningun navegador se quede con el viejo en cache.
         rx.el.link(rel="preload", href="/fonts/geist.woff2", custom_attrs={"as": "font"},
                    type="font/woff2", cross_origin="anonymous"),
-        rx.el.link(rel="stylesheet", href="/nx.css?v=20260928d"),
+        rx.el.link(rel="stylesheet", href="/nx.css?v=20261002f"),
         rx.el.meta(name="mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-capable", content="yes"),
         rx.el.meta(name="apple-mobile-web-app-status-bar-style", content="black"),

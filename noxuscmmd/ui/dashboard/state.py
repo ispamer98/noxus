@@ -1,9 +1,7 @@
 """
 Estado propio del Centro de Control (/panel): navegación del sidebar y qué
-ventanas flotantes están abiertas. Deliberadamente no toca ningún domain
-state existente (SecurityState, InfraState, CameraState, PushState) — el
-dashboard nuevo solo los *lee* y les reenvía eventos, igual que hace la
-vista clásica.
+ventanas flotantes están abiertas. Deliberadamente no toca la lógica de los
+dominios: solo coordina navegación y presentación.
 """
 import reflex as rx
 
@@ -217,9 +215,19 @@ class DashboardState(rx.State):
         if window_id not in self.open_windows:
             self.open_windows.append(window_id)
 
+    def open_camera(self, camera_id: str):
+        """Abre cualquier cámara en el visor común."""
+        self.compact_windows = [w for w in self.compact_windows if w != camera_id]
+        if camera_id not in self.open_windows:
+            self.open_windows.append(camera_id)
+
     def open_window_compact(self, window_id: str):
-        if window_id not in self.compact_windows:
-            self.compact_windows.append(window_id)
+        """Bocadillo de un icono del plano. Solo uno a la vez: abrir otro
+        cierra el que hubiera (lo coloca encima del icono el script de
+        ir_remotes.py, que también lo cierra al tocar fuera)."""
+        otros = [w for w in self.compact_windows if w != window_id]
+        self.open_windows = [w for w in self.open_windows if w not in otros]
+        self.compact_windows = [window_id]
         if window_id not in self.open_windows:
             self.open_windows.append(window_id)
 

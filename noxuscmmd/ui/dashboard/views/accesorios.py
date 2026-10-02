@@ -18,7 +18,7 @@ from ..components.form_dialog import form_dialog_content, field, dialog_footer, 
 from ..components.node_select import node_select
 from .lights import (
     _aspecto_select, _kind_select, _light_card, _modo_mando_select,
-    _room_select, _tecla_select,
+    _apagar_luz_fields, _modo_encendido_fields, _room_select, _tecla_select,
 )
 
 
@@ -36,16 +36,27 @@ def _add_aparato_dialog() -> rx.Component:
                 rx.vstack(
                     field("Nombre", styled_input(name="name", placeholder="Ventilador del salón")),
                     field("Qué es", _aspecto_select(default_value="ventilador")),
-                    field("Cómo se enciende", _kind_select(default_value="mando")),
-                    field("Teclas del mando", _modo_mando_select(default_value="dos")),
-                    field("Tecla de encender · o la única si es de una sola",
+                    field("Cómo se enciende", _kind_select(
+                        default_value="mando",
+                        on_change=NodesState.set_accessory_form_kind)),
+                    rx.cond(
+                        NodesState.accessory_form_kind == "mando",
+                        field("Apagado automático (minutos)", styled_input(
+                            name="auto_apagado_min", default_value="0",
+                            type="number", min="0")),
+                        rx.fragment(),
+                    ),
+                    field("Modo del mando", _modo_mando_select(default_value="dos")),
+                    field("Tecla de encendido",
                           _tecla_select("btn_on", "Tecla de encender")),
-                    field("Tecla de apagar · se ignora si es de una sola",
+                    field("Tecla de apagado",
                           _tecla_select("btn_off", "Tecla de apagar")),
+                    *_modo_encendido_fields(),
+                    *_apagar_luz_fields(),
                     # Los de relé siguen siendo posibles (un enchufe con relé),
                     # así que el nodo y el pin se quedan disponibles.
-                    field("Nodo (solo si es por relé)", node_select()),
-                    field("Pin GPIO o señal MQTT (solo si es por relé)",
+                    field("Nodo del relé", node_select()),
+                    field("Pin o señal MQTT",
                           styled_input(name="pin", placeholder="22 · enchufe_salon")),
                     field("Estancia", _room_select()),
                     dialog_footer(confirm_label="Añadir", color_scheme="cyan"),

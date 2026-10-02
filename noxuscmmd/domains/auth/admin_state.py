@@ -18,7 +18,7 @@ import reflex as rx
 
 from . import permisos, store
 from ..nodes import store as nodes_store
-from ..notifications import categorias
+from ..notifications import categorias, suscriptores
 from ..security import audit, logs
 from ...core import bus, sesiones
 
@@ -30,6 +30,13 @@ ICONOS_DISPOSITIVO = [
     "smartphone", "laptop", "monitor", "tablet", "watch",
     "tv", "gamepad-2", "server", "router", "printer",
 ]
+
+
+_ICONO_CATEGORIA = {
+    categorias.MOVIMIENTO: "scan-eye",
+    categorias.ALARMA: "siren",
+    categorias.DESCONOCIDO: "circle-help",
+}
 
 
 def _icono_de_partida(nombre: str) -> str:
@@ -91,6 +98,14 @@ class AuthAdminState(rx.State):
     # vars públicas por websocket aunque la vista no llegue a pintarlas. La UI
     # recibe referencias opacas y los eventos autorizados las resuelven aquí.
     _codigos_invitacion: dict[str, str] = {}
+    # Suscripciones de avisos que no son de ningún aparato registrado (restos de
+    # una app desinstalada). Al navegador solo va una referencia: el endpoint es
+    # la dirección con la que cualquiera podría mandarle avisos a ese aparato.
+    suscripciones_sueltas: list[dict] = []
+    _endpoints_sueltos: dict[str, str] = {}
+    # A quién puede sustituir un aparato nuevo (ver sustituir): los que ya
+    # tienen acceso.
+    opciones_sustituir: list[dict] = []
 
     # Formulario de invitación
     horas_invitacion: str = "4"
@@ -156,6 +171,40 @@ class AuthAdminState(rx.State):
 
     def _recargar(self):
         self.bloqueo_activo = store.estricto()
+        subs = suscriptores.leer()
+        endpoints_vivos = {s.get("endpoint") for s in subs}
+        fichas = store.todos()
+        catalogo = categorias.catalogo()
+        con_acceso = [d for d in fichas
+                      if store.rol_de(d["id"]) not in (store.PENDIENTE, store.BLOQUEADO)]
+        self.opciones_sustituir = [
+            {"id": d["id"], "nombre": d.get("nombre") or d["id"]} for d in con_acceso]
+
+        def _candidato(d: dict) -> dict:
+            """Para un aparato que pide entrar: el ya registrado con su mismo
+            nombre, que casi seguro es él mismo antes de reinstalar."""
+            if store.rol_de(d["id"]) != store.PENDIENTE and not d.get("pide_acceso"):
+                return {}
+            objetivo = store.normalizar(d.get("nombre") or "")
+            if not objetivo:
+                return {}
+            return next((c for c in con_acceso if c["id"] != d["id"]
+                         and store.normalizar(c.get("nombre") or "") == objetivo), {})
+
+        de_fichas = {d.get("endpoint") for d in fichas if d.get("endpoint")}
+        nombres_fichas = {store.normalizar(d.get("nombre") or "") for d in fichas}
+        anteriores_sueltos = {e: r for r, e in self._endpoints_sueltos.items()}
+        self._endpoints_sueltos = {}
+        sueltas = []
+        for s in subs:
+            e = s.get("endpoint") or ""
+            if not e or e in de_fichas or store.normalizar(
+                    s.get("nombre_usuario") or "") in nombres_fichas:
+                continue
+            ref = anteriores_sueltos.get(e) or secrets.token_urlsafe(9)
+            self._endpoints_sueltos[ref] = e
+            sueltas.append({"ref": ref, "nombre": s.get("nombre_usuario") or "(sin nombre)"})
+        self.suscripciones_sueltas = sueltas
         self.estancias = [
             {"id": room["id"], "nombre": room.get("name") or room["id"]}
             for room in nodes_store.list_rooms()
@@ -175,7 +224,9 @@ class AuthAdminState(rx.State):
                     store.rol_de(d["id"]), store.rol_de(d["id"])),
                 "visto": _hace_cuanto(d.get("visto")),
                 "caduca": _queda(d.get("caduca")) if d.get("caduca") else "",
-                "tiene_avisos": "sí" if d.get("endpoint") else "no",
+                "tiene_avisos": "sí" if d.get("endpoint") in endpoints_vivos else "no",
+                "sustituye_a": _candidato(d).get("id", ""),
+                "sustituye_nombre": _candidato(d).get("nombre", ""),
                 "es_admin": store.rol_de(d["id"]) == store.ADMIN,
                 "sin_acceso": store.rol_de(d["id"]) == store.PENDIENTE,
                 "es_kiosco": store.rol_de(d["id"]) == store.KIOSCO,
@@ -186,6 +237,7 @@ class AuthAdminState(rx.State):
                 # el rol, justo para que el aviso no vuelva a salir cada vez que
                 # alguien deja un aparato en «Sin acceso».
                 "pide_acceso": bool(d.get("pide_acceso")),
+                "ver_despliegue": bool(d.get("ver_despliegue")),
                 # Lo que la propia persona escribió para identificarse mientras
                 # esperaba acceso (ver AuthState.enviar_nota_acceso). Se queda
                 # aunque ya se le haya resuelto: es contexto de por qué se le
@@ -198,11 +250,12 @@ class AuthAdminState(rx.State):
                 # una lista dentro de otra lista sin que Reflex se atragante.
                 "categorias": [
                     {"id": cid, "nombre": nombre,
+                     "icono": _ICONO_CATEGORIA.get(cid, "siren"),
                      "activa": cid not in d.get("categorias_desactivadas", [])}
-                    for cid, nombre in categorias.CATEGORIAS.items()
+                    for cid, nombre in catalogo.items()
                 ],
             }
-            for d in store.todos()
+            for d in fichas
         ]
         anteriores = {
             codigo: referencia
@@ -348,7 +401,7 @@ class AuthAdminState(rx.State):
         await audit.registrar(
             self, logs.ACCESOS, "AVISOS_CAMBIADOS",
             f"{d.get('nombre') or id_dispositivo}: "
-            f"{categorias.CATEGORIAS.get(categoria, categoria)} "
+            f"{categorias.catalogo().get(categoria, categoria)} "
             f"{'desactivado' if si_estaba_activa else 'activado'}",
         )
 
@@ -373,16 +426,76 @@ class AuthAdminState(rx.State):
         # dispositivo llamado…». Se van las dos: la del endpoint de la ficha y
         # cualquiera con ese nombre (los nombres de suscripción son únicos, así
         # que una con el mismo nombre es del mismo aparato).
-        from ..notifications import suscriptores
-        nombre = d.get("nombre") or ""
-        for sub in suscriptores.leer():
-            if (d.get("endpoint") and sub.get("endpoint") == d["endpoint"]) or (
-                    nombre and sub.get("nombre_usuario") == nombre):
-                suscriptores.eliminar(sub["endpoint"])
+        suscriptores.quitar_de(d)
         self._recargar()
         await audit.registrar(self, logs.ACCESOS, "DISPOSITIVO_ELIMINADO",
                               d.get("nombre") or id_dispositivo)
         return rx.toast.success("Dispositivo eliminado.")
+
+    @rx.event
+    async def sustituir(self, id_nuevo: str, id_viejo: str):
+        """«Es X reinstalado»: el aparato que pide entrar se queda con todo lo
+        de X (rol incluido) y X desaparece con su suscripción de avisos vieja.
+        Solo para aparatos que están pidiendo acceso: sobre uno que ya lo tiene
+        sería pisarle la identidad a un aparato en uso por un mal toque."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        nuevo = store.dispositivo(id_nuevo)
+        if not nuevo or not id_viejo:
+            return
+        if store.rol_de(id_nuevo) != store.PENDIENTE and not nuevo.get("pide_acceso"):
+            return rx.toast.error("Solo se puede sustituir con un aparato que está pidiendo acceso.")
+        viejo = store.sustituir(id_nuevo, id_viejo)
+        if viejo is None:
+            return rx.toast.error("No se pudo: alguno de los dos ya no está.")
+        suscriptores.quitar_de(viejo)
+        self._recargar()
+        nombre = viejo.get("nombre") or id_viejo
+        await audit.registrar(self, logs.ACCESOS, "DISPOSITIVO_SUSTITUIDO",
+                              f"{nombre}: reinstalado, hereda rol "
+                              f"{store.NOMBRES_DE_ROL.get(viejo.get('rol'), viejo.get('rol'))}")
+        return rx.toast.success(
+            f"Listo: es «{nombre}» con su rol. Que active los avisos otra vez desde la app.")
+
+    @rx.event
+    async def alternar_despliegue(self, id_dispositivo: str):
+        """Casilla «Ver despliegue»: el icono de la terminal del servicio."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        d = store.dispositivo(id_dispositivo)
+        if not d:
+            return
+        store.actualizar(id_dispositivo, ver_despliegue=not d.get("ver_despliegue"))
+        self._recargar()
+
+    @rx.event
+    async def quitar_avisos(self, id_dispositivo: str):
+        """Deja de mandarle avisos a este aparato, sin quitarle el acceso."""
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        d = store.dispositivo(id_dispositivo)
+        if not d:
+            return
+        suscriptores.quitar_de(d)
+        store.actualizar(id_dispositivo, endpoint="")
+        self._recargar()
+        await audit.registrar(self, logs.ACCESOS, "AVISOS_QUITADOS",
+                              d.get("nombre") or id_dispositivo)
+        return rx.toast.success("Ya no recibirá avisos.")
+
+    @rx.event
+    async def borrar_suscripcion_suelta(self, ref: str):
+        if (no := await permisos.denegar(self, permisos.AJUSTES)):
+            return no
+        endpoint = self._endpoints_sueltos.get(ref)
+        if not endpoint:
+            return
+        nombre = (suscriptores.buscar(endpoint) or {}).get("nombre_usuario", "")
+        suscriptores.eliminar(endpoint)
+        self._recargar()
+        await audit.registrar(self, logs.ACCESOS, "AVISOS_QUITADOS",
+                              f"{nombre or '(sin nombre)'} (suscripción suelta)")
+        return rx.toast.success("Suscripción borrada.")
 
     @rx.event
     async def alternar_bloqueo(self):

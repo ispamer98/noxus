@@ -40,8 +40,11 @@ PRUEBAS = (
     "tests.test_conexion",     # ping normal y comprobación de puerto (los Echo)
     "tests.test_portero",      # el filtro de eventos por rol (tablet, sin acceso, resto)
     "tests.test_kiosco",       # la tablet de habitación: miembros, rol y confinamiento
+    "tests.test_porton",       # un pulso o dos: mantener, abrir para pasar y el plano
+    "tests.test_electro",      # electrodomésticos simulados: órdenes, cuenta atrás y temporizadores
     "tests.test_pruebas",      # Pruebas: valores forzados, caducidad y separación de lo real
     "tests.test_acceso_app",   # visitantes efímeros y auditoría de entrada
+    "tests.test_despliegue",   # terminal del servicio: permisos, estado y caché
 )
 
 

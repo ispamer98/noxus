@@ -18,7 +18,6 @@ ids: "ir_button:<mando>:<tecla>".
 """
 from dataclasses import dataclass, field
 
-from ..devices import registry
 from ..nodes import store as nodes_store
 from ..security import groups_store
 from . import actions as acciones_mod
@@ -146,14 +145,10 @@ _SOLO_ENTIDAD = {"ir_button.press", "host_button.run", "rule.run"}
 
 # ── Inventario de entidades ─────────────────────────────────────────────────
 def _sensores(data: dict) -> list[tuple[str, str]]:
-    """Los de fábrica y los dados de alta desde la web comparten espacio de
-    ids (sensor_states es un único diccionario plano), así que aquí van juntos.
-    Los ocultos se descartan: si no se ven en el panel, tampoco tiene sentido
-    ofrecerlos para automatizar."""
-    ocultos = registry.hidden_ids()
+    """Sensores configurados, sin caminos distintos por su origen."""
     vistos, salida = set(), []
-    for s in data["factory_sensors"] + data["sensors"]:
-        if s["id"] in ocultos or s["id"] in vistos:
+    for s in data["sensors"]:
+        if s["id"] in vistos:
             continue
         vistos.add(s["id"])
         salida.append((s["id"], s["name"]))
@@ -163,9 +158,7 @@ def _sensores(data: dict) -> list[tuple[str, str]]:
 def _nodos(data: dict) -> list[tuple[str, str]]:
     """Nodos con pines accionables: la Raspberry/Pi Zero de siempre más los
     dados de alta desde la web."""
-    salida = [(nid, h.name) for nid, h in registry.gpio_hosts().items()]
-    salida += [(n["id"], n["name"]) for n in data["nodes"]]
-    return salida
+    return [(n["id"], n["name"]) for n in data["nodes"]]
 
 
 def entities(kind: str, data: dict | None = None) -> list[dict]:

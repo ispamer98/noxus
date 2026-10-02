@@ -47,6 +47,7 @@ son 14.7% en horizontal y 5.4% en vertical; sobre el del ventilador (520x300),
 # para que cambiar la forma de un mando no obligue a tocar la vista.
 CUERPO_TV = (300, 820)
 CUERPO_VENTILADOR = (280, 580)
+CUERPO_HUMIDIFICADOR = (190, 400)
 
 _TECLA = 44
 
@@ -223,6 +224,27 @@ _VENTILADOR_TECHO = [
     _b("Subir velocidad", "fan", "84%", _VENT_C3[2], ico=ICO_GRANDE),
 ]
 
+# ── Mando de humidificador ultrasónico (Simpeak 550 ml) ─────────────────────
+# El mando real (visto en foto) es estrecho y alto, de esquinas redondeadas,
+# con SOLO seis teclas en dos filas de tres y un rótulo impreso bajo cada una:
+#   fila 1: ON/OFF · Intermitente (gotas sueltas) · Continuo
+#   fila 2: Temporizador · Grande / pequeño (tamaño de la niebla) · Luz
+# Cuerpo 190x400: 44px son 23% en horizontal y 11% en vertical; con columnas
+# 20/50/80% y filas 14/36% sobra de margen.
+#
+# «Encender / Apagar» es la tecla que usa el accesorio «Humidificador» (modo
+# una sola tecla): su etiqueta no se cambia sin repasar esa ficha.
+_HUM_C3 = ("20%", "50%", "80%")
+
+_HUMIDIFICADOR = [
+    _b("Encender / Apagar", "power", "14%", _HUM_C3[0]),
+    _b("Intermitente", "droplets", "14%", _HUM_C3[1]),
+    _b("Continuo", "waves", "14%", _HUM_C3[2]),
+    _b("Temporizador", "clock", "36%", _HUM_C3[0]),
+    _b("Grande / pequeño", "gauge", "36%", _HUM_C3[1]),
+    _b("Luz", "sun", "36%", _HUM_C3[2]),
+]
+
 # id -> (etiqueta del desplegable, icono del mando, cuerpo, grupos, botones)
 PLANTILLAS = {
     "vacio": ("Vacío — lo monto yo botón a botón", "tv", CUERPO_TV, [], []),
@@ -234,11 +256,15 @@ PLANTILLAS = {
         f"Ventilador de techo con luz — {len(_VENTILADOR_TECHO)} botones",
         "fan", CUERPO_VENTILADOR, _VENTILADOR_GRUPOS, _VENTILADOR_TECHO,
     ),
+    "humidificador": (
+        f"Humidificador — {len(_HUMIDIFICADOR)} botones",
+        "droplets", CUERPO_HUMIDIFICADOR, [], _HUMIDIFICADOR,
+    ),
 }
 
 # Orden en que se ofrecen (los dicts conservan orden de inserción, pero
 # dejarlo explícito evita que reordenar el dict cambie la UI sin querer).
-IDS_PLANTILLAS = ("vacio", "lg_magic", "ventilador_techo")
+IDS_PLANTILLAS = ("vacio", "lg_magic", "ventilador_techo", "humidificador")
 
 
 def opciones() -> list[tuple[str, str]]:

@@ -1,6 +1,6 @@
 """
 Vista "Accesos": puertas/cerraduras eléctricas colgando de un nodo — la
-Raspberry/Pi Zero (SSH + raspi-gpio, siempre disponibles) o un nodo ESP32
+Raspberry/Pi Zero (servicio gpio-mqtt) o un nodo ESP32, todos por MQTT
 dado de alta en la pestaña Alarma (MQTT).
 
 Cada puerta define su propio tiempo de pulso (pulse_seconds) y admite 4
@@ -57,20 +57,63 @@ def _pulse_field(default_value: str = "2") -> rx.Component:
     )
 
 
+def _maniobra_fields(modo="pulso", apertura="0", espera="0", cierre="0") -> list[rx.Component]:
+    """Cómo trabaja la cerradura (ver nodes/store.py, MODOS_CERRADURA) y cuánto
+    tarda la puerta en moverse. Con los tres tiempos a cero es un cerradero
+    normal; con tiempos, un portón: el plano pinta su maniobra en ámbar."""
+    def segundos(nombre: str, etiqueta: str, valor) -> rx.Component:
+        return rx.vstack(
+            rx.text(etiqueta, size="1", color=theme.MUTED),
+            styled_input(name=nombre, default_value=valor, type="number", min=0, max=300),
+            spacing="1", flex="1", min_width="0",
+        )
+
+    return [
+        field(
+            "Cómo trabaja la cerradura",
+            styled_select(
+                "Elige cómo abre",
+                select_content(
+                    rx.select.item("Un pulso abre; se cierra sola", value="pulso"),
+                    rx.select.item("Un pulso abre y otro cierra", value="dos_pulsos"),
+                ),
+                name="modo", default_value=modo,
+            ),
+            hint="Cerradero o portón con cierre automático: un pulso. Portón paso a "
+                 "paso (cada pulso invierte el movimiento): dos pulsos.",
+        ),
+        field(
+            "Maniobra (segundos)",
+            rx.hstack(
+                segundos("apertura_s", "Abriendo", apertura),
+                segundos("espera_s", "Abierta para pasar", espera),
+                segundos("cierre_s", "Cerrando", cierre),
+                spacing="2", width="100%",
+            ),
+            hint="Para un portón. Todo a 0 = puerta normal.",
+        ),
+    ]
+
+
 def _edit_door_dialog(door: dict) -> rx.Component:
     return form_dialog_content(
         icon="door-closed",
-        title="Editar puerta",
+        title="Ajustes de la puerta",
         accent=theme.ACCENT,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=door["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=door["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=door["name"])),
                 field("Nodo", node_select(default_value=door["node_id"])),
-                field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", default_value=door["pin"])),
+                field("Pin o señal MQTT", styled_input(name="pin", default_value=door["pin"])),
                 _pulse_field(door["pulse_seconds"].to(str)),
+                *_maniobra_fields(
+                    rx.cond(door["modo"], door["modo"].to(str), "pulso"),
+                    door["apertura_s"].to(str), door["espera_s"].to(str),
+                    door["cierre_s"].to(str),
+                ),
                 *floor_plan_fields(
-                    door["floor_top"],
+                    False,
                     rx.cond(door["floor_icon"], door["floor_icon"].to(str), "door-closed"),
                     key=door["id"].to(str),
                 ),
@@ -98,6 +141,14 @@ def _door_card(door: dict) -> rx.Component:
                     rx.text(door["name"], size="3", weight="bold", color=theme.TEXT),
                     rx.badge(door["node_name"], variant="outline", size="1", color_scheme="purple"),
                     rx.badge(f"Pulso {door['pulse_seconds']}s", variant="soft", size="1", color_scheme="gray"),
+                    rx.cond(door["modo"] == "dos_pulsos",
+                            rx.badge("Dos pulsos", variant="soft", size="1", color_scheme="amber")),
+                    rx.cond(door["apertura_s"].to(int) + door["espera_s"].to(int)
+                            + door["cierre_s"].to(int) > 0,
+                            rx.badge(door["apertura_s"].to(str) + "s ↑ · "
+                                     + door["espera_s"].to(str) + "s · "
+                                     + door["cierre_s"].to(str) + "s ↓",
+                                     variant="soft", size="1", color_scheme="blue")),
                     spacing="2",
                     align="center",
                     wrap="wrap",
@@ -174,14 +225,15 @@ def _add_door_dialog() -> rx.Component:
             icon="door-closed",
             title="Nueva puerta / cerradura",
             accent=theme.ACCENT,
-            # Raspberry/Pi Zero actúan por SSH (pin GPIO, como el ventilador); un nodo ESP32 actúa
+            # Todos los nodos (Raspberry, Pi Zero, ESP32) actúan por MQTT; un nodo ESP32 actúa
             # por MQTT (nombre de señal — el topic se arma solo como casa/<nombre del nodo>/<señal>).
             form=rx.form.root(
                 rx.vstack(
                     field("Nombre", styled_input(name="name", placeholder="Puerta Garaje")),
                     field("Nodo", node_select()),
-                    field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", placeholder="27 · puerta_garaje")),
+                    field("Pin o señal MQTT", styled_input(name="pin", placeholder="27 · puerta_garaje")),
                     _pulse_field(),
+                    *_maniobra_fields(),
                     dialog_footer(confirm_label="Añadir"),
                     spacing="3",
                     width="100%",
@@ -210,11 +262,11 @@ def _door_chip(level_id: str, door: dict) -> rx.Component:
 def _edit_level_dialog(level: dict) -> rx.Component:
     return form_dialog_content(
         icon="key",
-        title="Editar nivel de acceso",
+        title="Ajustes del nivel de acceso",
         accent=theme.PURPLE,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=level["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=level["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=level["name"])),
                 dialog_footer(confirm_label="Guardar", color_scheme="purple"),
                 spacing="3",
@@ -283,11 +335,11 @@ def _add_level_dialog() -> rx.Component:
 def _edit_credential_dialog(cred: dict) -> rx.Component:
     return form_dialog_content(
         icon="id-card",
-        title="Editar tarjeta / tag",
+        title="Ajustes de la tarjeta / tag",
         accent=theme.ACCENT,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=cred["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=cred["id"], type="hidden"),
                 field("Nombre del titular", styled_input(name="holder_name", default_value=cred["holder_name"])),
                 field("ID de tarjeta/tag", styled_input(name="tag_id", default_value=cred["tag_id"])),
                 field("Nivel de acceso", _level_select(default_value=cred["level_id"])),

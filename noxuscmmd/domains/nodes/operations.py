@@ -18,11 +18,15 @@ mando o un botón de equipo creados en otra pestaña no existían para quien
 pulsaba desde esta hasta recargar. Leyendo del almacén, eso desaparece.
 """
 import asyncio
+import logging
 import re
+import time
 
 from . import store
 from ..devices import registry, gpio_bus, mqtt_bus, ssh_bus, ir_bus, webos_bus
+from ..security import audit, logs
 from ..devices.models import SSHSpec
+from ...core import bus
 from ...core.connectivity import NetUtils
 
 
@@ -61,9 +65,6 @@ def find(collection: str, item_id: str, data: dict | None = None) -> dict | None
 
 
 def node_name(node_id: str, data: dict | None = None) -> str:
-    host = registry.gpio_hosts().get(node_id)
-    if host:
-        return host.name
     node = find("nodes", node_id, data)
     return node["name"] if node else "?"
 
@@ -72,13 +73,10 @@ def node_ssh(node_id: str, data: dict | None = None) -> SSHSpec | None:
     """SSHSpec para un nodo accionable por SSH+raspi-gpio — la Raspberry/Pi
     Zero fijas del registry, o un nodo dinámico dado de alta con kind="ssh"
     (mismo mecanismo, sin estar hardcodeado). None = ese nodo va por MQTT."""
-    host = registry.gpio_hosts().get(node_id)
-    if host:
-        return host.ssh
-    node = find("nodes", node_id, data)
-    if node and node.get("kind") == "ssh":
-        return SSHSpec(host=node["ip"], user=node.get("user", ""))
-    return None
+    # Solo para LEER un pin: accionar va siempre por MQTT. Un nodo que además
+    # es un equipo (la Pi) tiene su SSH en Equipos, con el mismo id.
+    host = registry.hosts().get(node_id)
+    return host.ssh if host and host.ssh.user else None
 
 
 def host_ssh(host_id: str) -> SSHSpec | None:
@@ -89,8 +87,7 @@ def host_ssh(host_id: str) -> SSHSpec | None:
     host = store.find_host_by_id(host_id)
     if host is not None:
         return SSHSpec(host=host["ip"], user=host["user"], os=host.get("os", "linux")) if host["user"] else None
-    # Equipos que no están en el almacén (cam_ptz_host/cam_fija_host, que
-    # siguen siendo literales del registry porque no se gestionan desde la web).
+    # Equipos que no están en el almacén (literales del registry, si queda alguno).
     estatico = registry.hosts().get(host_id)
     return estatico.ssh if estatico and estatico.ssh.user else None
 
@@ -106,6 +103,8 @@ def host_name(host_id: str) -> str:
 # opuestas sobre el mismo relé se entrelazan y el estado final depende de cuál
 # de los dos SSH conteste antes. De paso arregla el doble clic en la web.
 _TARGET_LOCKS: dict[str, asyncio.Lock] = {}
+_LIGHT_BACKGROUND_TASKS: set[asyncio.Task] = set()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _lock(target: str) -> asyncio.Lock:
@@ -115,13 +114,12 @@ def _lock(target: str) -> asyncio.Lock:
     return lock
 
 
-async def _enviar_a_rele(spec: dict, on: bool, ssh: SSHSpec | None) -> None:
-    """El transporte común de luces y puertas: SSH+raspi-gpio si el nodo lo
-    admite, MQTT si no. Es la única bifurcación de transporte que hay para los
-    relés, y está en un sitio para que no se separen."""
-    if ssh:
-        await gpio_bus.set_pin(ssh, spec["pin"], on, timeout=3)
-        return
+async def _enviar_a_rele(spec: dict, on: bool) -> None:
+    """El transporte de TODOS los relés (luces, puertas, persianas): MQTT.
+    ON/OFF en casa/<nodo>/<pin>/set, igual para un ESP32 que para la
+    Raspberry — en la Pi lo atiende gpio-mqtt.service (scripts/gpio_mqtt.py),
+    que devuelve el nivel real del pin en casa/<nodo>/<pin>. Antes, a la
+    Raspberry se le hablaba por SSH + raspi-gpio en cada orden."""
     bus = mqtt_bus.get_running_bus()
     if bus is None:
         raise NotConfigured("MQTT no conectado")
@@ -148,6 +146,12 @@ async def _enviar_por_mando(light: dict, on: bool) -> None:
     # es el propio aparato el que alterna. El panel solo lleva la cuenta de en
     # qué cree que está, que es lo mismo que hace cualquier mando.
     tecla = light.get("btn_on", "") if una_sola else light.get("btn_on" if on else "btn_off", "")
+    await _pulsar_tecla_mando(light, tecla, on=on, una_sola=una_sola)
+
+
+async def _pulsar_tecla_mando(light: dict, tecla: str, *, on: bool,
+                              una_sola: bool = False) -> None:
+    """Pulsa una tecla de accesorio por el transporte común del mando."""
     mando = light.get("remote_id", "")
     if not mando or not tecla:
         cual = ("la tecla de encendido" if una_sola
@@ -163,13 +167,72 @@ async def _enviar_por_mando(light: dict, on: bool) -> None:
     await send_remote_button(mando, tecla, apuntar_estado=False)
 
 
+class _FalloParcialSecuencia(Exception):
+    """ON llegó; falló una tecla posterior de la secuencia de activación."""
+
+
+async def _enviar_secuencia_encendido(light: dict) -> None:
+    """Envía la secuencia configurada sin duplicar el transporte IR/RF/webOS."""
+    for indice, (tecla, pausa) in enumerate(store.secuencia_encendido(light)):
+        if pausa:
+            await asyncio.sleep(pausa)
+        try:
+            await _pulsar_tecla_mando(light, tecla, on=True, una_sola=True)
+        except Exception as e:
+            if indice:
+                raise _FalloParcialSecuencia(str(e)) from e
+            raise
+
+
+async def _enviar_resto_encendido(light: dict, incluir_modo: bool) -> None:
+    """Envía la emulación de Luz y, después, las teclas de modo."""
+    pasos_luz = store.pasos_apagar_luz(light)
+    modo = store.secuencia_encendido(light)[1:] if incluir_modo else []
+    for tecla, pausa in pasos_luz + modo:
+        if pausa:
+            await asyncio.sleep(pausa)
+        try:
+            await _pulsar_tecla_mando(light, tecla, on=True, una_sola=True)
+        except Exception as e:
+            raise _FalloParcialSecuencia(str(e)) from e
+
+
+async def _continuar_encendido(light_id: str, light: dict, incluir_modo: bool) -> None:
+    """Continúa una activación bajo el lock adquirido por set_light."""
+    try:
+        await _enviar_resto_encendido(light, incluir_modo)
+    except _FalloParcialSecuencia as e:
+        await asyncio.to_thread(store.set_mando_state, light_id, True, ciclo_min=60)
+        audit.registrar_sistema(logs.LUCES, "LUZ_ERROR",
+                                f"{light['name']}: {e}", entidad=light_id)
+        raise OperationError(str(e)) from e
+    except Exception as e:
+        audit.registrar_sistema(logs.LUCES, "LUZ_ERROR",
+                                f"{light['name']}: {e}", entidad=light_id)
+        raise OperationError(str(e)) from e
+
+
+def _background_done(task: asyncio.Task) -> None:
+    _LIGHT_BACKGROUND_TASKS.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        _LOGGER.error("Secuencia de encendido en segundo plano fallida: %s", error)
+
+
 def _remote_con_estado_real(remote_id: str, data: dict) -> bool:
     """Si este mando tiene algún botón webOS, la tele que hay detrás tiene un
     estado de verdad que preguntar por red (webos_bus.is_on()) — no hace falta
     fiarse a ciegas del último que se le pidió. Ver el aviso de `set_light`
     sobre por qué esa suposición se desincroniza sola."""
     mando = find("ir_remotes", remote_id, data)
-    return bool(mando) and any(b.get("kind") == "webos" for b in mando.get("buttons", []))
+    # Un mando SIMULADO (de prueba) no tiene tele detrás: preguntar por red
+    # iría a la tele LG REAL de la casa, que casi siempre está apagada, y el
+    # aparato de prueba no se podía apagar nunca (cada toque «encendía»).
+    if not mando or mando.get("simulado"):
+        return False
+    return any(b.get("kind") == "webos" for b in mando.get("buttons", []))
 
 
 # ── Luces ───────────────────────────────────────────────────────────────────
@@ -189,7 +252,26 @@ async def set_light(light_id: str, on: bool | None = None, *,
     que puede tardar un encendido por SSH. El motor no los pasa: no tiene
     ninguna pantalla que repintar.
     """
-    async with _lock(f"light:{light_id}"):
+    # Una orden puede llegar horas después de que el aparato haya acabado su
+    # ciclo. Caducar antes de leer evita que un conmutar se calcule desde un ON
+    # que ya no es cierto. No hay transporte en esta operación.
+    await asyncio.to_thread(expirar_accesorios)
+
+    # Una persiana no se «enciende»: encender = subir, apagar = bajar, con el
+    # enclavamiento de sus dos relés (ver mover_persiana_rele). Vale para todo
+    # lo que llama aquí: el plano, las automatizaciones, Alexa.
+    previa = find("lights", light_id)
+    if previa and previa.get("kind") == store.PERSIANA_RELE:
+        actual = bool(store.read_all()["sensor_states"].get(light_id, False))
+        sube = (not actual) if on is None else bool(on)
+        await mover_persiana_rele(light_id, "subir" if sube else "bajar")
+        if on_applied:
+            await on_applied(sube)
+        return sube
+
+    lock = _lock(f"light:{light_id}")
+    await lock.acquire()
+    try:
         data = store.read_all()
         light = find("lights", light_id, data)
         if light is None:
@@ -214,7 +296,6 @@ async def set_light(light_id: str, on: bool | None = None, *,
             except Exception:
                 pass  # sin red ahora mismo: se sigue confiando en lo guardado
         nuevo = (not actual) if on is None else bool(on)
-        ssh = None if por_mando else node_ssh(light["node_id"], data)
 
         # El estado que pinta el plano es la fuente de verdad para TODAS las
         # luces y accesorios. Una orden explícita «apaga»/«enciende» que ya se
@@ -225,21 +306,69 @@ async def set_light(light_id: str, on: bool | None = None, *,
         if on is not None and nuevo == actual:
             return actual
 
-        await asyncio.to_thread(store.set_sensor_state, light_id, nuevo)
+        modo_secuenciado = (por_mando and nuevo
+                            and light.get("mando_modo") == store.UNA_TECLA
+                            and bool(light.get("modo_encendido")))
+        ciclo_min = (store.duracion_ciclo_min(light.get("modo_encendido", ""))
+                     if modo_secuenciado else None)
+        if por_mando:
+            await asyncio.to_thread(store.set_mando_state, light_id, nuevo,
+                                    ciclo_min=ciclo_min)
+        else:
+            await asyncio.to_thread(store.set_sensor_state, light_id, nuevo)
         if on_applied:
             await on_applied(nuevo)
+        # SIMULADO: elemento de prueba sin hardware detrás. Cambia de estado
+        # en el panel y no manda nada a ningún sitio (ver store: "simulado").
+        if light.get("simulado"):
+            return nuevo
         try:
-            if por_mando:
+            pasos_luz = store.pasos_apagar_luz(light) if por_mando and nuevo else []
+            if pasos_luz:
+                await _pulsar_tecla_mando(light, light["btn_on"], on=True, una_sola=True)
+                tarea = asyncio.create_task(
+                    _continuar_encendido_con_lock(light_id, light, lock, modo_secuenciado))
+                _LIGHT_BACKGROUND_TASKS.add(tarea)
+                tarea.add_done_callback(_background_done)
+                return nuevo
+            if modo_secuenciado:
+                await _enviar_secuencia_encendido(light)
+            elif por_mando:
                 await _enviar_por_mando(light, nuevo)
             else:
-                await _enviar_a_rele(light, nuevo, ssh)
+                await _enviar_a_rele(light, nuevo)
+        except _FalloParcialSecuencia as e:
+            # ON sí llegó y el aparato está en su primer ciclo (1 h), así que
+            # el estado optimista no se revierte. Se deja constancia igual que
+            # los demás fallos de luces y el llamador recibe el error.
+            await asyncio.to_thread(store.set_mando_state, light_id, True,
+                                    ciclo_min=60)
+            audit.registrar_sistema(logs.LUCES, "LUZ_ERROR",
+                                    f"{light['name']}: {e}", entidad=light_id)
+            raise OperationError(str(e)) from e
         except Exception as e:
             # La orden no salió: lo que se pintó era mentira, se deshace.
-            await asyncio.to_thread(store.set_sensor_state, light_id, not nuevo)
+            if por_mando:
+                await asyncio.to_thread(store.set_mando_state, light_id, not nuevo)
+            else:
+                await asyncio.to_thread(store.set_sensor_state, light_id, not nuevo)
             if on_failed:
                 await on_failed(nuevo, e)
             raise OperationError(str(e)) from e
         return nuevo
+    finally:
+        # Una secuencia con apagado de luz conserva el lock en su tarea de
+        # fondo; las demás rutas lo liberan al volver al llamador.
+        if not ("tarea" in locals() and tarea and not tarea.done()):
+            lock.release()
+
+
+async def _continuar_encendido_con_lock(light_id: str, light: dict,
+                                        lock: asyncio.Lock, incluir_modo: bool) -> None:
+    try:
+        await _continuar_encendido(light_id, light, incluir_modo)
+    finally:
+        lock.release()
 
 
 # ── Puertas ─────────────────────────────────────────────────────────────────
@@ -248,6 +377,67 @@ async def set_light(light_id: str, on: bool | None = None, *,
 # llevara el suyo aparte, "Cortar pulso" desde la web no cancelaría un pulso
 # lanzado por una regla, y el auto-cierre de esa regla pisaría después un
 # "Mantener abierto" hecho a mano.
+# ── Persianas de dos relés ────────────────────────────────────────────────
+# Un relé por sentido (pin_subir / pin_bajar). La regla de oro: NUNCA los dos
+# a la vez — el motor recibiría tensión en ambos sentidos. Por eso se apaga
+# siempre primero el contrario, y al acabar el recorrido se apagan los dos.
+_PERSIANA_TASKS: dict[str, asyncio.Task] = {}
+
+
+async def mover_persiana_rele(light_id: str, accion: str, *, fin: bool = False) -> dict:
+    """accion: "subir" | "bajar" | "parar". Devuelve la ficha. `fin=True` es la
+    parada automática al acabar el recorrido (queda «subida»/«bajada»); un
+    «parar» a mano la deja «parada» a medias."""
+    if accion not in ("subir", "bajar", "parar"):
+        raise OperationError(f"Acción de persiana desconocida: {accion}")
+    async with _lock(f"light:{light_id}"):
+        data = store.read_all()
+        p = find("lights", light_id, data)
+        if p is None:
+            raise EntityNotFound(f"La persiana {light_id} ya no existe")
+        tarea = _PERSIANA_TASKS.pop(light_id, None)
+        if tarea and not tarea.done() and tarea is not asyncio.current_task():
+            tarea.cancel()
+        if not p.get("simulado"):
+            sube = {"pin": p["pin_subir"], "topic_cmd": p["topic_subir"]}
+            baja = {"pin": p["pin_bajar"], "topic_cmd": p["topic_bajar"]}
+            try:
+                if accion == "subir":
+                    await _enviar_a_rele(baja, False)
+                    await _enviar_a_rele(sube, True)
+                elif accion == "bajar":
+                    await _enviar_a_rele(sube, False)
+                    await _enviar_a_rele(baja, True)
+                else:
+                    await _enviar_a_rele(sube, False)
+                    await _enviar_a_rele(baja, False)
+            except NotConfigured:
+                raise
+            except Exception as e:
+                raise OperationError(f"{p['name']}: {e}") from e
+        if accion != "parar":
+            await asyncio.to_thread(store.set_sensor_state, light_id, accion == "subir")
+            await asyncio.to_thread(store.set_persiana_estado, light_id,
+                                    "subiendo" if accion == "subir" else "bajando")
+            segundos = float(p.get("recorrido_s") or 7)
+            _PERSIANA_TASKS[light_id] = asyncio.create_task(_fin_recorrido(light_id, segundos))
+        elif fin:
+            subida = bool(store.read_all()["sensor_states"].get(light_id, False))
+            await asyncio.to_thread(store.set_persiana_estado, light_id,
+                                    "subida" if subida else "bajada")
+        else:
+            await asyncio.to_thread(store.set_persiana_estado, light_id, "parada")
+        return p
+
+
+async def _fin_recorrido(light_id: str, segundos: float) -> None:
+    await asyncio.sleep(segundos)
+    try:
+        await mover_persiana_rele(light_id, "parar", fin=True)
+    except Exception as e:
+        print(f"⚠️ Persiana {light_id}: no se pudo parar al final del recorrido: {e}")
+
+
 _DOOR_PULSE_TASKS: dict[str, asyncio.Task] = {}
 
 
@@ -266,8 +456,10 @@ async def send_door_state(door_id: str, on: bool) -> dict:
         door = find("doors", door_id, data)
         if door is None:
             raise EntityNotFound(f"La puerta {door_id} ya no existe")
+        if door.get("simulado"):
+            return door  # de prueba: no hay cerradura de verdad a la que hablar
         try:
-            await _enviar_a_rele(door, on, node_ssh(door["node_id"], data))
+            await _enviar_a_rele(door, on)
         except NotConfigured:
             raise
         except Exception as e:
@@ -275,10 +467,76 @@ async def send_door_state(door_id: str, on: bool) -> dict:
         return door
 
 
+# Cuándo empezó el «abrir para pasar» en curso de cada puerta (time.monotonic).
+# Con los tiempos de su ficha dice en qué punto de la maniobra está, que es lo
+# que necesita hold_door para saber si la puerta está ya abierta o no.
+_PASE_INICIO: dict[str, float] = {}
+
+
+def tiempos_maniobra(door: dict) -> tuple[float, float, float]:
+    """(apertura, espera, cierre) en segundos. Sin tiempos propios, el tránsito
+    genérico de la ficha para abrir y cerrar, y ninguna espera."""
+    apertura = float(door.get("apertura_s") or 0)
+    espera = float(door.get("espera_s") or 0)
+    cierre = float(door.get("cierre_s") or 0)
+    if not any((apertura, espera, cierre)):
+        transito = float(door.get("transito_s") or 3)
+        return transito, 0.0, transito
+    return apertura, espera, cierre
+
+
+def fase_pase(door_id: str, door: dict | None = None) -> str:
+    """"abriendo", "abierta", "cerrando" o "" según lo que lleve el último
+    «abrir para pasar» de esa puerta."""
+    inicio = _PASE_INICIO.get(door_id)
+    door = door or find("doors", door_id)
+    if inicio is None or door is None:
+        return ""
+    apertura, espera, cierre = tiempos_maniobra(door)
+    t = time.monotonic() - inicio
+    if t < apertura:
+        return "abriendo"
+    if t < apertura + espera:
+        return "abierta"
+    if t < apertura + espera + cierre:
+        return "cerrando"
+    return ""
+
+
+def puerta_abierta(door_id: str, data: dict | None = None) -> bool:
+    """Lo mejor que se sabe de si la puerta está (o va a quedar) abierta: un
+    «abrir para pasar» que aún no ha empezado a cerrar, que se haya dejado
+    mantenida abierta, o el magnético de su Puerta del plano."""
+    data = data if data is not None else store.read_all()
+    door = find("doors", door_id, data)
+    if door is None:
+        return False
+    if fase_pase(door_id, door) in ("abriendo", "abierta"):
+        return True
+    estados = data.get("sensor_states", {})
+    if estados.get(door_id, False):
+        return True
+    magnetico = next((p.get("sensor_id") for p in data.get("puertas", [])
+                      if p.get("cerradura_id") == door_id), "")
+    return bool(magnetico) and bool(estados.get(magnetico, False))
+
+
+async def _un_pulso(door_id: str, segundos: float) -> None:
+    # Si se cancela a mitad NO se suelta aquí: quien cancela manda justo
+    # después su propia orden, y un OFF tardío de esta tarea la pisaría.
+    await send_door_state(door_id, True)
+    await asyncio.sleep(segundos)
+    await send_door_state(door_id, False)
+
+
 def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) -> asyncio.Task:
     """Abrir (pulso): activa el relé unos segundos y lo vuelve a cerrar solo.
     Cancelable con cancel_door_pulse() o por cualquier otro pulso de la misma
     puerta. `seconds=None` toma el pulso configurado en la ficha.
+
+    Con una cerradura de DOS pulsos (store.MODO_DOS_PULSOS) la puerta no se
+    cierra sola: al acabar apertura + espera se da el segundo pulso, el de
+    cierre. Mantenerla abierta a mitad cancela la tarea y, con ella, ese pulso.
 
     Devuelve la tarea sin esperarla — quien llama decide si le importa cuándo
     acaba. `on_finish` recibe el mensaje del resultado para que una sesión
@@ -288,11 +546,16 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
     async def _pulse():
         nombre = (find("doors", door_id) or {}).get("name", door_id)
         try:
-            door = await send_door_state(door_id, True)
+            door = find("doors", door_id) or {}
             espera = float(door.get("pulse_seconds", 2)) if seconds is None else float(seconds)
-            await asyncio.sleep(espera)
-            await send_door_state(door_id, False)
-            msg = f"✅ {door['name']} abierta"
+            _PASE_INICIO[door_id] = time.monotonic()
+            await _un_pulso(door_id, espera)
+            msg = f"✅ {nombre} abierta"
+            if door.get("modo") == store.MODO_DOS_PULSOS:
+                apertura, abierta, _ = tiempos_maniobra(door)
+                await asyncio.sleep(max(0.0, apertura + abierta - espera))
+                await _un_pulso(door_id, espera)
+                msg = f"✅ {nombre}: abierta y cerrada"
         except asyncio.CancelledError:
             # El re-raise es lo que deja la tarea CANCELADA y no "terminada":
             # es la diferencia entre "se cortó el pulso" y "el pulso acabó
@@ -301,6 +564,7 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
             msg = f"⏹️ Pulso de {nombre} cortado"
             raise
         except Exception as e:
+            _PASE_INICIO.pop(door_id, None)
             msg = f"❌ {nombre}: {e}"
         finally:
             if on_finish:
@@ -310,6 +574,36 @@ def pulse_door(door_id: str, seconds: float | None = None, *, on_finish=None) ->
     tarea = asyncio.create_task(_pulse())
     _DOOR_PULSE_TASKS[door_id] = tarea
     return tarea
+
+
+async def hold_door(door_id: str, abierta: bool) -> tuple[dict, bool]:
+    """Mantener abierta (True) o cerrada (False), según cómo trabaje la
+    cerradura. Devuelve la ficha y si la puerta se va a MOVER (estaba en el
+    otro estado), que es lo que decide si el plano pinta la maniobra.
+
+    - Un pulso: el relé se queda activado (abierta) o se suelta (cerrada).
+    - Dos pulsos: un único pulso, y solo si hace falta; si ya estaba así, otro
+      pulso la movería justo al revés.
+
+    Se apunta como estado de la cerradura sin esperar a que conteste: muchas no
+    contestan nunca y el plano se quedaba igual que antes de pulsar."""
+    data = store.read_all()
+    door = find("doors", door_id, data)
+    if door is None:
+        raise EntityNotFound(f"La puerta {door_id} ya no existe")
+    estaba = puerta_abierta(door_id, data)
+    cancel_door_pulse(door_id)
+    _PASE_INICIO.pop(door_id, None)
+    if door.get("modo") == store.MODO_DOS_PULSOS:
+        # Un pulso cortado a medias pudo dejar el relé activado: sin soltarlo
+        # antes, el pulso de ahora no sería un pulso.
+        await send_door_state(door_id, False)
+        if estaba != abierta:
+            await _un_pulso(door_id, float(door.get("pulse_seconds", 2)))
+    else:
+        await send_door_state(door_id, abierta)
+    await asyncio.to_thread(store.set_sensor_state, door_id, abierta)
+    return door, estaba != abierta
 
 
 # ── Mandos IR / RF / webOS ──────────────────────────────────────────────────
@@ -337,16 +631,64 @@ def _apuntar_estado_de_accesorios(remote_id: str, button_id: str) -> None:
     """
     datos = store.read_all()
     estados = datos.get("sensor_states", {})
+    ahora = time.time()
     for luz in datos.get("lights", []):
         if luz.get("kind") != store.LUZ_MANDO or luz.get("remote_id") != remote_id:
             continue
         if luz.get("mando_modo") == store.UNA_TECLA:
             if luz.get("btn_on") == button_id:
-                store.set_sensor_state(luz["id"], not estados.get(luz["id"], False))
+                store.set_mando_state(luz["id"], not estados.get(luz["id"], False), ahora)
         elif luz.get("btn_on") == button_id:
-            store.set_sensor_state(luz["id"], True)
+            store.set_mando_state(luz["id"], True, ahora)
         elif luz.get("btn_off") == button_id:
-            store.set_sensor_state(luz["id"], False)
+            store.set_mando_state(luz["id"], False, ahora)
+
+
+def expirar_accesorios(ahora: float | None = None) -> list[str]:
+    """Apaga en el almacén los accesorios por mando cuyo ciclo haya acabado.
+
+    El vistazo inicial evita reescribir el JSON cada tres segundos por cada
+    sesión cuando no hay nada que caducar. La decisión y todas las transiciones
+    viven en un único ``_mutate``; por eso dos pestañas concurrentes solo
+    reciben una lista no vacía y solo una registra el evento.
+    """
+    if ahora is None:
+        ahora = time.time()
+
+    def vencido(light: dict, estados: dict) -> bool:
+        ciclo = light.get("ciclo_min")
+        if ciclo == 0:
+            return False  # Continuo se queda encendido hasta una orden de apagar.
+        minutos = ciclo if isinstance(ciclo, (int, float)) and ciclo > 0 else light.get("auto_apagado_min", 0)
+        inicio = light.get("encendido_en")
+        return (light.get("kind") == store.LUZ_MANDO
+                and bool(estados.get(light.get("id"), False))
+                and isinstance(inicio, (int, float))
+                and isinstance(minutos, (int, float)) and minutos > 0
+                and ahora >= inicio + minutos * 60)
+
+    previo = store.read_all()
+    if not any(vencido(light, previo.get("sensor_states", {}))
+               for light in previo.get("lights", [])):
+        return []
+
+    def _expirar(data):
+        expirados = []
+        estados = data["sensor_states"]
+        for light in data["lights"]:
+            if vencido(light, estados):
+                if store._aplicar_estado_mando(data, light["id"], False, ahora):
+                    expirados.append((light["id"], light["name"]))
+        return expirados
+
+    expirados = store._mutate(_expirar)
+    if not expirados:
+        return []
+    bus.publicar(bus.SENSORES)
+    for light_id, nombre in expirados:
+        audit.registrar_sistema(
+            logs.LUCES, "ACCESORIO_APAGADO_AUTOMATICO", nombre, entidad=light_id)
+    return [nombre for _, nombre in expirados]
 
 
 async def _despertar_tv_si_hace_falta(remote: dict) -> None:
@@ -386,6 +728,12 @@ async def send_remote_button(remote_id: str, button_id: str, *,
     if boton is None:
         raise EntityNotFound(f"Esa tecla ya no existe en {remote['name']}")
     etiqueta = f"{remote['name']} · {boton['label']}"
+    if remote.get("simulado"):
+        # Mando de prueba: la tecla «funciona» (los aparatos que cuelgan de él
+        # cambian de estado) pero no sale ninguna señal.
+        if apuntar_estado:
+            await asyncio.to_thread(_apuntar_estado_de_accesorios, remote_id, button_id)
+        return etiqueta
     if not boton.get("code"):
         raise NotConfigured(
             f'"{boton["label"]}" todavía no tiene señal — entra en '
@@ -508,13 +856,6 @@ async def set_node_pin(node_id: str, pin: str, on: bool) -> None:
     que alguien haya dado de alta como algo."""
     async with _lock(f"node_pin:{node_id}:{pin}"):
         data = store.read_all()
-        ssh = node_ssh(node_id, data)
-        if ssh:
-            try:
-                await gpio_bus.set_pin(ssh, pin, on, timeout=3)
-            except Exception as e:
-                raise OperationError(str(e)) from e
-            return
         bus = mqtt_bus.get_running_bus()
         if bus is None:
             raise NotConfigured("MQTT no conectado")

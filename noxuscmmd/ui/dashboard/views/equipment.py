@@ -161,11 +161,11 @@ def _add_button_dialog(host_id) -> rx.Component:
             max_width="380px",
             form=rx.form.root(
                 rx.vstack(
-                    rx.input(name="host_id", value=host_id, type="hidden"),
+                    rx.el.input(name="host_id", value=host_id, type="hidden"),
                     field("Nombre del botón", styled_input(name="label", placeholder="Reiniciar router")),
                     field("Tipo de acción", styled_select(
                         "Tipo de acción",
-                        rx.select.content(*[rx.select.item(label, value=val) for val, label in _BUTTON_KIND_OPTIONS]),
+                        select_content(*[rx.select.item(label, value=val) for val, label in _BUTTON_KIND_OPTIONS]),
                         name="kind", default_value="ssh_command",
                     )),
                     field(
@@ -327,11 +327,11 @@ def _host_form_fields(host=None) -> list[rx.Component]:
         ),
         field("Sistema", styled_select(
             "Sistema",
-            rx.select.content(*[rx.select.item(label, value=val) for val, label in _OS_OPTIONS]),
+            select_content(*[rx.select.item(label, value=val) for val, label in _OS_OPTIONS]),
             name="os",
             default_value=host["os"] if editando else "linux",
         ), hint="Decide el comando de apagado y reinicio."),
-        field("MAC (Wake on LAN, opcional)", styled_input(
+        field("MAC para Wake on LAN", styled_input(
             name="mac", placeholder="08-BF-B8-30-4E-1B",
             **({"default_value": host["mac"]} if editando else {}),
         )),
@@ -351,11 +351,11 @@ def _host_form_fields(host=None) -> list[rx.Component]:
 def _edit_host_dialog(host) -> rx.Component:
     return form_dialog_content(
         icon="server",
-        title="Editar equipo",
+        title="Ajustes del equipo",
         accent=theme.ACCENT,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=host["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=host["id"], type="hidden"),
                 *_host_form_fields(host),
                 dialog_footer(confirm_label="Guardar"),
                 spacing="3",
@@ -384,9 +384,9 @@ def _add_host_dialog() -> rx.Component:
                         rx.text("También es un nodo (ESP32/Raspberry) para sensores/puertas/luces", size="1", color=theme.MUTED),
                         spacing="2", align="center",
                     ),
-                    field("Tipo de nodo (si aplica)", styled_select(
+                    field("Tipo de nodo", styled_select(
                         "Tipo de nodo",
-                        rx.select.content(*[rx.select.item(label, value=val) for val, label in _NODE_KIND_OPTIONS]),
+                        select_content(*[rx.select.item(label, value=val) for val, label in _NODE_KIND_OPTIONS]),
                         name="node_kind", default_value="esp32",
                     )),
                     dialog_footer(confirm_label="Añadir"),

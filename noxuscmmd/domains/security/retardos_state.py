@@ -41,7 +41,7 @@ class RetardosState(rx.State):
                 "tipo": s.get("kind", ""),
                 "entrada": str(datos["elementos"].get(s["id"], {}).get("entrada", 0) or 0),
             }
-            for s in (nodos.get("sensors", []) + nodos.get("factory_sensors", []))
+            for s in nodos.get("sensors", [])
         ]
         self.elementos.sort(key=lambda e: e["nombre"].lower())
 

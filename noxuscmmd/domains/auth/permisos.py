@@ -43,7 +43,10 @@ _POR_ROL = {
     store.ADMIN: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, MANDOS, CAMARAS, AVISAR, AJUSTES},
     store.FAMILIA: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, MANDOS, CAMARAS, AVISAR},
     store.INVITADO: {VER, LUCES, EQUIPOS, MANDOS},
-    store.KIOSCO: {VER, LUCES, PUERTAS, EQUIPOS, MANDOS},
+    # La tablet de pared arma y desarma (2026-09-29): está en casa, a mano, y
+    # es donde se arma al salir. Solo el armado: los grupos no los edita
+    # (core/portero.py le deja lanzar únicamente los eventos de ArmingState).
+    store.KIOSCO: {VER, LUCES, PUERTAS, ARMAR, EQUIPOS, MANDOS},
     store.PENDIENTE: set(),
     store.BLOQUEADO: set(),
 }

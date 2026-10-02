@@ -41,6 +41,17 @@ def _fila(d: rx.Var) -> rx.Component:
             spacing="0", align="start", min_width="0",
         ),
         rx.spacer(),
+        # Mismo nombre que un aparato ya registrado: casi seguro es él mismo
+        # tras reinstalar la app. Un toque y vuelve con su rol y sus avisos.
+        rx.cond(
+            d["sustituye_a"] != "",
+            rx.button(
+                rx.icon("refresh-cw", size=14),
+                "Es «" + d["sustituye_nombre"].to(str) + "» reinstalado",
+                on_click=AuthAdminState.sustituir(d["id"], d["sustituye_a"].to(str)),
+                size="2", color_scheme="blue", flex_shrink="0",
+            ),
+        ),
         rx.button(
             rx.icon("check", size=14), "Dar acceso",
             on_click=AuthAdminState.cambiar_rol(d["id"], auth_store.INVITADO),

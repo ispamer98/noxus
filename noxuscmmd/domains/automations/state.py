@@ -200,7 +200,7 @@ class AutomationsState(rx.State):
     def titulo_editor(self) -> str:
         if self.desde_alexa:
             return "Nueva secuencia para Alexa"
-        return "Editar automatización" if self.draft_id else "Nueva automatización"
+        return "Ajustes de la automatización" if self.draft_id else "Nueva automatización"
 
     # ── Lista ────────────────────────────────────────────────────────────
     @rx.event

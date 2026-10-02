@@ -17,9 +17,6 @@ from ....domains.cameras.wall_state import VideoWallState
 from .. import theme
 from ..components.catalog_picker import catalog_picker
 
-_ASPECTO = "16 / 9"
-
-
 def _layout_button(l: dict) -> rx.Component:
     activo = VideoWallState.layout == l["id"]
     return rx.button(
@@ -42,12 +39,6 @@ def _wall_header() -> rx.Component:
             ),
             rx.spacer(),
             rx.button(
-                rx.icon("refresh-cw", size=13), "PC / Móvil",
-                on_click=VideoWallState.toggle_cam_mode, size="2", variant="soft",
-                title="Cambia el orden de negociación del vídeo — prueba esto si una "
-                      "cámara no arranca en tu red.",
-            ),
-            rx.button(
                 rx.icon("trash-2", size=13), "Vaciar",
                 on_click=VideoWallState.clear_all, size="2", variant="soft", color_scheme="red",
             ),
@@ -67,7 +58,7 @@ def _slot_empty(slot_id) -> rx.Component:
         on_click=VideoWallState.open_picker(slot_id),
         cursor="pointer",
         display="flex", align_items="center", justify_content="center",
-        width="100%", aspect_ratio=_ASPECTO,
+        width="100%", height="100%", min_height="0", overflow="hidden",
         background=theme.BG_CARD, class_name="nx-card", border=f"1px dashed {theme.BORDER}",
         border_radius="10px",
         transition="border-color 0.15s ease, background 0.15s ease",
@@ -81,7 +72,7 @@ def _slot_loading() -> rx.Component:
     domains/cameras/wall_state.py sobre por qué no se abren todas a la vez."""
     return rx.center(
         rx.spinner(size="2", color=theme.MUTED),
-        width="100%", aspect_ratio=_ASPECTO,
+        width="100%", height="100%", min_height="0", overflow="hidden",
         background="#000", border_radius="10px",
         border=f"1px solid {theme.BORDER}",
     )
@@ -100,7 +91,9 @@ def _slot_video(cam: dict, slot_id) -> rx.Component:
         cam["playable"].to(bool),
         rx.el.iframe(
             src=url,
-            style={"width": "100%", "height": "100%", "border": "none"},
+            scrolling="no",
+            style={"display": "block", "width": "100%", "height": "100%",
+                   "border": "none", "overflow": "hidden"},
             allow="autoplay; fullscreen",
         ),
         rx.center(
@@ -140,7 +133,7 @@ def _slot_filled(slot_id, camera_id) -> rx.Component:
                 position="absolute", top="0", left="0", padding="6px 8px",
                 background="linear-gradient(to bottom, rgba(0,0,0,0.65), transparent)",
             ),
-            position="relative", width="100%", aspect_ratio=_ASPECTO,
+            position="relative", width="100%", height="100%", min_height="0",
             border_radius="10px", overflow="hidden", background="#000",
             border=f"1px solid {theme.BORDER}",
         ),
@@ -157,36 +150,36 @@ def _slot_cell(slot_id) -> rx.Component:
     )
 
 
-def _grid(cols: int) -> rx.Component:
+def _grid(cols: int, rows: int) -> rx.Component:
     return rx.box(
         rx.foreach(VideoWallState.slot_ids, _slot_cell),
         display="grid",
-        # UNA columna en móvil siempre, sea cual sea el reparto elegido — no
-        # es solo estética: con dos o más columnas en una pantalla estrecha,
-        # el hueco se queda tan poco ancho que el reproductor de vídeo
-        # (la página stream.html de go2rtc, ajena a nosotros) media su tamaño
-        # mal y el vídeo sale a medio encajar, mitad negro. Una columna evita
-        # el problema de raíz: cada hueco es siempre lo bastante ancho.
-        style={"grid_template_columns": rx.breakpoints(initial="1fr", sm=f"repeat({cols}, 1fr)")},
+        style={"grid_template_columns": f"repeat({cols}, minmax(0, 1fr))",
+               "grid_template_rows": f"repeat({rows}, minmax(0, 1fr))"},
         gap="10px",
-        width="100%",
+        width="100%", height="100%", min_height="0", overflow="hidden",
+        class_name="nx-video-wall-grid",
     )
 
 
 def video_wall_view() -> rx.Component:
-    return rx.vstack(
-        _wall_header(),
-        rx.match(
-            VideoWallState.layout,
-            ("1", _grid(1)),
-            ("2h", _grid(2)),
-            ("2v", _grid(1)),
-            ("4", _grid(2)),
-            ("6", _grid(3)),
-            ("8", _grid(4)),
-            ("9", _grid(3)),
-            ("16", _grid(4)),
-            _grid(2),
+    return rx.fragment(
+        rx.box(
+            _wall_header(),
+            rx.match(
+                VideoWallState.layout,
+                ("1", _grid(1, 1)),
+                ("2h", _grid(2, 1)),
+                ("2v", _grid(1, 2)),
+                ("4", _grid(2, 2)),
+                ("6", _grid(3, 2)),
+                ("8", _grid(4, 2)),
+                ("9", _grid(3, 3)),
+                ("16", _grid(4, 4)),
+                _grid(2, 2),
+            ),
+            class_name="nx-video-wall",
+            width="100%", height="100%", min_height="0", overflow="hidden",
         ),
         catalog_picker(
             is_open=VideoWallState.picker_open,
@@ -200,6 +193,4 @@ def video_wall_view() -> rx.Component:
             icon="video",
             empty_text="No hay ninguna cámara dada de alta todavía — añade una desde CCTV.",
         ),
-        spacing="4",
-        width="100%",
     )

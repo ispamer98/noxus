@@ -240,6 +240,7 @@ class PushState(rx.State):
             existe_endpoint = False
             existe_nombre = False
             endpoint_dup = None
+            choca = None
             for s in subs:
                 if s.get("endpoint") == sub_dict.get("endpoint"):
                     existe_endpoint = True
@@ -247,6 +248,7 @@ class PushState(rx.State):
                     break
                 if s.get("nombre_usuario") == nombre_usuario:
                     existe_nombre = True
+                    choca = s
             if existe_endpoint:
                 if endpoint_dup.get("nombre_usuario") != nombre_usuario:
                     endpoint_dup["nombre_usuario"] = nombre_usuario
@@ -261,10 +263,23 @@ class PushState(rx.State):
                 self.aviso = "Este dispositivo ya estaba activado. Todo en orden."
                 return
             if existe_nombre:
-                infra.status = "❌ Nombre en uso"
-                self.aviso = (f"Ya hay otro dispositivo llamado «{nombre_usuario}». "
-                              "Ponle uno distinto para no confundirlos.")
-                return
+                # Si ese nombre es de una suscripción que no es de ningún aparato
+                # (una app ya desinstalada) o es de ESTE mismo aparato, es el
+                # mismo que vuelve: se reemplaza en vez de pedir otro nombre.
+                from ..auth import store as auth_store
+                from ..auth.state import AuthState
+                auth = await self.get_state(AuthState)
+                dueno, ficha = auth_store.por_endpoint(choca.get("endpoint", ""))
+                if dueno is None or dueno == auth._id:
+                    subs = [s for s in subs if s is not choca]
+                else:
+                    infra.status = "❌ Nombre en uso"
+                    self.aviso = (
+                        f"«{nombre_usuario}» ya es el nombre de otro aparato registrado. "
+                        "Si es este mismo reinstalado, un administrador puede pulsar "
+                        "«Sustituir» en Ajustes → Dispositivos y accesos (o borrar el "
+                        "viejo allí). Si no, ponle otro nombre.")
+                    return
             sub_dict["nombre_usuario"] = nombre_usuario
             subs.append(sub_dict)
             with open(SUSCRIPTORES_FILE, "w") as f:

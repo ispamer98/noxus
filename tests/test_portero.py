@@ -8,12 +8,14 @@ from tests.comun import Caso
 from noxuscmmd.core import portero
 from noxuscmmd.domains.auth import permisos, store
 from noxuscmmd.domains.auth.state import AuthState
-from noxuscmmd.domains.cameras.state import CameraState
 from noxuscmmd.domains.devices.paleta_state import PaletaState
 from noxuscmmd.domains.infra.state import InfraState
 from noxuscmmd.domains.nodes.host_actions_state import HostActionsState
 from noxuscmmd.domains.nodes.kiosco_state import KioscoState
 from noxuscmmd.domains.nodes.state import NodesState
+from noxuscmmd.domains.electro.state import ElectroState
+from noxuscmmd.domains.security.arming_state import ArmingState
+from noxuscmmd.domains.security.groups_state import GroupsState
 from noxuscmmd.ui.dashboard.state import DashboardState
 
 
@@ -34,20 +36,23 @@ def _tablet() -> Caso:
                     (_n(NodesState, "send_ir_button"), "pulsar un mando"),
                     (_n(HostActionsState, "accion_rapida"), "acción rápida de un equipo"),
                     (_n(KioscoState, "abrir_overlay"), "abrir una hoja"),
-                    (_n(KioscoState, "entrar"), "entrar en el kiosco")):
+                    (_n(KioscoState, "entrar"), "entrar en el kiosco"),
+                    (_n(ArmingState, "pedir_armar"), "armar o desarmar"),
+                    (_n(NodesState, "set_door_hold"), "bloquear o desbloquear su puerta"),
+                    (_n(ElectroState, "electro_cmd"), "manejar un electrodoméstico"),
+                    (_n(ArmingState, "armar_excluyendo"), "armar dejando fuera lo abierto"),
+                    (_n(ArmingState, "cancelar_cuenta"), "cancelar la cuenta de salida")):
         c.cierto(f"puede {que}", _puede(store.KIOSCO, ev))
     for ev, que in ((_n(PaletaState, "ejecutar"), "la paleta de comandos"),
                     (_n(NodesState, "cut_door_pulse"), "cortar el pulso de una puerta"),
-                    (_n(NodesState, "set_door_hold"), "dejar una puerta abierta"),
                     (_n(HostActionsState, "run_console_command"), "la consola de un equipo"),
                     (_n(InfraState, "ejecutar_comando_personalizado"), "un comando SSH"),
                     (_n(InfraState, "accion_gpio"), "mover un relé"),
                     (_n(NodesState, "setvar"), "escribir una variable a mano"),
-                    (_n(DashboardState, "set_view"), "cambiar de vista del panel")):
+                    (_n(DashboardState, "set_view"), "cambiar de vista del panel"),
+                    (_n(GroupsState, "toggle_group_armed"), "tocar un grupo de armado"),
+                    (_n(GroupsState, "delete_group"), "borrar un grupo")):
         c.cierto(f"NO puede {que}", not _puede(store.KIOSCO, ev))
-    cam = _n(CameraState, "toggle_privacy")
-    c.cierto("las cámaras solo con la concesión",
-             not _puede(store.KIOSCO, cam) and _puede(store.KIOSCO, cam, camaras=True))
     c.cierto("ni en rodaje se le abre nada más",
              not _puede(store.KIOSCO, _n(PaletaState, "ejecutar"), bloqueo=False))
     return c

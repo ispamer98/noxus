@@ -13,25 +13,18 @@ Ejemplo: añadir un relé de garaje + su sensor de puerta:
                                 kind="door", lock_relay="rele_garaje"),
 """
 import dataclasses
-import os
 from . import overrides_store
 from ..nodes import store as nodes_store
 from .models import (
     Entity, HostEntity, RelayEntity, BinarySensorEntity, CameraEntity,
-    GPIOSpec, MQTTSpec, SSHSpec, Accion,
+    MQTTSpec, SSHSpec, Accion,
 )
 
 
 # ── Equipos/sensores/cámaras ─────────────────────────────────────────────────
-# Antes vivían aquí como literales Python (server, pc, raspberry, puerta_ppal,
-# tamper1/2, cam_fija/ptz...); ahora se construyen leyendo las colecciones
-# hosts/factory_sensors/factory_cameras de nodes/store.py (mismo fichero JSON
-# — nodos_dinamicos.json — que usan luces y puertas añadidas desde la web),
-# migradas una vez con scripts/migrate_static_entities.py.
-# Esto es lo que las hace editables y BORRABLES de verdad: dejaron de ser
-# literales de este archivo. El resto de esta función (hosts()/binary_sensors()
-# /cameras()/GPIO_HOSTS...) no cambia — todo lo que llama a esas funciones
-# sigue funcionando igual sin saber que la fuente cambió.
+# Todos se construyen desde las colecciones gestionadas de nodes/store.py. El
+# registro sigue ofreciendo dataclasses a los consumidores antiguos, pero ya
+# no constituye una segunda fuente de verdad.
 def _host_entity(h: dict) -> HostEntity:
     return HostEntity(
         id=h["id"], name=h["name"],
@@ -64,48 +57,45 @@ def forget_host(host_id: str) -> None:
     DEVICES.pop(host_id, None)
 
 
-def _build_factory_sensors() -> dict[str, BinarySensorEntity]:
+def _sensor_entity(s: dict) -> BinarySensorEntity:
+    return BinarySensorEntity(
+        id=s["id"], name=s["name"], kind=s.get("kind", "generic"),
+        mqtt=MQTTSpec(topic=s["topic"]) if s.get("topic") else None,
+        node=s.get("node_id") or None,
+        floor_icon=s.get("floor_icon"), floor_subtle=s.get("floor_subtle", False),
+        floor_color=s.get("floor_color"), floor_color_on=s.get("floor_color_on"),
+    )
+
+
+def _build_sensors() -> dict[str, BinarySensorEntity]:
     return {
-        s["id"]: BinarySensorEntity(
-            id=s["id"], name=s["name"], kind=s.get("kind", "generic"),
-            mqtt=MQTTSpec(topic=s["topic"]) if s.get("topic") else None,
-            node=s.get("node_id") or None,
-            floor_top=s.get("floor_top"), floor_left=s.get("floor_left"), floor_icon=s.get("floor_icon"),
-            floor_subtle=s.get("floor_subtle", False), floor_color=s.get("floor_color"),
-            floor_color_on=s.get("floor_color_on"),
-        )
-        for s in nodes_store.get_all_factory_sensors()
+        s["id"]: _sensor_entity(s) for s in nodes_store.read_all()["sensors"]
     }
 
 
-def _build_factory_cameras() -> dict[str, CameraEntity]:
+def _camera_entity(c: dict) -> CameraEntity:
+    return CameraEntity(
+        id=c["id"], name=c["name"],
+        stream_src=c.get("url") or c.get("stream_src") or c["id"].replace("cam_", ""),
+        icon=c.get("icon"), floor_icon=c.get("floor_icon"),
+        floor_subtle=c.get("floor_subtle", False), floor_color=c.get("floor_color"),
+        floor_color_on=c.get("floor_color_on"),
+    )
+
+
+def _build_cameras() -> dict[str, CameraEntity]:
     return {
-        c["id"]: CameraEntity(
-            id=c["id"], name=c["name"], stream_src=c["stream_src"],
-            tuya_device_id=c.get("tuya_device_id"),
-            has_ptz=c.get("has_ptz", False),
-            icon=c.get("icon"),
-            floor_top=c.get("floor_top"), floor_left=c.get("floor_left"), floor_icon=c.get("floor_icon"),
-            floor_subtle=c.get("floor_subtle", False), floor_color=c.get("floor_color"),
-            floor_color_on=c.get("floor_color_on"),
-        )
-        for c in nodes_store.get_all_factory_cameras()
+        c["id"]: _camera_entity(c) for c in nodes_store.read_all()["cameras"]
     }
 
 
 DEVICES: dict[str, Entity] = {
     **_build_hosts(),
 
-    # ── Hosts de solo-estado sin UI propia (no gestionables desde ninguna
-    # pestaña hoy — se quedan como literales, fuera de esta migración) ──────
-    "cam_ptz_host": HostEntity(id="cam_ptz_host", name="Cámara PTZ", ssh=SSHSpec(host=os.getenv("IP_CAM_PTZ", ""), user="")),
-    "cam_fija_host": HostEntity(id="cam_fija_host", name="Cámara Fija", ssh=SSHSpec(host=os.getenv("IP_CAM_FIJA", ""), user="")),
 
-    # ── Relés ────────────────────────────────────────────────────────────
-    "ventilador": RelayEntity(id="ventilador", name="Ventilador CPU", gpio=GPIOSpec(host="raspberry", pin="17")),
 
-    **_build_factory_sensors(),
-    **_build_factory_cameras(),
+    **_build_sensors(),
+    **_build_cameras(),
 }
 
 
@@ -129,112 +119,23 @@ def _host_ids() -> set[str]:
     return {h["id"] for h in nodes_store.get_all_hosts()}
 
 
-def _factory_sensor_ids() -> set[str]:
-    return {s["id"] for s in nodes_store.get_all_factory_sensors()}
+def _sensor_ids() -> set[str]:
+    return {s["id"] for s in nodes_store.read_all()["sensors"]}
 
 
-def _factory_camera_ids() -> set[str]:
-    return {c["id"] for c in nodes_store.get_all_factory_cameras()}
+def _camera_ids() -> set[str]:
+    return {c["id"] for c in nodes_store.read_all()["cameras"]}
 
 
-def is_factory_sensor(entity_id: str) -> bool:
-    return entity_id in _factory_sensor_ids()
+def sync_sensor(item: dict) -> None:
+    DEVICES[item["id"]] = _sensor_entity(item)
 
 
-def is_factory_camera(entity_id: str) -> bool:
-    return entity_id in _factory_camera_ids()
+def sync_camera(item: dict) -> None:
+    DEVICES[item["id"]] = _camera_entity(item)
 
 
-def set_factory_floor_pos(entity_id: str, top: str, left: str) -> None:
-    """Persiste la posición (%) de un sensor/cámara "de fábrica" en el plano
-    de planta tras arrastrarlo — ver ui/views/device_list.py. También
-    actualiza DEVICES en memoria (aunque lo que de verdad refresca la UI al
-    instante es RegistryState.floor_pos, ver domains/nodes/state.py:
-    set_floor_pos)."""
-    if entity_id in _factory_sensor_ids():
-        nodes_store.update_factory_sensor(entity_id, floor_top=top, floor_left=left)
-    elif entity_id in _factory_camera_ids():
-        nodes_store.update_factory_camera(entity_id, floor_top=top, floor_left=left)
-    else:
-        return
-    if entity_id in DEVICES:
-        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_top": top, "floor_left": left})
-
-
-def reflect_floor_pos(entity_id: str, top: str, left: str) -> None:
-    """Refresca SOLO la copia en memoria de DEVICES. Lo usa el guardado en
-    bloque del plano, que ya ha escrito en disco de una tacada (ver
-    nodes/store.py:set_floor_positions_bulk) y solo necesita que lo que hay
-    cargado en el proceso deje de estar desfasado."""
-    entity = DEVICES.get(entity_id)
-    if entity is not None and hasattr(entity, "floor_top"):
-        DEVICES[entity_id] = _replace_entity(entity, {"floor_top": top, "floor_left": left})
-
-
-def set_factory_floor_icon(entity_id: str, icon: str) -> None:
-    """Cambia solo el icono del marcador, sin tocar su posición — a
-    diferencia de apply_override(show_on_floor=...), que sí la recalcula."""
-    if entity_id in _factory_sensor_ids():
-        nodes_store.update_factory_sensor(entity_id, floor_icon=icon)
-    elif entity_id in _factory_camera_ids():
-        nodes_store.update_factory_camera(entity_id, floor_icon=icon)
-    else:
-        return
-    if entity_id in DEVICES:
-        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_icon": icon})
-
-
-def set_factory_floor_color(entity_id: str, color: str) -> None:
-    if entity_id in _factory_sensor_ids():
-        nodes_store.set_floor_color("factory_sensors", entity_id, color)
-    elif entity_id in _factory_camera_ids():
-        nodes_store.set_floor_color("factory_cameras", entity_id, color)
-    else:
-        return
-    if entity_id in DEVICES:
-        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_color": color or None})
-
-
-def set_factory_floor_color_on(entity_id: str, color: str) -> None:
-    """El color de cuando está activo, para las entidades de fábrica. Mismo
-    camino que set_factory_floor_color: al almacén y a la copia en memoria."""
-    if entity_id in _factory_sensor_ids():
-        nodes_store.set_floor_color_on("factory_sensors", entity_id, color)
-    elif entity_id in _factory_camera_ids():
-        nodes_store.set_floor_color_on("factory_cameras", entity_id, color)
-    else:
-        return
-    if entity_id in DEVICES:
-        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_color_on": color or None})
-
-
-def toggle_factory_floor_subtle(entity_id: str) -> bool:
-    """Alterna el modo discreto de un sensor/cámara "de fábrica" en el plano.
-    Devuelve el estado resultante."""
-    if entity_id in _factory_sensor_ids():
-        actual = nodes_store.toggle_floor_subtle("factory_sensors", entity_id)
-    elif entity_id in _factory_camera_ids():
-        actual = nodes_store.toggle_floor_subtle("factory_cameras", entity_id)
-    else:
-        return False
-    if entity_id in DEVICES:
-        DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], {"floor_subtle": actual})
-    return actual
-
-
-def delete_factory_entity(entity_id: str) -> None:
-    """Borrado real (no ocultar) de un equipo/sensor/cámara "de fábrica" —
-    igual que borrar cualquier equipo/sensor/cámara añadido desde la web.
-    Solo se ve reflejado en pantalla tras reiniciar el servicio (las tarjetas
-    de estas entidades se construyen una vez en Python, no vía rx.foreach),
-    igual que cualquier otra edición estática — pero el dato ya está borrado
-    de verdad de inmediato."""
-    if entity_id in _host_ids():
-        nodes_store.delete_host(entity_id)
-    elif entity_id in _factory_sensor_ids():
-        nodes_store.delete_factory_sensor(entity_id)
-    elif entity_id in _factory_camera_ids():
-        nodes_store.delete_factory_camera(entity_id)
+def forget_entity(entity_id: str) -> None:
     DEVICES.pop(entity_id, None)
 
 
@@ -250,13 +151,6 @@ def get_relay(relay_id: str) -> RelayEntity:
 # pines. Usado por domains/nodes para que la Raspberry/Pi Zero puedan
 # elegirse como "nodo" al dar de alta un sensor/puerta/luz, igual que un
 # ESP32 pero actuando por SSH en vez de por MQTT.
-GPIO_HOSTS = ["raspberry", "pi_zero"]
-
-
-def gpio_hosts() -> dict[str, HostEntity]:
-    return {k: v for k, v in hosts().items() if k in GPIO_HOSTS}
-
-
 # ── Ocultar/eliminar entidades estáticas ─────────────────────────────────────
 # Las entidades "de fábrica" no se pueden borrar del código sin arriesgar
 # romper el cableado real (SSH keepalive, topics MQTT, relés...), así que
@@ -305,10 +199,8 @@ def visible_cameras() -> dict[str, CameraEntity]:
 # la tarjeta de un sensor ESTÁTICO necesita reiniciar para verse, igual que
 # cualquier otro cambio visual estático.
 def isolated_ids() -> set[str]:
-    factory_isolated = {
-        s["id"] for s in nodes_store.get_all_factory_sensors() if s.get("isolated")
-    }
-    return overrides_store.get_isolated_ids() | factory_isolated
+    stored = {s["id"] for s in nodes_store.read_all()["sensors"] if s.get("isolated")}
+    return overrides_store.get_isolated_ids() | stored
 
 
 def is_isolated(entity_id: str) -> bool:
@@ -316,22 +208,17 @@ def is_isolated(entity_id: str) -> bool:
 
 
 def isolate(entity_id: str) -> None:
-    if entity_id in _factory_sensor_ids():
-        nodes_store.update_factory_sensor(entity_id, isolated=True)
+    if entity_id in _sensor_ids():
+        nodes_store._update("sensors", entity_id, {"isolated": True})
     else:
         overrides_store.isolate_entity(entity_id)
 
 
 def unisolate(entity_id: str) -> None:
-    # Se limpia en LOS DOS almacenes a propósito: los sensores migrados
-    # (tamper1/tamper2) pueden arrastrar todavía su marca de aislado en el
-    # _isolated de registry_overrides.json, de antes de la migración. Si solo
-    # se limpiase factory_sensors, isolated_ids() —que hace la unión de ambos—
-    # seguiría diciendo "aislado", y toggle_isolated() volvería a entrar
-    # siempre por la rama de reactivar: el sensor no se podría volver a aislar
-    # nunca más.
-    if entity_id in _factory_sensor_ids():
-        nodes_store.update_factory_sensor(entity_id, isolated=False)
+    # Se limpia en los dos almacenes para retirar marcas heredadas del antiguo
+    # registro de overrides.
+    if entity_id in _sensor_ids():
+        nodes_store._update("sensors", entity_id, {"isolated": False})
     overrides_store.unisolate_entity(entity_id)
 
 
@@ -353,7 +240,7 @@ EDITABLE_FIELDS = {
     },
     RelayEntity: {"name": "name", "host": "gpio.host", "pin": "gpio.pin"},
     CameraEntity: {
-        "name": "name", "tuya_device_id": "tuya_device_id", "icon": "icon",
+        "name": "name", "icon": "icon",
         "floor_top": "floor_top", "floor_left": "floor_left", "floor_icon": "floor_icon",
         "floor_subtle": "floor_subtle", "floor_color": "floor_color",
         "floor_color_on": "floor_color_on",
@@ -386,7 +273,7 @@ def _apply_stored_overrides() -> None:
             DEVICES[entity_id] = _replace_entity(DEVICES[entity_id], fields)
 
 
-def _migrate_factory_overrides() -> None:
+def _migrate_managed_overrides() -> None:
     """Se lleva a nodos_dinamicos.json las entradas de registry_overrides.json
     que apuntan a una entidad ya migrada, y las borra de allí.
 
@@ -405,16 +292,16 @@ def _migrate_factory_overrides() -> None:
     _apply_stored_overrides() y es idempotente: tras la primera vez ya no queda
     ninguna entrada que migrar.
     """
-    factory_ids = _host_ids() | _factory_sensor_ids() | _factory_camera_ids()
+    managed_ids = _host_ids() | _sensor_ids() | _camera_ids()
     for entity_id, fields in overrides_store.get_overrides().items():
-        if entity_id not in factory_ids:
+        if entity_id not in managed_ids:
             continue
         if entity_id in _host_ids():
             _save_host_edit(entity_id, fields)
-        elif entity_id in _factory_sensor_ids():
-            _save_factory_sensor_edit(entity_id, fields)
+        elif entity_id in _sensor_ids():
+            _save_sensor_edit(entity_id, fields)
         else:
-            _save_factory_camera_edit(entity_id, fields)
+            _save_camera_edit(entity_id, fields)
         # DEVICES se construyó arriba con los valores del store, todavía sin
         # estos campos: se aplican igual que habría hecho
         # _apply_stored_overrides(), para que el proceso en marcha no cambie.
@@ -448,7 +335,7 @@ def _save_host_edit(entity_id: str, fields: dict) -> None:
     nodes_store.update_host(entity_id, **store_fields)
 
 
-def _save_factory_sensor_edit(entity_id: str, fields: dict) -> dict:
+def _save_sensor_edit(entity_id: str, fields: dict) -> dict:
     store_fields = {}
     if "name" in fields:
         store_fields["name"] = fields["name"]
@@ -462,37 +349,33 @@ def _save_factory_sensor_edit(entity_id: str, fields: dict) -> dict:
         new_node = DEVICES.get(new_node_id)
         store_fields["node_name"] = new_node.name if new_node else ""
     if "show_on_floor" in fields or "floor_icon" in fields:
-        current = next((s for s in nodes_store.get_all_factory_sensors() if s["id"] == entity_id), None)
+        current = next((s for s in nodes_store.read_all()["sensors"] if s["id"] == entity_id), None)
         store_fields.update(nodes_store.floor_fields(
             bool(fields.get("show_on_floor")), fields.get("floor_icon", ""), current,
         ))
-    nodes_store.update_factory_sensor(entity_id, **store_fields)
+    nodes_store._update("sensors", entity_id, store_fields)
     return store_fields
 
 
-def _save_factory_camera_edit(entity_id: str, fields: dict) -> dict:
+def _save_camera_edit(entity_id: str, fields: dict) -> dict:
     store_fields = {}
     if "name" in fields:
         store_fields["name"] = fields["name"]
-    if "tuya_device_id" in fields:
-        store_fields["tuya_device_id"] = fields["tuya_device_id"] or None
     if "icon" in fields:
         store_fields["icon"] = fields["icon"] or None
     if "show_on_floor" in fields or "floor_icon" in fields:
-        current = next((c for c in nodes_store.get_all_factory_cameras() if c["id"] == entity_id), None)
+        current = next((c for c in nodes_store.read_all()["cameras"] if c["id"] == entity_id), None)
         store_fields.update(nodes_store.floor_fields(
             bool(fields.get("show_on_floor")), fields.get("floor_icon", ""), current,
         ))
-    nodes_store.update_factory_camera(entity_id, **store_fields)
+    nodes_store._update("cameras", entity_id, store_fields)
     return store_fields
 
 
 def apply_override(entity_id: str, **fields) -> dict:
     """Guarda la edición y la aplica al proceso en marcha inmediatamente.
-    Para las entidades "de fábrica" (ver domains/nodes/store.py factory_*), se
-    persiste en su registro dinámico — mismo formulario de siempre, solo
-    cambia dónde se guarda. Para el resto (cam_ptz_host, cam_fija_host,
-    ventilador), sigue en registry_overrides.json como siempre.
+    Para las entidades gestionadas se persiste en el almacén dinámico. Para el
+    resto, sigue en registry_overrides.json como siempre.
     Ojo: los componentes ya compilados (nombres/textos fijos en las vistas)
     no se refrescan solos — hace falta reiniciar para VER el cambio, aunque
     ya haya quedado guardado y DEVICES ya lo tenga (name/isolated/floor_* son
@@ -512,10 +395,10 @@ def apply_override(entity_id: str, **fields) -> dict:
         if actualizado is not None:
             DEVICES[entity_id] = _host_entity(actualizado)
         return stored
-    if entity_id in _factory_sensor_ids():
-        stored = _save_factory_sensor_edit(entity_id, fields)
-    elif entity_id in _factory_camera_ids():
-        stored = _save_factory_camera_edit(entity_id, fields)
+    if entity_id in _sensor_ids():
+        stored = _save_sensor_edit(entity_id, fields)
+    elif entity_id in _camera_ids():
+        stored = _save_camera_edit(entity_id, fields)
     else:
         overrides_store.set_override(entity_id, **fields)
     if entity_id in DEVICES:
@@ -525,5 +408,5 @@ def apply_override(entity_id: str, **fields) -> dict:
 
 # El orden importa: la migración tiene que vaciar los overrides duplicados
 # ANTES de que se apliquen, o volverían a pisar al store un arranque más.
-_migrate_factory_overrides()
+_migrate_managed_overrides()
 _apply_stored_overrides()

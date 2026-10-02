@@ -37,7 +37,7 @@ def _limites_del_rol_kiosco() -> Caso:
                         (permisos.PUERTAS, "puertas")):
         c.cierto(f"con estancia puede {nombre}", permisos.puede("tablet1", cap))
     c.cierto("no puede tocar los ajustes", not permisos.puede("tablet1", permisos.AJUSTES))
-    c.cierto("no puede armar ni desarmar", not permisos.puede("tablet1", permisos.ARMAR))
+    c.cierto("puede armar y desarmar", permisos.puede("tablet1", permisos.ARMAR))
     c.cierto("las cámaras son una concesión aparte y empiezan cerradas",
              not permisos.puede("tablet1", permisos.CAMARAS))
     store.actualizar("tablet1", kiosco_camaras=True)

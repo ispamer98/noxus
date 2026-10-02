@@ -28,7 +28,7 @@ from ..security import logs
 # Colecciones donde buscar el elemento para nombrarlo en el log. Las luces no
 # están a propósito: encender una luz no es un evento de seguridad y llenaría el
 # historial.
-_COLECCIONES = ("factory_sensors", "sensors", "doors")
+_COLECCIONES = ("sensors", "doors")
 
 def _categoria(coleccion: str) -> str:
     """En qué familia del registro entra un cambio de estado.
@@ -55,6 +55,14 @@ def on_binary_sensor(entity_id: str, is_on: bool) -> None:
     elemento y una acción genérica, para que en el historial se lea igual venga
     de donde venga.
     """
+    if entity_id.startswith("door_"):
+        # Con una cerradura de dos pulsos, lo que contesta el relé es el pulso
+        # (ON y enseguida OFF), no si la puerta está abierta: el estado lo
+        # apunta operations.hold_door y el eco no debe pisarlo.
+        cerradura = next((d for d in store.read_all()["doors"]
+                          if d["id"] == entity_id), None)
+        if cerradura and cerradura.get("modo") == store.MODO_DOS_PULSOS:
+            return
     anterior = store.get_sensor_state(entity_id)
     store.set_sensor_state(entity_id, is_on)
     if anterior == is_on:

@@ -7,6 +7,7 @@ FILAS pasan por rx.foreach. Al revés (columnas dinámicas dentro del foreach)
 es justo el camino que rompe el frontend en esta versión de Reflex.
 """
 import reflex as rx
+from ..components.boton_ajustes import boton_ajustes
 
 from .. import theme
 from ....domains.inventory.state import InventoryState
@@ -28,7 +29,7 @@ _COLUMNAS = {
                    ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
     "luces": [("nodo", "Nodo"), ("pin", "Pin"), ("gobierno", "Se gobierna"),
               ("modelo", "Modelo"), ("ubicacion", "Ubicación")],
-    "camaras": [("origen", "Origen"), ("ptz", "Se mueve"), ("modelo", "Modelo"),
+    "camaras": [("origen", "Origen"), ("modelo", "Modelo"),
                 ("ubicacion", "Ubicación")],
     "mandos": [("botones", "Botones"), ("modelo", "Modelo"),
                ("ubicacion", "Ubicación")],
@@ -88,9 +89,9 @@ def _fila(item: rx.Var, columnas: list[tuple[str, str]],
         *[_celda(item[clave]) for clave, _ in columnas],
         rx.table.cell(
             rx.hstack(
-                rx.button(
-                    rx.icon("pencil", size=12), size="1", variant="soft",
-                    on_click=InventoryState.abrir_ficha(item["id"], item["nombre"]),
+                boton_ajustes(
+                    InventoryState.abrir_ficha(item["id"], item["nombre"]),
+                    titulo="Ajustes de la ficha", tamano=13,
                 ),
                 rx.cond(
                     item["entity_can_delete"],

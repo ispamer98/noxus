@@ -6,7 +6,7 @@ import os
 import paramiko
 from datetime import datetime
 from ...core.connectivity import NetUtils
-from . import registry, gpio_bus
+from . import registry
 
 _KEY_PATH = os.path.expanduser("~/.ssh/id_ed25519")
 
@@ -19,11 +19,6 @@ def pc_wol():
 # cliente RDP en el propio servidor con unos scripts que ya no existen. Ahora
 # se genera un .rdp y se descarga en el navegador de quien pulsa el botón —
 # ver domains/nodes/rdp.py.
-
-
-async def gpio_17_test():
-    """Test de ventilador: ON 5 segundos."""
-    await gpio_bus.pulse_relay(registry.get_relay("ventilador"), seconds=5.0)
 
 
 async def pizero_tomar_foto() -> bytes:

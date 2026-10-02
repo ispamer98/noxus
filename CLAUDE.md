@@ -66,3 +66,4 @@ Python del venv: **3.11**. Nunca `python3` suelto.
 - `.web/` es generado: ni leer ni editar.
 
 Detalles de Reflex → skill `reflex`. Despliegue → skill `despliegue`.
+Relés y sensores físicos (Raspberry y ESP32, todo por MQTT) → skill `nodos-mqtt`.

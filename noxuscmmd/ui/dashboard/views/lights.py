@@ -1,6 +1,6 @@
 """
 Vista "Luces": relés de iluminación colgando de un nodo (Raspberry/Pi Zero
-por SSH, o ESP32 por MQTT). Mismo patrón que Accesos, pero con toggle ON/OFF
+o ESP32, siempre por MQTT). Mismo patrón que Accesos, pero con toggle ON/OFF
 en vez de pulso momentáneo. Las luces se agrupan opcionalmente por estancia
 (NodesState.rooms) — puramente organizativo, no afecta a cómo se controlan.
 """
@@ -35,7 +35,7 @@ def _room_select(name: str = "room_id", default_value=None) -> rx.Component:
 ICONO_ASPECTO = nodes_store.ICONO_ASPECTO
 NOMBRE_ASPECTO = {
     "luz": "Luz", "ventilador": "Ventilador", "tv": "Televisión",
-    "enchufe": "Enchufe", "otro": "Otro aparato",
+    "enchufe": "Enchufe", "persiana": "Persiana", "otro": "Otro aparato",
 }
 
 
@@ -51,8 +51,10 @@ def _aspecto_select(default_value=None) -> rx.Component:
     )
 
 
-def _kind_select(default_value=None) -> rx.Component:
+def _kind_select(default_value=None, on_change=None) -> rx.Component:
     kwargs = {"default_value": default_value} if default_value is not None else {}
+    if on_change is not None:
+        kwargs["on_change"] = on_change
     return styled_select(
         "Cómo se enciende",
         select_content(
@@ -94,6 +96,64 @@ def _tecla_select(name: str, etiqueta: str, default_value=None) -> rx.Component:
         ),
         name=name,
         **kwargs,
+    )
+
+
+def _modo_encendido_select(default_value=None) -> rx.Component:
+    kwargs = {"default_value": default_value} if default_value is not None else {}
+    return styled_select(
+        "Modo de encendido",
+        select_content(
+            rx.select.item("Sin modo", value=""),
+            rx.select.item("Continuo", value="continuo"),
+            rx.select.item("1 h", value="1h"),
+            rx.select.item("2 h", value="2h"),
+            rx.select.item("3 h", value="3h"),
+        ), name="modo_encendido", **kwargs,
+    )
+
+
+def _modo_encendido_fields(light=None):
+    light = {} if light is None else light
+    remote = light.get("remote_id", "")
+    def tecla(campo):
+        valor = light.get(campo, "")
+        if isinstance(remote, str) and isinstance(valor, str):
+            return f"{remote}:{valor}" if remote and valor else None
+        return None
+    return (
+        field("Modo de encendido", _modo_encendido_select(light.get("modo_encendido"))),
+        field("Tecla Continuo", _tecla_select("btn_continuo", "Tecla Continuo",
+                                                tecla("btn_continuo"))),
+        field("Tecla Temporizador", _tecla_select("btn_timing", "Tecla Temporizador",
+                                                   tecla("btn_timing"))),
+        field("Pausa entre teclas (s)", styled_input(
+            name="pausa_secuencia_s", default_value=str(light.get("pausa_secuencia_s", 1.0)),
+            type="number", min="0", step="0.1")),
+    )
+
+
+def _apagar_luz_fields(light=None):
+    light = {} if light is None else light
+    remote = light.get("remote_id", "")
+    btn_luz = light.get("btn_luz", "")
+    if isinstance(remote, str) and isinstance(btn_luz, str):
+        tecla_luz = f"{remote}:{btn_luz}" if remote and btn_luz else None
+    else:
+        tecla_luz = rx.cond((remote != "") & (btn_luz != ""),
+                             remote.to(str) + ":" + btn_luz.to(str), "")
+    return (
+        field("Apagar la luz al encender", rx.switch(
+            name="apagar_luz_al_encender",
+            default_checked=light.get("apagar_luz_al_encender", False),
+        )),
+        field("Tecla Luz", _tecla_select("btn_luz", "Tecla Luz", tecla_luz)),
+        field("Repeticiones", styled_input(
+            name="luz_repeticiones", default_value=str(light.get("luz_repeticiones", 25)),
+            type="number", min="1", max="60")),
+        field("Intervalo (s)", styled_input(
+            name="luz_intervalo_s", default_value=str(light.get("luz_intervalo_s", 0.12)),
+            type="number", min="0.05", max="1.0", step="0.01")),
     )
 
 
@@ -163,25 +223,35 @@ def _light_card(light: dict) -> rx.Component:
 def _edit_light_dialog(light: dict) -> rx.Component:
     return form_dialog_content(
         icon="lightbulb",
-        title="Editar luz",
+        title="Ajustes de la luz",
         accent=theme.WARNING,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=light["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=light["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=light["name"])),
                 field("Qué es", _aspecto_select(default_value=light["aspecto"])),
                 field("Cómo se enciende", _kind_select(default_value=light["kind"])),
-                field("Nodo (solo si es por relé)", node_select(default_value=light["node_id"])),
-                field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", default_value=light["pin"])),
-                field("Teclas del mando (solo si es por mando)",
+                rx.cond(
+                    light["kind"] == nodes_store.LUZ_MANDO,
+                    field("Apagado automático (minutos)", styled_input(
+                        name="auto_apagado_min",
+                        default_value=str(light.get("auto_apagado_min", 0)),
+                        type="number", min="0")),
+                    rx.fragment(),
+                ),
+                field("Nodo del relé", node_select(default_value=light["node_id"])),
+                field("Pin o señal MQTT", styled_input(name="pin", default_value=light["pin"])),
+                field("Modo del mando",
                       _modo_mando_select(default_value=light["mando_modo"])),
-                field("Tecla de encender · o la única si es de una sola",
+                field("Tecla de encendido",
                       _tecla_select("btn_on", "Tecla de encender")),
-                field("Tecla de apagar · se ignora si es de una sola",
+                field("Tecla de apagado",
                       _tecla_select("btn_off", "Tecla de apagar")),
+                *_modo_encendido_fields(light),
+                *_apagar_luz_fields(light),
                 field("Estancia", _room_select(default_value=light["room_id"])),
                 *floor_plan_fields(
-                    light["floor_top"],
+                    False,
                     rx.cond(light["floor_icon"], light["floor_icon"].to(str), "lightbulb"),
                     key=light["id"].to(str),
                 ),
@@ -203,7 +273,7 @@ def _add_light_dialog() -> rx.Component:
             icon="lightbulb",
             title="Nueva luz",
             accent=theme.WARNING,
-            # Raspberry/Pi Zero actúan por SSH (pin GPIO, como el ventilador); un nodo ESP32 actúa por MQTT
+            # Todos los nodos (Raspberry, Pi Zero, ESP32) actúan por MQTT: casa/<nodo>/<pin>/set
             # (nombre de señal — el topic se arma solo como casa/<nombre del nodo>/<señal>).
             form=rx.form.root(
                 rx.vstack(
@@ -215,14 +285,16 @@ def _add_light_dialog() -> rx.Component:
                     # elegido (ver NodesState.submit_add_light), y así no hace
                     # falta sacar el formulario entero al estado para esconder
                     # la mitad.
-                    field("Nodo (solo si es por relé)", node_select()),
-                    field("Pin GPIO (SSH) o señal MQTT (ESP32)", styled_input(name="pin", placeholder="22 · luz_salon")),
-                    field("Teclas del mando (solo si es por mando)",
+                    field("Nodo del relé", node_select()),
+                    field("Pin o señal MQTT", styled_input(name="pin", placeholder="22 · luz_salon")),
+                    field("Modo del mando",
                           _modo_mando_select(default_value="dos")),
-                    field("Tecla de encender · o la única si es de una sola",
+                    field("Tecla de encendido",
                           _tecla_select("btn_on", "Tecla de encender")),
-                    field("Tecla de apagar · se ignora si es de una sola",
+                    field("Tecla de apagado",
                           _tecla_select("btn_off", "Tecla de apagar")),
+                    *_modo_encendido_fields(),
+                    *_apagar_luz_fields(),
                     field("Estancia", _room_select()),
                     dialog_footer(confirm_label="Añadir", color_scheme="orange"),
                     spacing="3",

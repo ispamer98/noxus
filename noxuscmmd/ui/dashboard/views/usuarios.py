@@ -11,7 +11,6 @@ from ..components.form_dialog import select_content
 from ....domains.auth.admin_state import ICONOS_DISPOSITIVO, AuthAdminState
 from ....domains.auth.state import AuthState
 from ....domains.auth import store
-from ....domains.notifications import categorias
 
 _COLOR_ROL = {
     store.ADMIN: theme.ACCENT,
@@ -36,16 +35,6 @@ _ICONO_ROL = {
     store.KIOSCO: "tablet",
     store.PENDIENTE: "shield-question",
     store.BLOQUEADO: "ban",
-}
-
-# Un icono por categoría de aviso — ver notifications/categorias.py. El de
-# «desconocido» es el mismo que el del banner de arriba (components/
-# desconocidos.py): el mismo suceso no debería tener dos caras según dónde
-# se mire.
-_ICONO_CATEGORIA = {
-    categorias.MOVIMIENTO: "scan-eye",
-    categorias.ALARMA: "siren",
-    categorias.DESCONOCIDO: "circle-help",
 }
 
 
@@ -132,12 +121,9 @@ def _selector_rol(item: rx.Var) -> rx.Component:
 
 
 def _fila_categoria(item: rx.Var, cat: rx.Var) -> rx.Component:
-    icono = rx.match(
-        cat["id"],
-        (categorias.MOVIMIENTO, _ICONO_CATEGORIA[categorias.MOVIMIENTO]),
-        (categorias.ALARMA, _ICONO_CATEGORIA[categorias.ALARMA]),
-        _ICONO_CATEGORIA[categorias.DESCONOCIDO],
-    )
+    # El icono lo pone AuthAdminState._recargar: hay una categoría por zona de
+    # armado y no se conocen al compilar.
+    icono = cat["icono"].to(str)
     return rx.hstack(
         rx.checkbox(
             checked=cat["activa"],
@@ -269,12 +255,43 @@ def _panel_permisos(item: rx.Var) -> rx.Component:
         _selector_rol(item),
         _ajustes_kiosco(item),
         rx.cond(
+            item["sin_acceso"],
+            rx.fragment(
+                _etiqueta_seccion("¿Es un aparato reinstalado?"),
+                rx.text("Se queda con el nombre, rol, avisos y ajustes del que "
+                        "elijas, y ese se borra.", size="1", color=theme.MUTED),
+                rx.select.root(
+                    rx.select.trigger(placeholder="Sustituye a…", width="100%"),
+                    select_content(rx.foreach(
+                        AuthAdminState.opciones_sustituir,
+                        lambda o: rx.select.item(o["nombre"], value=o["id"]))),
+                    value="",
+                    on_change=lambda v: AuthAdminState.sustituir(item["id"], v),
+                    size="1",
+                ),
+            ),
+        ),
+        rx.hstack(
+            rx.icon("square-terminal", size=13, color=theme.MUTED),
+            rx.text("Ver despliegue", size="2", color=theme.TEXT, flex="1"),
+            rx.switch(checked=item["ver_despliegue"].to(bool),
+                      on_change=lambda _: AuthAdminState.alternar_despliegue(item["id"])),
+            align="center", width="100%", spacing="2",
+        ),
+        _etiqueta_seccion("Avisos que recibe"),
+        rx.cond(
             item["tiene_avisos"] == "sí",
             rx.fragment(
-                _etiqueta_seccion("Avisos que recibe"),
                 rx.foreach(item["categorias"].to(list[dict]),
                           lambda cat: _fila_categoria(item, cat)),
+                rx.button(
+                    rx.icon("bell-off", size=13), "Quitar avisos",
+                    size="1", variant="soft", color_scheme="gray", width="100%",
+                    on_click=AuthAdminState.quitar_avisos(item["id"]),
+                ),
             ),
+            rx.text("No tiene avisos activados. Se activan desde la propia app.",
+                    size="1", color=theme.MUTED),
         ),
         rx.divider(border_color=theme.BORDER, margin_top="4px"),
         rx.button(
@@ -489,6 +506,29 @@ def usuarios_view() -> rx.Component:
             ),
             rx.text("Todavía no ha entrado ningún dispositivo.", size="1",
                     color=theme.MUTED),
+        ),
+
+        rx.cond(
+            AuthAdminState.suscripciones_sueltas.length() > 0,
+            rx.vstack(
+                rx.text("Avisos sin dispositivo", size="1", weight="bold",
+                        color=theme.MUTED, margin_top="6px"),
+                rx.text("Suscripciones de avisos que no son de ningún aparato "
+                        "registrado: suelen ser apps ya desinstaladas.",
+                        size="1", color=theme.MUTED),
+                rx.foreach(AuthAdminState.suscripciones_sueltas, lambda s: rx.hstack(
+                    rx.icon("bell", size=14, color=theme.MUTED, flex_shrink="0"),
+                    rx.text(s["nombre"], size="2", color=theme.TEXT),
+                    rx.spacer(),
+                    rx.button(rx.icon("trash-2", size=13), "Borrar", size="1",
+                              variant="soft", color_scheme="red",
+                              on_click=AuthAdminState.borrar_suscripcion_suelta(s["ref"])),
+                    align="center", width="100%", padding="8px 12px",
+                    border_radius="10px", border=f"1px solid {theme.BORDER}",
+                    background=theme.BG_CARD,
+                )),
+                spacing="2", width="100%",
+            ),
         ),
 
         rx.text("Invitaciones", size="1", weight="bold", color=theme.MUTED,

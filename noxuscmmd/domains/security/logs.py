@@ -63,6 +63,7 @@ _HEREDADAS = (
 # "GRUPO_CREADO" ya se lee perfectamente. Así añadir un evento nuevo no obliga
 # a acordarse de venir aquí.
 _ETIQUETAS = {
+    "ACCESORIO_APAGADO_AUTOMATICO": "Apagado automático (fin de ciclo)",
     "ARMADO": "Sistema armado",
     "DESARMADO": "Sistema desarmado",
     "ARMADO_GRUPO": "Grupo armado",

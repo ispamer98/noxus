@@ -38,7 +38,7 @@ WIDGET_TARGET = {
     "action_camera": "camera",
     "action_door": "door", "stat_door": "door",
     "action_light": "light", "stat_light": "light",
-    "stat_sensor": "factory_entity",
+    "stat_sensor": "sensor",
     "stat_sensor_dyn": "sensor",
     "stat_host": "host", "stat_custom_host": "host", "stat_host_temp": "host",
     "action_rdp": "host", "action_host_shutdown": "host", "action_host_wol": "host",
@@ -68,7 +68,7 @@ VISTAS = {
 # cámaras y los equipos); el resto es fijo por familia.
 _ICONO_FIJO = {
     "door": "door-open", "light": "lightbulb", "group": "layers",
-    "sensor": "radar", "factory_entity": "activity", "view": "layout-grid",
+    "sensor": "radar", "view": "layout-grid",
     "host_button": "square-mouse-pointer", "automation": "workflow",
 }
 
@@ -83,8 +83,8 @@ def _catalogo() -> dict[str, dict]:
     for eid, entidad in registry.DEVICES.items():
         catalogo[eid] = {"name": entidad.name, "icon": getattr(entidad, "icon", None) or ""}
 
-    for coleccion in ("hosts", "nodes", "sensors", "factory_sensors", "doors",
-                      "lights", "cameras", "factory_cameras", "rooms", "host_buttons",
+    for coleccion in ("hosts", "nodes", "sensors", "doors",
+                      "lights", "cameras", "rooms", "host_buttons",
                       "ir_remotes"):
         for item in datos[coleccion]:
             # Los botones de equipo guardan su texto en "label", no en "name"

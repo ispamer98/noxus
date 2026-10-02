@@ -40,11 +40,11 @@ def _member_chip(group_id: str, member: dict) -> rx.Component:
 def _edit_group_dialog(group: dict) -> rx.Component:
     return form_dialog_content(
         icon="layers",
-        title="Editar grupo",
+        title="Ajustes del grupo",
         accent=theme.PURPLE,
         form=rx.form.root(
             rx.vstack(
-                rx.input(name="entity_id", value=group["id"], type="hidden"),
+                rx.el.input(name="entity_id", value=group["id"], type="hidden"),
                 field("Nombre", styled_input(name="name", default_value=group["name"])),
                 dialog_footer(confirm_label="Guardar", color_scheme="purple"),
                 spacing="3",

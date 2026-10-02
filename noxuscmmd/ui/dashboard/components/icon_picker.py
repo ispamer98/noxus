@@ -96,6 +96,7 @@ def icon_grid(current, on_pick, options: list[str], columns: int = 6) -> rx.Comp
                 "border": f"1px solid {theme.BORDER_STRONG}",
                 "border_radius": "12px",
             },
+            class_name="nx-icon-picker-popup",
         ),
     )
 
@@ -108,7 +109,10 @@ def icon_field(*, name: str, key, default_value, options: list[str], columns: in
     rx.foreach hay que pasarla ya como str (con .to(str))."""
     current = IconPickerState.picked.get(key, default_value)
     return rx.box(
-        rx.input(name=name, value=current, type="hidden"),
+        # El input HTML nativo no crea la caja visual que rx.input (TextField)
+        # conserva incluso con type="hidden". El name y el valor siguen
+        # entrando en el FormData exactamente igual.
+        rx.el.input(name=name, value=current, type="hidden"),
         icon_grid(current, lambda icon: IconPickerState.pick(key, icon), options, columns),
         width="100%",
     )

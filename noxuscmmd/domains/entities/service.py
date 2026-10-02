@@ -13,11 +13,9 @@ from ..devices import alexa_catalog_store
 _BORRADORES = {
     "nodes": nodes_store.delete_node,
     "sensors": nodes_store.delete_sensor,
-    "factory_sensors": nodes_store.delete_factory_sensor,
     "doors": nodes_store.delete_door,
     "lights": nodes_store.delete_light,
     "cameras": nodes_store.delete_camera,
-    "factory_cameras": nodes_store.delete_factory_camera,
     "hosts": nodes_store.delete_host,
     "ir_remotes": nodes_store.delete_ir_remote,
     "rooms": nodes_store.delete_room,

@@ -108,10 +108,9 @@ def _topics_conocidos() -> dict[str, str]:
     """
     datos = nodes_store.read_all()
     conocidos: dict[str, str] = {}
-    for coleccion in ("factory_sensors", "sensors"):
-        for item in datos.get(coleccion, []):
-            if item.get("topic"):
-                conocidos[item["topic"]] = item.get("name", "")
+    for item in datos.get("sensors", []):
+        if item.get("topic"):
+            conocidos[item["topic"]] = item.get("name", "")
     for coleccion in ("doors", "lights"):
         for item in datos.get(coleccion, []):
             for clave in ("topic_cmd", "topic_state"):

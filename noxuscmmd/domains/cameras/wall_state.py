@@ -14,10 +14,8 @@ abre el mismo selector agrupado con buscador que ya usan Automatizaciones
 y los widgets del Resumen (catalog_picker) — funciona igual en cualquier
 aparato.
 
-La resolución de qué URL reproducir por cámara vive aquí y no en
-CameraState: esta pantalla puede tener varias en pantalla a la vez, así que
-construye el catálogo entero de una vez (fábrica + dinámicas) en vez de
-resolver una URL cada vez que hace falta.
+La resolución de qué URL reproducir por cámara vive en el catálogo compartido:
+esta pantalla puede tener varias en pantalla a la vez y las resuelve juntas.
 """
 import asyncio
 import os
@@ -31,22 +29,19 @@ from . import wall
 from ..nodes import store as nodes_store
 
 # Hueco entre cámaras al ir enseñándolas una a una — ver reveal_gradually.
-# Segundos entre cámara y cámara al abrir el mural. 1,2 s NO era suficiente: el
-# límite de Tuya para pedir un token va en segundos, y con dos cámaras seguidas
-# una de las dos se llevaba igualmente el "请求过于频繁" (demasiadas peticiones
-# seguidas). Cuatro segundos lo evitan; se paga con que el mural tarda en
+# Segundos entre cámara y cámara al abrir el mural. 1,2 s no era suficiente
+# para que dos productores negociasen seguidos. Cuatro segundos evita el límite
+# del origen; se paga con que el mural tarda en
 # llenarse, pero la primera cámara sigue apareciendo al instante y una que
 # aparece tarde es mucho mejor que una que aparece con un error en chino.
 #
-# En variable de entorno porque el límite es de Tuya y puede cambiar sin avisar.
+# En variable de entorno porque el límite del origen puede cambiar.
 _ESPERA_ESCALONADO = float(os.getenv("MURAL_ESPERA_CAMARA", "4"))
 
 
 def _src_de_url(url: str) -> str:
     """El `src=` de la URL del stream. Es de donde sale el nombre con el que
-    go2rtc conoce a esa cámara, y vale para las dos clases (las de fábrica lo
-    llevan por convención y las añadidas a mano lo guardan en su ficha) — ver
-    cameras/wall.catalogo_camaras."""
+    go2rtc conoce a cualquier cámara; todas lo guardan en su ficha."""
     return parse_qs(urlparse(url).query).get("src", [""])[0]
 
 
@@ -70,8 +65,7 @@ class VideoWallState(rx.State):
     # tratarla como una petición nueva sin tocar los demás huecos.
     reload_nonce: dict[str, int] = {}
 
-    # Aparte de CameraState.cam_mode a propósito: cambiar el modo aquí no debe
-    # alterar las ventanas flotantes de cámara suelta, y viceversa.
+    # El mural negocia su protocolo con independencia de las ventanas sueltas.
     cam_mode: str = "pc"
 
     picker_open: bool = False
@@ -97,14 +91,9 @@ class VideoWallState(rx.State):
         """Enseña las cámaras ocupadas UNA A UNA, con un hueco entre cada una,
         en vez de todas de golpe.
 
-        Esto existe por un fallo muy concreto: abrir el mural (o cerrar y
-        volver a abrir la app) monta TODOS los iframes a la vez, y cada uno
-        —si la cámara es Tuya— le pide a la nube de Tuya un token de sesión
-        nuevo en el mismo instante. Con dos cámaras Tuya eso son dos
-        peticiones de token pegadas, y ahí es donde Tuya responde
-        "demasiadas peticiones seguidas" (el error en chino que se ve en una
-        de las dos) — no es un fallo de esta app, es su límite de peticiones,
-        pero abrir las cámaras espaciadas evita tropezar con él."""
+        Montar todos los iframes a la vez hace que sus productores negocien en
+        paralelo y algunos orígenes limitan esas peticiones. Espaciarlas evita
+        que una cámara quede sin imagen al abrir el mural."""
         async with self:
             pendientes = [(s, self.slots.get(s, "")) for s in self.slots
                           if s not in self.visible_slots]
@@ -112,12 +101,8 @@ class VideoWallState(rx.State):
         for i, (slot, camara_id) in enumerate(pendientes):
             if i:
                 await asyncio.sleep(_ESPERA_ESCALONADO)
-            # Se le pide el token PRIMERO desde aquí, y de uno en uno. Es lo que
-            # de verdad arregla el error de Tuya: hasta ahora los tokens los
-            # pedían los iframes, o sea el navegador, y dos iframes montados casi
-            # a la vez son dos peticiones que Tuya rechaza. Pidiéndolo el
-            # servidor, en fila, cuando el iframe se monta el productor ya está
-            # levantado y no hay token nuevo que pedir.
+            # Se levanta el productor desde el servidor y de uno en uno; cuando
+            # el iframe se monta, la negociación del stream ya está iniciada.
             #
             # NO se mira si sale bien: su único trabajo es serializar la
             # negociación. Si la cámara está mal (la «fija» no da fotograma ni a
@@ -135,7 +120,7 @@ class VideoWallState(rx.State):
         Se reutiliza la captura de fotograma de la alarma (cameras/fotogramas):
         ya trae temporizador corto, trata un «200 con cero bytes» como fallo y no
         levanta nunca. Pedir un fotograma es la forma más barata de obligar a
-        go2rtc a negociar con Tuya."""
+        go2rtc a negociar con el origen configurado."""
         if not camara or not camara.get("playable"):
             return
         src = _src_de_url(camara.get("stream_url", ""))
@@ -150,8 +135,8 @@ class VideoWallState(rx.State):
     @rx.event
     def retry_slot(self, slot_id: str):
         """Recarga SOLO este hueco — ni toca los demás ni vuelve a pedir sus
-        tokens. Es la alternativa a vaciar el mural entero y volver a colocar
-        las cámaras cuando una se queda con el error de Tuya."""
+        sesiones. Es la alternativa a vaciar el mural entero y volver a colocar
+        las cámaras cuando una se queda sin imagen."""
         self.reload_nonce[slot_id] = self.reload_nonce.get(slot_id, 0) + 1
 
     # ── Reparto ──────────────────────────────────────────────────────────
@@ -255,7 +240,6 @@ class VideoWallState(rx.State):
                 self.visible_slots = [*self.visible_slots, slot]
         self.picker_open = False
 
-    @rx.event
-    def toggle_cam_mode(self):
-        self.cam_mode = "mobile" if self.cam_mode == "pc" else "pc"
-        self._reload()
+    # Sin botón PC/Móvil: el modo automático (WebRTC y MSE a la vez, se queda el
+    # que conecte) funciona en todos. go2rtc da H.264 a quien no entiende H.265
+    # (la PTZ, ver ~/.go2rtc.yaml). Comprobado 2026-09-29.
