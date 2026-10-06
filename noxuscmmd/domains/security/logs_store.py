@@ -333,6 +333,69 @@ def ultimos(limite: int | None = None, desde: float = 0.0,
         cx.close()
 
 
+def eventos_solo_lectura(desde: float = 0.0, tipo: str = "",
+                         dispositivo: str = "", limite: int = 100) -> list[dict]:
+    """Eventos para consumidores externos, sin poder crear ni migrar la BD.
+
+    A diferencia de :func:`ultimos`, esta conexión abre SQLite explícitamente
+    en ``mode=ro``. Así una llamada HTTP de consulta nunca puede preparar el
+    esquema, importar el JSON heredado ni dejar marcas en el histórico.
+    ``tipo`` acepta la categoría o la acción exacta y ``dispositivo`` el id de
+    entidad guardado en el evento; ambos van siempre como parámetros SQL.
+    """
+    limite = max(1, min(int(limite), 100))
+    condiciones: list[str] = []
+    params: list[object] = []
+    if desde:
+        condiciones.append("ts >= ?")
+        params.append(int(desde))
+    if tipo:
+        condiciones.append("(categoria = ? OR accion = ?)")
+        params.extend((tipo, tipo))
+    if dispositivo:
+        condiciones.append("entidad = ?")
+        params.append(dispositivo)
+    where = " WHERE " + " AND ".join(condiciones) if condiciones else ""
+    uri = RUTA.resolve().as_uri() + "?mode=ro"
+    cx = sqlite3.connect(uri, uri=True)
+    cx.row_factory = sqlite3.Row
+    try:
+        filas = cx.execute(
+            f"SELECT * FROM eventos{where} ORDER BY id DESC LIMIT ?",
+            [*params, limite],
+        )
+        return [_fila(fila) for fila in filas]
+    finally:
+        cx.close()
+
+
+def cambios_sensores_solo_lectura(ids: list[str]) -> dict[str, dict]:
+    """Último cambio abierto/cerrado de cada sensor, leyendo solo SQLite."""
+    ids = [identificador for identificador in dict.fromkeys(ids) if identificador]
+    if not ids:
+        return {}
+    huecos = ", ".join("?" for _ in ids)
+    uri = RUTA.resolve().as_uri() + "?mode=ro"
+    cx = sqlite3.connect(uri, uri=True)
+    cx.row_factory = sqlite3.Row
+    try:
+        filas = cx.execute(
+            "SELECT entidad, ts, timestamp FROM eventos "
+            f"WHERE entidad IN ({huecos}) "
+            "AND accion IN ('ELEMENTO_ABIERTO', 'ELEMENTO_CERRADO') "
+            "ORDER BY id DESC",
+            ids,
+        )
+        salida: dict[str, dict] = {}
+        for fila in filas:
+            salida.setdefault(fila["entidad"], {
+                "ts": float(fila["ts"]), "timestamp": fila["timestamp"],
+            })
+        return salida
+    finally:
+        cx.close()
+
+
 def recorrer(desde: float = 0.0, hasta: float = 0.0):
     """Igual que `ultimos()` sin límite, pero fila a fila y sin construir la
     lista en memoria. Es lo que usa la exportación a CSV: exporta el intervalo

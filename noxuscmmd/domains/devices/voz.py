@@ -27,14 +27,22 @@ elige — pregunta. En una casa donde una frase puede abrir una puerta, adivinar
 es una opción.
 """
 
-from starlette.responses import JSONResponse
+import asyncio
+import re
+import sqlite3
+from datetime import datetime
+
+import aiohttp
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from ..auth import permisos, sessions, store as auth_store
 from ..automations import actions
 from ..modes import state as modes_state
-from ..security import audit, logs
-from . import comandos
+from ..modes import store as modes_store
+from ..nodes import store as nodes_store
+from ..security import audit, groups_store, logs, logs_store, shared_state
+from . import comandos, overrides_store
 
 # Cuántas alternativas se ofrecen cuando la frase es ambigua. Tres son las que
 # caben en una frase hablada sin marear.
@@ -44,12 +52,18 @@ ALTERNATIVAS = 3
 # en Ajustes (ui/dashboard/views/voz.py la importa de aquí).
 DIAS_CLAVE = 365
 
+_MAX_EVENTOS = 100
+_MAX_EVENTOS_ALARMA = 50
+_FOTO_TIMEOUT = 2
+_FOTO_MAX_BYTES = 2 * 1024 * 1024
+_DATO_SECRETO = re.compile(
+    r"\b(?:pin|clave|token|contrase(?:ñ|n)a|password)\b\s*[:=]?\s*\S+", re.IGNORECASE)
+
 
 def _quien(request, cuerpo: dict) -> tuple[str, str]:
     """(id de dispositivo, nombre) a partir de la clave. ("", "") si no vale."""
     clave = (request.headers.get("x-noxus-clave")
              or cuerpo.get("clave")
-             or request.query_params.get("clave")
              or "")
     # verificar_voz y no verificar: una clave de voz es un testigo aparte,
     # no una sesión (ver auth/sessions.emitir_voz).
@@ -60,6 +74,119 @@ def _quien(request, cuerpo: dict) -> tuple[str, str]:
     if ficha is None:
         return "", ""
     return id_dispositivo, ficha.get("nombre", "")
+
+
+def _autorizar_lectura(request, ademas=None):
+    """La misma identificación y capacidad VER de los GET de voz (más `ademas`, si se pide)."""
+    id_dispositivo, _ = _quien(request, {})
+    if not id_dispositivo:
+        return None, JSONResponse({"ok": False, "mensaje": "La clave no vale."},
+                                  status_code=401)
+    for capacidad in (permisos.VER, ademas):
+        if capacidad and not permisos.puede(id_dispositivo, capacidad):
+            return None, JSONResponse({"ok": False, "mensaje": "Sin acceso."},
+                                      status_code=403)
+    return id_dispositivo, None
+
+
+def _limite(request, maximo: int, defecto: int) -> tuple[int | None, JSONResponse | None]:
+    valor = request.query_params.get("n", "")
+    if not valor:
+        return defecto, None
+    try:
+        return max(1, min(int(valor), maximo)), None
+    except ValueError:
+        return None, JSONResponse({"ok": False, "mensaje": "n debe ser un entero."},
+                                  status_code=400)
+
+
+def _desde(request) -> tuple[float | None, JSONResponse | None]:
+    valor = request.query_params.get("desde", "").strip()
+    if not valor:
+        return 0.0, None
+    try:
+        return float(valor), None
+    except ValueError:
+        try:
+            return datetime.fromisoformat(valor.replace("Z", "+00:00")).timestamp(), None
+        except ValueError:
+            return None, JSONResponse(
+                {"ok": False, "mensaje": "desde debe ser epoch o una fecha ISO-8601."},
+                status_code=400)
+
+
+def _evento_publico(evento: dict) -> dict:
+    """La forma segura del histórico: nunca expone foto ni datos de acceso."""
+    return {
+        "id": evento["id"], "ts": evento["ts"], "timestamp": evento["timestamp"],
+        "categoria": evento["categoria"], "accion": evento["accion"],
+        "usuario": evento["usuario"],
+        "detalle": _DATO_SECRETO.sub("[dato oculto]", evento["detalle"]),
+        "grupo": evento["grupo"], "dispositivo": evento["entidad"],
+    }
+
+
+def _zonas_abiertas(grupo: dict, datos: dict) -> list[dict]:
+    """Miembros abiertos del grupo, sin usar helpers que puedan migrar datos."""
+    sensores = {sensor.get("id"): sensor for sensor in datos.get("sensors", [])}
+    estados = datos.get("sensor_states", {})
+    aislados = overrides_store.get_isolated_ids()
+    salida = []
+    for miembro in grupo.get("members", []):
+        sensor = sensores.get(miembro.get("id"))
+        if (sensor is None or sensor.get("isolated")
+                or miembro.get("id") in aislados or not estados.get(miembro.get("id"), False)):
+            continue
+        salida.append({"id": miembro["id"], "nombre": sensor.get("name", miembro.get("name", ""))})
+    return salida
+
+
+async def _estado_streams() -> dict:
+    """Estado que conoce go2rtc, sin abrir un vídeo ni arrancar productores."""
+    from ..cameras.fotogramas import GO2RTC
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=_FOTO_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as sesion:
+            async with sesion.get(f"{GO2RTC}/api/streams") as respuesta:
+                if respuesta.status != 200:
+                    return {}
+                datos = await respuesta.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return {}
+    if not isinstance(datos, dict):
+        return {}
+    return {
+        nombre: bool(info.get("producers")) if isinstance(info, dict) else False
+        for nombre, info in datos.items()
+    }
+
+
+async def _foto_go2rtc(src: str) -> tuple[bytes | None, str]:
+    """Una instantánea acotada; los errores de una cámara no salen como 500."""
+    from ..cameras.fotogramas import GO2RTC
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=_FOTO_TIMEOUT)
+        async with aiohttp.ClientSession(timeout=timeout) as sesion:
+            async with sesion.get(f"{GO2RTC}/api/frame.jpeg", params={"src": src}) as respuesta:
+                if respuesta.status != 200:
+                    return None, "La cámara está parada o no responde."
+                longitud = respuesta.content_length
+                if longitud is not None and longitud > _FOTO_MAX_BYTES:
+                    return None, "La instantánea supera el tamaño permitido."
+                partes, total = [], 0
+                async for parte in respuesta.content.iter_chunked(64 * 1024):
+                    total += len(parte)
+                    if total > _FOTO_MAX_BYTES:
+                        return None, "La instantánea supera el tamaño permitido."
+                    partes.append(parte)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return None, "La cámara está parada o no responde."
+    datos = b"".join(partes)
+    if len(datos) < 4 or not datos.startswith(b"\xff\xd8"):
+        return None, "La cámara no devolvió una imagen JPEG válida."
+    return datos, ""
 
 
 async def _ejecutar(comando: dict, quien: str) -> str:
@@ -145,6 +272,13 @@ async def control_por_voz(request):
             {"ok": False, "mensaje": f"No tienes permiso para {comando['etiqueta']}."},
             status_code=403)
 
+    # Solo resolver: el cliente (p. ej. el asistente) quiere saber QUÉ comando casaría y de qué
+    # familia, para decidir si necesita confirmación, sin ejecutar nada. Usa el mismo
+    # emparejador y el mismo permiso que la ejecución real: no se duplica lógica fuera.
+    if cuerpo.get("solo_resolver") is True:
+        return JSONResponse({"ok": True, "comando": comando["id"],
+                             "etiqueta": comando["etiqueta"], "familia": comando["familia"]})
+
     try:
         mensaje = await _ejecutar(comando, nombre or audit.SISTEMA)
     except Exception as e:
@@ -180,7 +314,182 @@ async def listar_comandos(request):
     })
 
 
+async def estado_casa(request):
+    """`GET /api/voz/estado` — el estado actual, solo lectura, con la misma clave y el
+    permiso VER. Lo lee de las mismas fuentes que pinta el panel (no hay copia aparte)."""
+    id_dispositivo, _ = _quien(request, {})
+    if not id_dispositivo:
+        return JSONResponse({"ok": False, "mensaje": "La clave no vale."}, status_code=401)
+    if not permisos.puede(id_dispositivo, permisos.VER):
+        return JSONResponse({"ok": False, "mensaje": "Sin acceso."}, status_code=403)
+    datos = nodes_store.read_all()
+    estancias = {r.get("id"): r.get("name", "") for r in datos.get("rooms", [])}
+    estados = datos.get("sensor_states", {})
+    luces = []
+    for luz in datos.get("lights", []):
+        valor = estados.get(luz.get("id"))
+        luces.append({"nombre": luz.get("name", ""), "estancia": estancias.get(luz.get("room_id"), ""),
+                      "estado": "encendida" if valor is True else "apagada" if valor is False else "desconocido",
+                      "tipo": luz.get("kind", "")})
+    modo = modes_store.leer()
+    hosts = datos.get("host_online", {})
+    return JSONResponse({
+        "ok": True,
+        "alarma_armada": bool(shared_state.get_sistema_armado()),
+        "modo": modo.get("activo", ""),
+        "modo_cambiado_por": modo.get("por", ""),
+        "modo_cambiado_ts": modo.get("cambiado"),
+        "luces": luces,
+        "equipos_conectados": sorted(n for n, ok in hosts.items() if ok and not n.startswith(("host_", "node_"))),
+        "equipos_sin_conexion": sorted(n for n, ok in hosts.items() if not ok and not n.startswith(("host_", "node_"))),
+    })
+
+
+async def sensores_casa(request):
+    """`GET /api/voz/sensores` — sensores binarios y su último cambio."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    datos = nodes_store.read_all()
+    estancias = {r.get("id"): r.get("name", "") for r in datos.get("rooms", [])}
+    sensores = datos.get("sensors", [])
+    try:
+        cambios = logs_store.cambios_sensores_solo_lectura(
+            [sensor.get("id", "") for sensor in sensores])
+    except (OSError, sqlite3.Error):
+        cambios = {}
+    estados = datos.get("sensor_states", {})
+    salida = []
+    for sensor in sensores:
+        ident = sensor.get("id", "")
+        activo = estados.get(ident)
+        kind = sensor.get("kind", "generic")
+        if activo is True:
+            estado = "abierto" if kind == "door" else "disparado"
+        elif activo is False:
+            estado = "cerrado" if kind == "door" else "normal"
+        else:
+            estado = "desconocido"
+        cambio = cambios.get(ident, {})
+        salida.append({
+            "id": ident, "nombre": sensor.get("name", ident),
+            "estancia": estancias.get(sensor.get("room_id"), ""),
+            "tipo": kind, "estado": estado,
+            "cambio_ts": cambio.get("ts"), "cambio": cambio.get("timestamp"),
+        })
+    return JSONResponse({"ok": True, "sensores": salida})
+
+
+async def estado_alarma(request):
+    """`GET /api/voz/alarma` — armado, zonas que bloquean y eventos recientes."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    limite, error = _limite(request, _MAX_EVENTOS_ALARMA, 20)
+    if error:
+        return error
+    grupos = groups_store.read_all()
+    datos = nodes_store.read_all()
+    zonas = []
+    for grupo in grupos:
+        abiertas = _zonas_abiertas(grupo, datos)
+        zonas.append({
+            "id": grupo.get("id", ""), "nombre": grupo.get("name", ""),
+            "armada": bool(grupo.get("armed")),
+            "principal": bool(grupo.get("is_principal")),
+            "zonas_abiertas": abiertas,
+        })
+    try:
+        eventos = logs_store.eventos_solo_lectura(tipo=logs.ALARMA, limite=limite)
+    except (OSError, sqlite3.Error):
+        return JSONResponse({"ok": False, "mensaje": "El histórico no está disponible."},
+                            status_code=503)
+    return JSONResponse({
+        "ok": True,
+        "armada": bool(shared_state.get_sistema_armado()),
+        "modo": modes_store.leer().get("activo", ""),
+        "grupos": zonas,
+        "zonas_abiertas_que_impiden_armar": [
+            {"grupo": zona["nombre"], **abierta}
+            for zona in zonas for abierta in zona["zonas_abiertas"]
+        ],
+        "eventos": [_evento_publico(evento) for evento in eventos],
+    })
+
+
+async def eventos_casa(request):
+    """`GET /api/voz/eventos` — histórico acotado y estrictamente de lectura."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    limite, error = _limite(request, _MAX_EVENTOS, 50)
+    if error:
+        return error
+    desde, error = _desde(request)
+    if error:
+        return error
+    try:
+        eventos = logs_store.eventos_solo_lectura(
+            desde=desde, tipo=request.query_params.get("tipo", "").strip(),
+            dispositivo=request.query_params.get("dispositivo", "").strip(), limite=limite,
+        )
+    except (OSError, sqlite3.Error):
+        return JSONResponse({"ok": False, "mensaje": "El histórico no está disponible."},
+                            status_code=503)
+    return JSONResponse({"ok": True, "eventos": [_evento_publico(evento) for evento in eventos]})
+
+
+async def camaras_casa(request):
+    """`GET /api/voz/camaras` — configuración y productor activo en go2rtc."""
+    _, error = _autorizar_lectura(request, permisos.CAMARAS)
+    if error:
+        return error
+    datos = nodes_store.read_all()
+    estancias = {r.get("id"): r.get("name", "") for r in datos.get("rooms", [])}
+    streams = await _estado_streams()
+    camaras = []
+    for camara in datos.get("cameras", []):
+        src = camara.get("url") or camara.get("stream_src") or ""
+        es_go2rtc = camara.get("kind") == "go2rtc"
+        camaras.append({
+            "id": camara.get("id", ""), "nombre": camara.get("name", ""),
+            "estancia": estancias.get(camara.get("room_id"), ""),
+            "en_linea": bool(streams.get(src)) if es_go2rtc else False,
+            "foto_disponible": es_go2rtc,
+        })
+    return JSONResponse({"ok": True, "camaras": camaras})
+
+
+async def foto_camara(request):
+    """`GET /api/voz/camaras/{id}/foto` — JPEG privado, pequeño y sin caché."""
+    _, error = _autorizar_lectura(request, permisos.CAMARAS)
+    if error:
+        return error
+    ident = request.path_params.get("id", "")
+    camara = next((item for item in nodes_store.read_all().get("cameras", [])
+                   if item.get("id") == ident), None)
+    if camara is None:
+        return JSONResponse({"ok": False, "mensaje": "La cámara no existe."}, status_code=404)
+    if camara.get("kind") != "go2rtc":
+        return JSONResponse({"ok": False, "mensaje": "Esta cámara no admite instantáneas."},
+                            status_code=409)
+    src = camara.get("url") or camara.get("stream_src") or ""
+    if not src:
+        return JSONResponse({"ok": False, "mensaje": "La cámara no tiene fuente configurada."},
+                            status_code=409)
+    datos, mensaje = await _foto_go2rtc(src)
+    if datos is None:
+        return JSONResponse({"ok": False, "mensaje": mensaje}, status_code=503)
+    return Response(datos, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 RUTAS = [
     Route("/api/voz", control_por_voz, methods=["POST"]),
     Route("/api/voz", listar_comandos, methods=["GET"]),
+    Route("/api/voz/estado", estado_casa, methods=["GET"]),
+    Route("/api/voz/sensores", sensores_casa, methods=["GET"]),
+    Route("/api/voz/alarma", estado_alarma, methods=["GET"]),
+    Route("/api/voz/eventos", eventos_casa, methods=["GET"]),
+    Route("/api/voz/camaras", camaras_casa, methods=["GET"]),
+    Route("/api/voz/camaras/{id}/foto", foto_camara, methods=["GET"]),
 ]

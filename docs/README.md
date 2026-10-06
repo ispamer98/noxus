@@ -58,6 +58,7 @@ ni un puerto en el router.
 - [`N8N.md`](N8N.md) — el puente con n8n: qué eventos salen de la casa y
   cómo se le deja entrar para mandar un aviso.
 - [`ALEXA_CLOUD.md`](ALEXA_CLOUD.md) — la Skill oficial de Alexa.
+- [`API_VOZ.md`](API_VOZ.md) — API local de solo lectura para el asistente Noxus.
 - [`decisiones/`](decisiones/) — decisiones tomadas y por qué, incluida la que
   afecta a la seguridad del estado expuesto al navegador.
 - [`runbooks/`](runbooks/) — procedimientos repetibles.

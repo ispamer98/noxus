@@ -30,6 +30,7 @@ PRUEBAS = (
     "tests.test_accesorios",     # luces y aparatos que se encienden por mando
     "tests.test_movimiento",   # comparación de fotogramas de cámara
     "tests.test_claves",       # que una clave de voz no sea una sesión
+    "tests.test_voz_lectura",  # GET de voz: autenticación y consultas puras
     "tests.test_entidades",    # inventario y bajas comunes de toda configuración
     "tests.test_alexa",        # comandos Hue como pulsadores de un solo uso
     "tests.test_alexa_cloud",  # contrato Smart Home y OAuth sin tocar Amazon
