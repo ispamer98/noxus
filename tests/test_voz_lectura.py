@@ -24,7 +24,7 @@ def _cuerpo(respuesta) -> dict:
 
 def _autenticacion_y_rol() -> Caso:
     c = Caso("API de voz de lectura: autenticación y rol")
-    c.revisar("sin clave se rechaza", asyncio.run(voz.sensores_casa(Peticion())).status_code, 401)
+    c.revisar("sin clave se rechaza", asyncio.run(voz.inventario_casa(Peticion())).status_code, 401)
 
     verificar_real = sessions.verificar_voz
     ficha_real = auth_store.dispositivo
@@ -33,7 +33,7 @@ def _autenticacion_y_rol() -> Caso:
         sessions.verificar_voz = lambda _clave: "asistente_prueba"
         auth_store.dispositivo = lambda _id: {"nombre": "Asistente de prueba"}
         permisos.puede = lambda _id, _capacidad: False
-        respuesta = asyncio.run(voz.eventos_casa(Peticion(clave="clave-prueba")))
+        respuesta = asyncio.run(voz.inventario_casa(Peticion(clave="clave-prueba")))
         c.revisar("un rol sin VER se rechaza", respuesta.status_code, 403)
     finally:
         sessions.verificar_voz = verificar_real
@@ -121,6 +121,116 @@ def _camaras_exigen_permiso() -> Caso:
     return c
 
 
+def _inventario_publico() -> Caso:
+    c = Caso("API de voz de lectura: inventario seguro")
+    catalogo_real = voz.catalogo.construir
+    nodos_real = voz.nodes_store.read_all
+    comandos_real = voz.comandos.comandos
+    autorizar_real = voz._autorizar_lectura
+    fila_sensor = {
+        "id": "sensor_puerta_prueba", "nombre": "Puerta de prueba",
+        "familia": "sensores", "tipo": "magnetic", "padre": "nodo_prueba",
+        "estancia": "Entrada", "ip_local": "192.0.2.10", "mac": "00:00:00:00:00:01",
+        "modelo": "modelo-prueba", "ubicacion": "pared", "entity_collection": "sensors",
+        "entity_capabilities": ["edit", "inventory"], "entity_inventory_family": "sensores",
+        "entity_type": "magnetic", "entity_id": "sensor_puerta_prueba",
+        "entity_name": "Puerta de prueba", "notas": "no debe salir", "topic": "secreto",
+    }
+    fila_suelto = {
+        "id": "suelto_prueba", "nombre": "Switch de prueba", "familia": "red",
+        "entity_inventory_family": "sueltos", "entity_type": "network",
+        "entity_id": "suelto_prueba", "entity_name": "Switch de prueba",
+        "ip_local": "192.0.2.20", "password": "no debe salir",
+    }
+    fila_luz = {
+        "entity_id": "luz_demo", "entity_name": "Cocina parecida",
+        "entity_inventory_family": "luces", "entity_type": "light",
+        "entity_collection": "lights",
+    }
+    fila_puerta = {
+        "entity_id": "puerta_demo", "entity_name": "Puerta demo",
+        "entity_inventory_family": "cerraderos", "entity_type": "door",
+        "entity_collection": "doors",
+    }
+    fila_mando = {
+        "entity_id": "mando_demo", "entity_name": "Mando demo",
+        "entity_inventory_family": "mandos", "entity_type": "remote",
+        "entity_collection": "ir_remotes",
+    }
+    fila_boton = {
+        "entity_id": "boton_demo", "entity_name": "Encender demo",
+        "entity_inventory_family": "botones", "entity_type": "button",
+        "entity_collection": "ir_buttons", "entity_parent_id": "mando_demo",
+    }
+    comandos_prueba = [
+        {"id": "luz:luz_demo:on", "etiqueta": "Encender Cocina parecida",
+         "familia": "Luces", "paso": {"type": "light.set"}, "elemento": "luz_demo"},
+        {"id": "luz:luz_demo:off", "etiqueta": "Apagar Cocina parecida",
+         "familia": "Luces", "paso": {"type": "light.set"}, "elemento": "luz_demo"},
+        {"id": "luz:luz_parecida:on", "etiqueta": "Encender Cocina parecida",
+         "familia": "Luces", "paso": {"type": "light.set"}, "elemento": "luz_parecida"},
+        {"id": "puerta:puerta_demo", "etiqueta": "Abrir Puerta demo",
+         "familia": "Puertas", "paso": {"type": "door.pulse"}, "elemento": "puerta_demo"},
+        {"id": "ir:mando_demo:boton_demo", "etiqueta": "Mando demo: Encender demo",
+         "familia": "Mandos", "paso": {"type": "ir_button.press"}, "elemento": "boton_demo"},
+        {"id": "modo:noche", "etiqueta": "Poner la casa en «Noche»",
+         "familia": "Modos", "paso": {"type": "modo"}, "elemento": ""},
+        {"id": "regla:demo", "etiqueta": "Ejecutar demo", "familia": "Automatizaciones",
+         "paso": {"type": "rule.run"}, "elemento": ""},
+        {"id": "sistema:on", "etiqueta": "Armar el sistema", "familia": "Alarma",
+         "paso": {"type": "system.arm"}, "elemento": ""},
+    ]
+    try:
+        voz._autorizar_lectura = lambda _request, _ademas=None: ("asistente_prueba", None)
+        voz.nodes_store.read_all = lambda: {
+            "rooms": [{"id": "room_prueba", "name": "Entrada"}],
+            "sensor_states": {"sensor_puerta_prueba": True},
+            "host_online": {"nodo_prueba": True},
+            "sensors": [{"id": "sensor_puerta_prueba", "node_id": "nodo_prueba",
+                         "room_id": "room_prueba"}],
+        }
+        voz.catalogo.construir = lambda: {
+            "sensores": [fila_sensor], "sueltos": [fila_suelto], "luces": [fila_luz],
+            "cerraderos": [fila_puerta], "mandos": [fila_mando], "botones": [fila_boton],
+        }
+        voz.comandos.comandos = lambda: comandos_prueba
+        respuesta = asyncio.run(voz.inventario_casa(Peticion()))
+        datos = _cuerpo(respuesta)
+        c.revisar("inventario responde 200", respuesta.status_code, 200)
+        c.revisar("campos exactos", set(datos["elementos"][0]), voz._CAMPOS_INVENTARIO_VOZ)
+        sensor = next(e for e in datos["elementos"] if e["id"] == "sensor_puerta_prueba")
+        suelto = next(e for e in datos["elementos"] if e["id"] == "suelto_prueba")
+        c.revisar("padre por id", sensor["padre"], "nodo_prueba")
+        c.revisar("estado del sensor", sensor["estado"], "abierto")
+        c.cierto("elemento suelto presente", suelto["id"] == "suelto_prueba")
+        c.cierto("no salen campos prohibidos", not ({"notas", "topic", "password"} & set(suelto)))
+        luz = next(e for e in datos["elementos"] if e["id"] == "luz_demo")
+        puerta = next(e for e in datos["elementos"] if e["id"] == "puerta_demo")
+        mando = next(e for e in datos["elementos"] if e["id"] == "mando_demo")
+        boton = next(e for e in datos["elementos"] if e["id"] == "boton_demo")
+        c.revisar("la luz tiene on y off", [a["comando"] for a in luz["acciones"]],
+                  ["luz:luz_demo:on", "luz:luz_demo:off"])
+        c.revisar("la puerta tiene su comando", [a["comando"] for a in puerta["acciones"]],
+                  ["puerta:puerta_demo"])
+        c.revisar("el botón IR cuelga del mando correcto", boton["padre"], "mando_demo")
+        c.revisar("el IR va al botón exacto", [a["comando"] for a in boton["acciones"]],
+                  ["ir:mando_demo:boton_demo"])
+        c.revisar("el mando no recibe la acción del botón", mando["acciones"], [])
+        c.revisar("elemento sin comandos no es controlable",
+                  (sensor["acciones"], sensor["controlable"]), ([], False))
+        c.cierto("no casa por nombre parecido",
+                  all(a["comando"] != "luz:luz_parecida:on" for a in luz["acciones"]))
+        c.revisar("acciones globales separadas",
+                  [a["comando"] for a in datos["acciones_casa"]],
+                  ["modo:noche", "regla:demo", "sistema:on"])
+    finally:
+        voz.catalogo.construir = catalogo_real
+        voz.nodes_store.read_all = nodos_real
+        voz.comandos.comandos = comandos_real
+        voz._autorizar_lectura = autorizar_real
+    return c
+
+
 def ejecutar() -> list[Caso]:
     return [_autenticacion_y_rol(), _limites_y_lectura_pura(), _camaras_paradas(),
-            _camaras_exigen_permiso()]
+            _camaras_exigen_permiso(), _inventario_publico()]

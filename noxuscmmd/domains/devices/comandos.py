@@ -126,15 +126,17 @@ def paso_permitido_alexa(
 def comandos() -> list[dict]:
     """Todo lo que se puede hacer, ya concreto.
 
-    Cada uno: id, etiqueta, familia, icono, y qué ejecutar — un `tipo` de paso de
-    `actions` con su objetivo y sus parámetros ya puestos, o "vista"/"modo" para
-    los dos que no son acciones del despachador."""
+    Cada uno: id, etiqueta, familia, icono, `elemento` y qué ejecutar — un `tipo`
+    de paso de `actions` con su objetivo y sus parámetros ya puestos, o
+    "vista"/"modo" para los dos que no son acciones del despachador. `elemento`
+    es el id exacto de la entidad afectada; es vacío si el comando es global.
+    """
     datos = nodes_store.read_all()
     salida: list[dict] = []
 
-    def add(id_, etiqueta, familia, icono, paso):
+    def add(id_, etiqueta, familia, icono, paso, elemento=""):
         salida.append({"id": id_, "etiqueta": etiqueta, "familia": familia,
-                       "icono": icono, "paso": paso})
+                       "icono": icono, "paso": paso, "elemento": elemento})
 
     for vista, nombre, icono in _VISTAS:
         add(f"vista:{vista}", f"Ir a {nombre}", "Ir a", icono,
@@ -150,13 +152,13 @@ def comandos() -> list[dict]:
             add(f"luz:{luz['id']}:{valor}", f"{verbo} {luz['name']}", "Luces",
                 "lightbulb",
                 {"type": "light.set", "target": f"light:{luz['id']}",
-                 "params": {"on": valor}})
+                 "params": {"on": valor}}, luz["id"])
 
     for puerta in datos["doors"]:
         add(f"puerta:{puerta['id']}", f"Abrir {puerta['name']}", "Puertas",
             "door-open",
             {"type": "door.pulse", "target": f"door:{puerta['id']}",
-             "params": {"seconds": 0}})
+             "params": {"seconds": 0}}, puerta["id"])
 
     for mando in datos["ir_remotes"]:
         for boton in mando.get("buttons", []):
@@ -164,16 +166,16 @@ def comandos() -> list[dict]:
                 f"{mando['name']}: {boton.get('label') or boton['id']}", "Mandos",
                 mando.get("icon") or "tv",
                 {"type": "ir_button.press",
-                 "target": f"ir_button:{mando['id']}:{boton['id']}"})
+                 "target": f"ir_button:{mando['id']}:{boton['id']}"}, boton["id"])
 
     for equipo in datos["hosts"]:
         add(f"wol:{equipo['id']}", f"Encender {equipo['name']}", "Equipos", "zap",
-            {"type": "host.wol", "target": f"host:{equipo['id']}"})
+            {"type": "host.wol", "target": f"host:{equipo['id']}"}, equipo["id"])
         for accion, verbo in (("apagar", "Apagar"), ("reiniciar", "Reiniciar")):
             add(f"host:{equipo['id']}:{accion}", f"{verbo} {equipo['name']}",
                 "Equipos", "power",
                 {"type": "host.action", "target": f"host:{equipo['id']}",
-                 "params": {"accion": accion}})
+                 "params": {"accion": accion}}, equipo["id"])
 
     nombres_equipos = {equipo["id"]: equipo["name"] for equipo in datos["hosts"]}
     for boton in datos.get("host_buttons", []):
@@ -181,7 +183,8 @@ def comandos() -> list[dict]:
         add(f"host_button:{boton['id']}",
             f"{equipo}: {boton.get('label') or boton['id']}", "Equipos",
             "square-mouse-pointer",
-            {"type": "host_button.run", "target": f"host_button:{boton['id']}"})
+            {"type": "host_button.run", "target": f"host_button:{boton['id']}"},
+            boton["id"])
 
     try:
         reglas = automations_store.read_all()
@@ -210,7 +213,7 @@ def comandos() -> list[dict]:
                 f"{verbo} el grupo {grupo['name']}",
                 "Alarma", "layers",
                 {"type": "group.arm", "target": f"group:{grupo['id']}",
-                 "params": {"armed": valor}})
+                 "params": {"armed": valor}}, grupo["id"])
 
     for comando in salida:
         comando["alexa_allowed"] = paso_permitido_alexa(

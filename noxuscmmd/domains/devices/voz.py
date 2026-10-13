@@ -30,6 +30,7 @@ es una opción.
 import asyncio
 import re
 import sqlite3
+import time
 from datetime import datetime
 
 import aiohttp
@@ -42,6 +43,7 @@ from ..modes import state as modes_state
 from ..modes import store as modes_store
 from ..nodes import store as nodes_store
 from ..security import audit, groups_store, logs, logs_store, shared_state
+from ..inventory import catalogo
 from . import comandos, overrides_store
 
 # Cuántas alternativas se ofrecen cuando la frase es ambigua. Tres son las que
@@ -113,6 +115,136 @@ def _desde(request) -> tuple[float | None, JSONResponse | None]:
             return None, JSONResponse(
                 {"ok": False, "mensaje": "desde debe ser epoch o una fecha ISO-8601."},
                 status_code=400)
+
+
+_CAMPOS_INVENTARIO_VOZ = frozenset({
+    "id", "nombre", "familia", "tipo", "padre", "estancia", "ip_lan",
+    "ip_tailscale", "mac", "modelo", "ubicacion", "online", "estado",
+    "controlable", "acciones",
+})
+
+
+def _texto_inventario(valor) -> str:
+    """Convierte los marcadores visuales del catálogo en valores de API."""
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    return "" if texto in {"", "—"} else texto
+
+
+def _online_inventario(valor):
+    if isinstance(valor, bool) or valor is None:
+        return valor
+    if isinstance(valor, str):
+        valor = valor.strip().lower()
+        if valor in {"sí", "si", "yes", "true", "1", "online"}:
+            return True
+        if valor in {"no", "false", "0", "offline"}:
+            return False
+    return None
+
+
+def _estado_inventario(fila: dict, datos: dict):
+    ident = fila.get("entity_id") or fila.get("id") or ""
+    coleccion = fila.get("entity_collection", "")
+    tipo = str(fila.get("entity_type") or fila.get("tipo") or "").lower()
+    estados = datos.get("sensor_states", {}) or {}
+    valor = estados.get(ident)
+    if coleccion == "doors":
+        puerta = next((d for d in datos.get("doors", []) or []
+                       if d.get("id") == ident), {})
+        valor = estados.get(puerta.get("sensor_id"), valor)
+    if isinstance(valor, bool):
+        if coleccion in {"sensors", "doors"} or tipo in {"door", "magnetic", "contact"}:
+            return "abierto" if valor else "cerrado"
+        if coleccion == "lights" or tipo in {"light", "relay", "switch"}:
+            return "encendida" if valor else "apagada"
+    estado = fila.get("estado")
+    return estado if isinstance(estado, str) and estado.strip() else None
+
+
+def _accion_publica(comando: dict) -> dict:
+    return {"comando": comando["id"], "etiqueta": comando["etiqueta"],
+            "familia": comando["familia"]}
+
+
+def _inventario_fila_publica(fila: dict, datos: dict, por_id: dict,
+                             acciones_por_id: dict[str, list[dict]]) -> dict:
+    ident = _texto_inventario(fila.get("entity_id") or fila.get("id"))
+    coleccion = fila.get("entity_collection", "")
+    padre = _texto_inventario(
+        fila.get("entity_parent_id") or fila.get("padre") or fila.get("parent_id"))
+    item = por_id.get((coleccion, ident), {})
+    if not padre:
+        padre = _texto_inventario(item.get("node_id"))
+
+    online = _online_inventario(fila.get("online"))
+    if online is None and coleccion in {"hosts", "nodes"}:
+        online = _online_inventario((datos.get("host_online", {}) or {}).get(ident))
+    if online is None and padre:
+        online = _online_inventario((datos.get("host_online", {}) or {}).get(padre))
+
+    acciones = acciones_por_id.get(ident, [])
+
+    estancia = _texto_inventario(fila.get("estancia"))
+    if not estancia:
+        room_id = item.get("room_id", "")
+        estancia = _texto_inventario(
+            next((r.get("name") for r in datos.get("rooms", [])
+                  if r.get("id") == room_id), ""))
+
+    return {
+        "id": ident,
+        "nombre": _texto_inventario(fila.get("entity_name") or fila.get("nombre") or ident),
+        "familia": _texto_inventario(
+            fila.get("entity_inventory_family") or fila.get("familia")),
+        "tipo": _texto_inventario(fila.get("entity_type") or fila.get("tipo")),
+        "padre": padre,
+        "estancia": estancia,
+        "ip_lan": _texto_inventario(fila.get("ip_lan") or fila.get("ip_local")),
+        "ip_tailscale": _texto_inventario(fila.get("ip_tailscale")),
+        "mac": _texto_inventario(fila.get("mac")),
+        "modelo": _texto_inventario(fila.get("modelo")),
+        "ubicacion": _texto_inventario(fila.get("ubicacion")),
+        "online": online,
+        "estado": _estado_inventario(fila, datos),
+        "controlable": bool(acciones),
+        "acciones": [_accion_publica(comando) for comando in acciones],
+    }
+
+
+async def inventario_casa(request):
+    """`GET /api/voz/inventario` — catálogo seguro, solo lectura y sin red."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    datos = nodes_store.read_all()
+    catalogo_por_familia = catalogo.construir()
+    todos_comandos = comandos.comandos()
+    acciones_por_id: dict[str, list[dict]] = {}
+    acciones_casa = []
+    for comando in todos_comandos:
+        elemento = str(comando.get("elemento") or "")
+        tipo = comando.get("paso", {}).get("type")
+        if elemento:
+            acciones_por_id.setdefault(elemento, []).append(comando)
+        elif tipo in {"modo", "rule.run", "system.arm"}:
+            acciones_casa.append(_accion_publica(comando))
+    por_id = {
+        (coleccion, str(item.get("id", ""))): item
+        for coleccion in ("hosts", "nodes", "sensors", "doors", "lights", "cameras")
+        for item in datos.get(coleccion, []) or []
+    }
+    elementos = []
+    ids = set()
+    for filas in catalogo_por_familia.values():
+        for fila in filas:
+            publico = _inventario_fila_publica(fila, datos, por_id, acciones_por_id)
+            if publico["id"] and publico["id"] not in ids:
+                ids.add(publico["id"])
+                elementos.append(publico)
+    return JSONResponse({"ok": True, "generado": time.time(),
+                         "elementos": elementos, "acciones_casa": acciones_casa})
 
 
 def _evento_publico(evento: dict) -> dict:
@@ -486,6 +618,7 @@ async def foto_camara(request):
 RUTAS = [
     Route("/api/voz", control_por_voz, methods=["POST"]),
     Route("/api/voz", listar_comandos, methods=["GET"]),
+    Route("/api/voz/inventario", inventario_casa, methods=["GET"]),
     Route("/api/voz/estado", estado_casa, methods=["GET"]),
     Route("/api/voz/sensores", sensores_casa, methods=["GET"]),
     Route("/api/voz/alarma", estado_alarma, methods=["GET"]),
