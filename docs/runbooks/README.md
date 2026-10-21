@@ -14,3 +14,9 @@ parecido otro día sin volver a explorar el código.
 | [layout-plano-menus.md](layout-plano-menus.md) | Plano + menús: altura máxima = plano, dos columnas, edición a la derecha, botón de ajustes (engranaje) |
 | [permisos-obligatorios.md](permisos-obligatorios.md) | Fin del rodaje: permisos siempre en vigor + agujeros cerrados en la revisión del 2026-10-02 |
 | [anadir-equipo-sin-romper-seguridad.md](anadir-equipo-sin-romper-seguridad.md) | Receta única para añadir un nodo MQTT, un aparato o código nuevo sin chocar con permisos/MQTT autenticado |
+
+## Logo → volver arriba
+
+El logo de escritorio y móvil devuelve el contenedor principal al principio de la vista.
+También resetea un `PopoverContent` desplazable de detalle si está abierto.
+Funciona con clic, Enter y Espacio; respeta `prefers-reduced-motion`.

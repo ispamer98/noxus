@@ -27,8 +27,8 @@ la página. Sin sitio a la derecha (móvil, ventana estrecha) caen debajo, como 
   evita oscilaciones al cambiar el tamaño. El ancho del aside no cambia al usar dos columnas.
   Sin JS: una columna con scroll.
 - Medidas compartidas CSS/JS: `--nx-lat-col`, `--nx-lat-gap`, `--nx-plano-top/bot` en
-  `.nx-plano-layout`. Si cambias el relleno del marco o el alto de la cabecera, cambia
-  `--nx-plano-top/bot` (y `.nx-plano-cabecera` fija 48 px en escritorio).
+  `.nx-plano-layout`. `--nx-plano-header-h` es 0: el marco tiene una sola fila y el
+  aside se alinea con el lienzo.
 - Subir versiones: `?v=` de `nx.css` en `noxuscmmd/noxuscmmd.py` y `_NX_JS` en
   `ui/pages/dashboard.py`.
 
@@ -73,8 +73,8 @@ en la columna de 360 px.
   nombre con elipsis + familia, línea 2 = selector de icono, color, integrado, copiar y quitar (≥32 px de
   toque). ≥500 px: una línea. ≤340 px se oculta la familia, ≤400 los contadores de las pestañas.
   Todo hijo flex/grid lleva `min-width:0`; las listas son `grid-template-columns:minmax(0,1fr)`.
-- Cabecera del plano en edición: `.nx-plano-instruccion` encoge y los botones no (`flex:none`).
-  `nx.js` sube el scroll a 0 si la página llegó a desplazarse antes de pasar a `data-flujo="alto"`
+- Sin cabecera del plano: el editor conserva la misma geometría y solo cambia el estado
+  de los controles superpuestos. `nx.js` sube el scroll a 0 si la página llegó a desplazarse antes de pasar a `data-flujo="alto"`
   (`overflow-y:hidden` dejaba la fila de pestañas de plano cortada por arriba).
 - Maqueta: `/tmp/.../scratchpad/maq2/` (`sync.sh` copia `nx.css`/`nx.js` frescos y regenera con `gen.py` el
   DOM literal de normal y de las 3 pestañas; `medir.sh '{json}'` = Playwright en la imagen de `ui-shot`:
@@ -83,3 +83,11 @@ en la columna de 360 px.
   980×510, 390×844 (+360, 1280×1000, 1100×900, 768×1024).
 - No comprobado en el panel real: filas con datos reales (nombres, planos) y los desplegables de Radix
   (iconos, color, copiar) sobre la tarjeta; la maqueta no los abre.
+
+## Engranaje dentro de la imagen (2026-10-02)
+- La cabecera no se renderiza en ningún modo: `.nx-plano-ajustes-capa` vive en la misma proporción y celda de grid que `.nx-plan-container`, por lo que los controles flotan sobre la esquina superior derecha de la imagen sin crear una franja vacía.
+- No hay cabecera en ningún modo. La capa siempre montada mantiene dos botones superpuestos
+  en la esquina superior derecha: engranaje para entrar y check verde para guardar y cerrar.
+  CSS hace el cross-fade/rotación en 220 ms; con `prefers-reduced-motion` solo cambia la opacidad.
+  El botón «Probar nodos» se ha retirado de la vista, pero `NodesState.probar_nodos_plano`
+  permanece disponible en el estado.

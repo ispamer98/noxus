@@ -24,7 +24,7 @@ Pruebas: `tests/test_portero.py`.
 4. **MQTT cerrado (2026-10-02)**: Mosquitto ya no escucha en `0.0.0.0`.
    `/etc/mosquitto/conf.d/default.conf` (copia: `default.conf.bak-2026-10-02`):
    `127.0.0.1:1883` anónimo para el panel y `100.98.98.1:1883` (Tailscale) con
-   usuario/contraseña (`/etc/mosquitto/passwd`) y ACL por nodo (`/etc/mosquitto/acl`:
+   usuario/contraseña (`/etc/mosquitto/passwd`) y, para ESP32 por LAN, `0.0.0.0:1884` también autenticado y ACL por nodo (`/etc/mosquitto/acl`:
    `raspberry` → `casa/raspberry/#`). La Pi lee su contraseña de
    `/home/vpn/MQTT/.mqtt_cred` (600); copia en `~/.agents/keys/mqtt_raspberry`.
    Scripts de la Pi con copia `*.bak-2026-10-02`. **Nodo nuevo** (p. ej. ESP32): crear su
