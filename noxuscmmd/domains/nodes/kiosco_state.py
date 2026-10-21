@@ -71,7 +71,7 @@ class KioscoState(rx.State):
 
     @rx.event
     def abrir_overlay(self, clase: str, entity_id: str):
-        if clase not in {"mando", "equipo", "camara", "puerta", "electro"}:
+        if clase not in {"mando", "equipo", "camara", "puerta"}:
             return
         self.overlay_kind = clase
         self.overlay_id = entity_id

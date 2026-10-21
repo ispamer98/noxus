@@ -41,6 +41,3 @@ Pruebas: `tests/test_portero.py`.
 
 - El historial de Registros (y su exportación CSV) lo ve cualquier rol con acceso:
   decisión de diseño actual («pantalla de consulta»), revisar si el invitado debe verlo.
-- `ElectroState.sync_loop` aún falla con pestaña abierta («StateProxy is immutable»):
-  movido `_contexto()` dentro de `async with self` sin efecto; la traza se imprime una
-  vez en el journal (`grep -A15 "Error en ElectroState"`) cuando conecte una sesión.

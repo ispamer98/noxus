@@ -15,7 +15,6 @@ from ...domains.auth.state import AuthState
 from ...domains.nodes.state import NodesState
 from ...domains.nodes.host_actions_state import HostActionsState
 from ...domains.nodes.kiosco_state import KioscoState
-from ...domains.electro.state import ElectroState
 from ..dashboard.state import DashboardState
 from ..dashboard import theme
 from ..components.status_row import status_row
@@ -406,37 +405,6 @@ def _door_marker_de(d: dict, en_kiosco: bool) -> rx.Component:
     )
 
 
-def _electro_marker_de(e: dict, en_kiosco: bool) -> rx.Component:
-    """Electrodoméstico (simulado): cuadrado como los equipos, porque abre su
-    panel en vez de conmutar. Ámbar mientras está en marcha; rojo si avisa
-    (nevera con la puerta abierta más de un minuto)."""
-    eid = e["id"].to(str)
-    sitio = e["posiciones"].to(dict)[NodesState.plano_actual].to(dict)
-    aviso = e["aviso_puerta"].to(bool)
-    marcha = e["en_marcha"].to(bool)
-    return rx.cond(
-        sitio,
-        _marker(
-            eid, e["floor_icon"].to(str),
-            rx.cond(aviso, _RED, rx.cond(marcha, _active_color(e["floor_color_on"].to(str), _AMBER),
-                                         _resting_color(e["floor_color"].to(str)))),
-            e["name"].to(str) + ": " + e["texto"].to(str),
-            sitio["top"].to(str), sitio["left"].to(str),
-            on_click=(KioscoState.abrir_overlay("electro", eid) if en_kiosco
-                      else DashboardState.open_window_compact(eid)),
-            alarmed=aviso, subtle=_quiet(e["floor_subtle"], marcha), forma="7px",
-        ),
-    )
-
-
-def _dynamic_electro_marker(e: dict) -> rx.Component:
-    return _electro_marker_de(e, en_kiosco=False)
-
-
-def _kiosco_electro_marker(e: dict) -> rx.Component:
-    return _electro_marker_de(e, en_kiosco=True)
-
-
 def _ir_remote_marker(entity_id, name, icon, top, left, on_click, subtle=None, color=None) -> rx.Component:
     """Mando IR: sin estado propio (es transmisor puro, no hay lectura de
     vuelta — ver domains/devices/ir_bus.py), así que igual que una cámara,
@@ -654,7 +622,6 @@ def floor_plan_content():
         rx.foreach(NodesState.lights_on_floor, _dynamic_light_marker),
         rx.foreach(NodesState.ir_remotes_on_floor, _dynamic_ir_remote_marker),
         rx.foreach(NodesState.nodes_on_floor, _dynamic_node_marker),
-        rx.foreach(ElectroState.electrodomesticos, _dynamic_electro_marker),
         # Los equipos solo se le pintan a quien puede accionarlos: enseñar el
         # icono de un ordenador a un invitado, que al pulsarlo solo recibiría
         # un «no puedes», es prometer algo que no va a pasar. Mismo criterio
@@ -707,7 +674,6 @@ def kiosco_floor_plan_content() -> rx.Component:
         ),
         rx.foreach(NodesState.kiosco_doors_on_floor, _kiosco_door_marker),
         rx.foreach(NodesState.kiosco_lights_on_floor, _dynamic_light_marker),
-        rx.foreach(ElectroState.kiosco_electros, _kiosco_electro_marker),
         rx.cond(
             AuthState.puede_mandos,
             rx.foreach(NodesState.kiosco_remotes_on_floor,

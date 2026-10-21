@@ -9,8 +9,6 @@ photo_dialog y los estados de dominio.
 """
 import reflex as rx
 
-from ...domains.electro.state import ElectroState
-
 from ...domains.security.state import SecurityState
 from ...domains.security.groups_state import GroupsState
 from ...domains.infra.state import InfraState
@@ -38,8 +36,7 @@ from ..dashboard.components.pulsacion_larga import pulsacion_larga
 from ..dashboard.topbar import topbar
 from ..dashboard.state import DashboardState
 from ..dashboard.windows import (floating_windows_layer, equipo_windows_layer,
-                                 puerta_windows_layer, aparato_windows_layer,
-                                 electro_windows_layer)
+                                 puerta_windows_layer, aparato_windows_layer)
 from ..dashboard.views.overview import overview_view
 from ..dashboard.views.settings_hub import settings_hub_view
 from ..dashboard.views.cctv import cctv_view
@@ -638,7 +635,6 @@ def _panel() -> rx.Component:
         equipo_windows_layer(),
         puerta_windows_layer(),
         aparato_windows_layer(),
-        electro_windows_layer(),
         paleta_comandos(),
         pulsacion_larga(),
     )
@@ -674,7 +670,6 @@ EVENTOS_DE_ENTRADA = [
     InfraState.on_load,
     RegistryState.on_load,
     NodesState.on_load,
-    ElectroState.on_load,
     GroupsState.on_load,
     HostActionsState.on_load,
     AccessControlState.on_load,

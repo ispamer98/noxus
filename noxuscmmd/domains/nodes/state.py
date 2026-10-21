@@ -77,7 +77,6 @@ _ROOM_FAMILIES = (
     ("doors", "Puertas", "door-open"),
     ("ir_remotes", "Mandos", "gamepad-2"),
     ("hosts", "Equipos", "server"),
-    ("electrodomesticos", "Cocina", "cooking-pot"),
     ("cameras", "Cámaras", "video"),
     ("sensors", "Sensores", "radar"),
 )
@@ -201,9 +200,6 @@ def _build_floor_catalog(data: dict, plano_actual: str = "",
         # uno fijo por familia como puertas/luces — cada mando IR es de un
         # accesorio distinto.
         add("ir_remotes", r, "Mando IR", r.get("icon") or "tv")
-    for electro in data["electrodomesticos"]:
-        add("electrodomesticos", electro, "Electrodoméstico",
-            store.ICONOS_ELECTRO.get(electro.get("tipo"), "cooking-pot"))
     return catalog
 
 

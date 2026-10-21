@@ -69,5 +69,3 @@ desde ese inventario, no buscando por nombre.
   microondas 40/14.5, foco cocinar 29/45.5, foco mesa 59/72, puerta 92/57;
   placa 36/38.5, extractor 36/46, horno (bajo la isla) 47/55, freidora 49/17,
   nevera 71/16, lavadora 85/15.
-- Electrodomésticos (lavadora, nevera, placa, horno, extractor, freidora): colección
-  `electrodomesticos`, ver `encargo-cocina-electrodomesticos.md`.

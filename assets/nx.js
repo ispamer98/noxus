@@ -819,10 +819,8 @@
   })();
 })();
 
-// ── Cuenta atrás de los paneles (electrodomésticos) ──────────────────────────
 // El servidor manda `data-fin` (epoch ms; 0 = parado) y el restante en segundos
 // como texto; aquí se pinta mm:ss / h:mm:ss cada medio segundo sin viajar al
-// servidor. Ver ui/dashboard/components/panel_control.py (anillo) y electro_panel.py.
 (function () {
   if (window.__nxCuenta) return; window.__nxCuenta = true;
   function fmt(s) {

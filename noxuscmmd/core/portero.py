@@ -58,7 +58,6 @@ def tablas() -> dict:
     from ..domains.infra.deshacer import DeshacerState
     from ..domains.infra.pruebas_state import PruebasState
     from ..domains.infra.state import InfraState
-    from ..domains.electro.state import ElectroState
     from ..domains.devices.registry_state import RegistryState
     from ..domains.automations.state import AutomationsState
     from ..domains.nodes.estancias_state import EstanciasState
@@ -83,7 +82,6 @@ def tablas() -> dict:
         sin_acceso | _handlers(KioscoState) | _handlers(AlertasState)
         | _uno(NodesState, "toggle_light", "open_door", "set_door_hold",
                "send_ir_button", "send_ir_button_combined")
-        | _uno(ElectroState, "electro_cmd")
         | _uno(HostActionsState, "accion_rapida", "encender_wol", "run_button")
         # Armar y desarmar la casa, con su aviso de «esto está abierto» y la
         # cuenta atrás de salida. Solo ArmingState: tocar grupos sigue fuera.

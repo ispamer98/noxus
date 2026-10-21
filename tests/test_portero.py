@@ -16,7 +16,6 @@ from noxuscmmd.domains.devices.registry_state import RegistryState
 from noxuscmmd.domains.nodes.state import NodesState
 from noxuscmmd.domains.notifications import push
 from noxuscmmd.domains.notifications.state import PushState
-from noxuscmmd.domains.electro.state import ElectroState
 from noxuscmmd.domains.security.arming_state import ArmingState
 from noxuscmmd.domains.security.groups_state import GroupsState
 from noxuscmmd.ui.dashboard.state import DashboardState
@@ -42,7 +41,6 @@ def _tablet() -> Caso:
                     (_n(KioscoState, "entrar"), "entrar en el kiosco"),
                     (_n(ArmingState, "pedir_armar"), "armar o desarmar"),
                     (_n(NodesState, "set_door_hold"), "bloquear o desbloquear su puerta"),
-                    (_n(ElectroState, "electro_cmd"), "manejar un electrodoméstico"),
                     (_n(ArmingState, "armar_excluyendo"), "armar dejando fuera lo abierto"),
                     (_n(ArmingState, "cancelar_cuenta"), "cancelar la cuenta de salida")):
         c.cierto(f"puede {que}", _puede(store.KIOSCO, ev))

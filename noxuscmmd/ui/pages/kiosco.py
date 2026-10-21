@@ -36,14 +36,12 @@ from ...domains.infra.state import InfraState
 from ...domains.nodes.kiosco_state import KioscoState
 from ...domains.nodes.state import NodesState
 from ...domains.notifications.alertas_state import AlertasState
-from ...domains.electro.state import ElectroState
 from ...domains.security.arming_state import ArmingState
 from ...domains.security.state import SecurityState
 from ..dashboard.components.alertas import banner_alertas
 from ..dashboard.components.armado import cuenta_atras_salida, dialogo_armado
 from ..dashboard.views.ir_remotes import ir_remote_kiosco
 from ..dashboard.views.overview import _quick_action
-from ..dashboard.components.electro_panel import electro_panel
 from ..dashboard.windows import camera_kiosco_content, equipo_contenido, puerta_contenido
 from ..views.device_list import kiosco_floor_plan_content
 from .dashboard import _NX_JS, _comprobando, _sin_acceso
@@ -63,7 +61,6 @@ EVENTOS_KIOSCO = EVENTOS_KIOSCO_IDENTIFICACION + [
     RegistryState.on_load,
     NodesState.on_load,
     AlertasState.on_load,
-    ElectroState.on_load,
     ArmingState.recuperar_cuenta,
 ]
 
@@ -83,14 +80,6 @@ def _puerta(puerta: rx.Var) -> rx.Component:
         puerta["icono_plano"].to(str), puerta["name"].to(str),
         KioscoState.abrir_overlay("puerta", puerta["id"].to(str)),
         tono="lamp", activo=puerta["cerradura_abierta"].to(bool),
-    )
-
-
-def _electro(e: rx.Var) -> rx.Component:
-    return _quick_action(
-        e["floor_icon"].to(str), e["name"].to(str),
-        KioscoState.abrir_overlay("electro", e["id"].to(str)),
-        tono="lamp", activo=e["en_marcha"].to(bool),
     )
 
 
@@ -153,13 +142,10 @@ def _controles() -> rx.Component:
     vacia = (
         NodesState.kiosco_lights.length() + NodesState.kiosco_doors.length()
         + NodesState.kiosco_remotes.length() + NodesState.kiosco_equipos.length()
-        + ElectroState.kiosco_electros.length()
     ) == 0
     return rx.el.div(
         _seccion("Luces y aparatos", "lightbulb", NodesState.kiosco_lights, _luz),
         _seccion("Puertas", "door-open", NodesState.kiosco_doors, _puerta),
-        _seccion("Cocina y aparatos", "cooking-pot", ElectroState.kiosco_electros, _electro,
-                 visible=AuthState.puede_equipos),
         _seccion("Mandos", "gamepad-2", NodesState.kiosco_remotes, _mando,
                  visible=AuthState.puede_mandos),
         _seccion("Equipos", "server", NodesState.kiosco_equipos, _equipo_vigilado,
@@ -370,13 +356,6 @@ def _hojas() -> rx.Component:
             rx.foreach(NodesState.kiosco_doors, lambda p: rx.cond(
                 p["id"].to(str) == KioscoState.overlay_id,
                 _hoja(p["name"].to(str), puerta_contenido(p, con_anclados=False),
-                      KioscoState.cerrar_overlay, clase="nx-kiosco-hoja-panel"))),
-        ),
-        rx.cond(
-            KioscoState.overlay_kind == "electro",
-            rx.foreach(ElectroState.kiosco_electros, lambda e: rx.cond(
-                e["id"].to(str) == KioscoState.overlay_id,
-                _hoja(e["name"].to(str), electro_panel(e),
                       KioscoState.cerrar_overlay, clase="nx-kiosco-hoja-panel"))),
         ),
         _selector_camara(),

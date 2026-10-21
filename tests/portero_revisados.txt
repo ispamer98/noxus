@@ -69,8 +69,6 @@ DashboardState.toggle_editing_overview
 DashboardState.toggle_overview_extra
 DashboardState.toggle_sidebar
 DashboardState.toggle_window
-ElectroState.on_load
-ElectroState.sync_loop
 GroupsState.on_load
 GroupsState.sync_loop
 HostActionsState.on_load

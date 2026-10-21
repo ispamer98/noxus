@@ -9,8 +9,6 @@ from . import theme
 from .components.floating_window import floating_window
 from .components.icono_propio import icono
 from .components.panel_control import boton_control, panel, panel_cabecera
-from .components.electro_panel import electro_panel
-from ...domains.electro.state import ElectroState
 from .state import DashboardState
 from .components.form_dialog import select_content
 
@@ -423,26 +421,4 @@ def equipo_windows_layer() -> rx.Component:
     return rx.cond(
         AuthState.puede_equipos,
         rx.foreach(NodesState.hosts_on_floor, _equipo_window),
-    )
-
-
-def _electro_window(e: rx.Var) -> rx.Component:
-    eid = e["id"].to(str)
-    return floating_window(
-        electro_panel(e),
-        window_id=e["id"],
-        title=e["name"],
-        icon=e["floor_icon"].to(str),
-        is_open=DashboardState.open_windows.contains(eid),
-        on_close=DashboardState.close_window(e["id"]),
-        accent=theme.ACCENT, top="8%", left="24%", width="440px",
-        dismiss_on_outside="1",
-    )
-
-
-def electro_windows_layer() -> rx.Component:
-    """Un panel por electrodoméstico (simulados, ver domains/electro)."""
-    return rx.cond(
-        AuthState.puede_equipos,
-        rx.foreach(ElectroState.electrodomesticos, _electro_window),
     )

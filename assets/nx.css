@@ -1373,8 +1373,8 @@ html[data-nx-armado="true"] .nx-topbar::after {
 @media (prefers-reduced-motion: reduce) { .nx-pr-flecha, .nx-pr-op, .nx-pr-grupo { transition: none; } }
 
 /* ── Paneles de control (ventanas del plano y hojas de la tablet) ───────────
-   Un solo lenguaje para PC, puertas, aparatos y electrodomésticos:
-   ui/dashboard/components/panel_control.py y electro_panel.py. */
+   Un solo lenguaje para PC, puertas y aparatos:
+   ui/dashboard/components/panel_control.py. */
 .nx-control-panel { --tono-rgb: var(--nx-info-rgb); display: flex; flex-direction: column; gap: 14px; width: 100%; color: var(--nx-text); }
 .nx-control-cab { display: flex; align-items: center; gap: 12px; }
 .nx-control-icono { display: grid; place-items: center; width: 48px; height: 48px; flex-shrink: 0; border-radius: 14px;

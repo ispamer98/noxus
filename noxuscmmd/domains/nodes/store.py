@@ -32,7 +32,7 @@ ARCHIVO = Path(os.getenv("NODOS_FILE", "nodos_dinamicos.json"))
 
 _COLLECTIONS = (
     "nodes", "sensors", "doors", "lights", "cameras", "hosts", "host_buttons", "rooms",
-    "overview_widgets", "ir_remotes", "electrodomesticos", "planos", "puertas",
+    "overview_widgets", "ir_remotes", "planos", "puertas",
     "metricas_paneles", "comandos_voz",
 )
 
@@ -426,19 +426,6 @@ def _apply_defaults(data: dict) -> dict:
             # solo se distinguen por eso.
             boton.setdefault("icon_size", "46%")
         _asegurar_posiciones(remote)
-    for electro in data["electrodomesticos"]:
-        electro["tipo"] = (electro.get("tipo") if electro.get("tipo") in TIPOS_ELECTRO
-                           else "lavadora")
-        electro["simulado"] = True
-        electro.setdefault("node_id", "")
-        electro.setdefault("node_name", "")
-        electro.setdefault("estado", {})
-        electro.setdefault("floor_top", None)
-        electro.setdefault("floor_left", None)
-        electro.setdefault("floor_icon", None)
-        electro.setdefault("floor_subtle", False)
-        electro.setdefault("floor_color", None)
-        electro.setdefault("floor_color_on", None)
     # LO ÚLTIMO: los planos y la posición de cada elemento en cada plano. Va al
     # final y no en medio porque es quien tiene la última palabra sobre
     # floor_top/floor_left (los mantiene como espejo del plano principal), y
@@ -650,7 +637,7 @@ _MEDIDAS_INICIALES = (1254, 1254)
 # construye el catálogo del plano (ver nodes/state._build_floor_catalog).
 COLECCIONES_EN_PLANO = (
     "nodes", "sensors", "cameras", "doors", "lights", "ir_remotes",
-    "electrodomesticos", "puertas",
+    "puertas",
 )
 
 
@@ -1861,51 +1848,6 @@ def update_ir_remote(remote_id: str, name: str, icon: str,
         # lo cambia también donde se ve en la casa, sin tener que acordarse.
         **floor_fields(show_on_floor, icon or "tv", current),
     })
-
-
-# ── Electrodomésticos simulados ─────────────────────────────────────────────
-TIPOS_ELECTRO = ("lavadora", "nevera", "placa", "horno", "extractor", "freidora", "aire")
-ICONOS_ELECTRO = {
-    "lavadora": "washing-machine", "nevera": "refrigerator",
-    "placa": "flame", "horno": "microwave",
-    "extractor": "fan", "freidora": "cooking-pot", "aire": "air-vent",
-}
-
-
-def add_electro(name: str, tipo: str, node_id: str = "", node_name: str = "",
-                 show_on_floor: bool = False, floor_icon: str = "") -> dict:
-    if tipo not in TIPOS_ELECTRO:
-        raise ValueError("tipo de electrodoméstico inválido")
-    return _add("electrodomesticos", "electro", {
-        "name": name.strip() or tipo.capitalize(), "tipo": tipo,
-        "node_id": node_id, "node_name": node_name, "simulado": True,
-        "estado": {},
-        **floor_fields(show_on_floor, floor_icon or ICONOS_ELECTRO[tipo], None),
-    })
-
-
-def update_electro(electro_id: str, name: str, tipo: str, node_id: str = "",
-                   node_name: str = "", show_on_floor: bool = False,
-                   floor_icon: str = "") -> dict | None:
-    if tipo not in TIPOS_ELECTRO:
-        raise ValueError("tipo de electrodoméstico inválido")
-    current = next((x for x in _read()["electrodomesticos"]
-                    if x["id"] == electro_id), None)
-    return _update("electrodomesticos", electro_id, {
-        "name": name.strip() or tipo.capitalize(), "tipo": tipo,
-        "node_id": node_id, "node_name": node_name, "simulado": True,
-        **floor_fields(show_on_floor, floor_icon or ICONOS_ELECTRO[tipo], current),
-    })
-
-
-def delete_electro(electro_id: str) -> None:
-    _delete("electrodomesticos", electro_id)
-
-
-def set_electro_estado(electro_id: str, estado: dict) -> dict | None:
-    if not isinstance(estado, dict):
-        raise ValueError("el estado del electrodoméstico debe ser un diccionario")
-    return _update("electrodomesticos", electro_id, {"estado": estado})
 
 
 def _hueco_libre(remote: dict) -> tuple[str, str]:
