@@ -32,7 +32,8 @@ case "${1:-}" in
     sudo systemctl reload mosquitto
     umask 077; mkdir -p "$CLAVES"; printf '%s\n' "$clave" > "$CLAVES/mqtt_$nodo"
     echo "Nodo '$nodo' dado de alta (si ya existía, su contraseña ha cambiado)."
-    echo "  broker : 100.98.98.1:1883   usuario: $nodo   topics: casa/$nodo/#"
+    echo "  Pi (Tailscale): 100.98.98.1:1883   ESP32 (LAN): <IP-LAN del servidor>:1884"
+    echo "  usuario: $nodo   topics: casa/$nodo/#"
     echo "  clave  : $CLAVES/mqtt_$nodo   (cat ese fichero; no la pegues en el repo)"
     ;;
   quitar)

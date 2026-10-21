@@ -122,7 +122,11 @@ def _modo_encendido_fields(light=None):
             return f"{remote}:{valor}" if remote and valor else None
         return None
     return (
-        field("Modo de encendido", _modo_encendido_select(light.get("modo_encendido"))),
+        # Con una luz real (Var) se lee la clave directa y como str: .get()
+        # genera `x ? x : null` y Reflex avisa de pasar None a un campo str.
+        field("Modo de encendido", _modo_encendido_select(
+            light.get("modo_encendido") if isinstance(light, dict)
+            else light["modo_encendido"].to(str))),
         field("Tecla Continuo", _tecla_select("btn_continuo", "Tecla Continuo",
                                                 tecla("btn_continuo"))),
         field("Tecla Temporizador", _tecla_select("btn_timing", "Tecla Temporizador",

@@ -612,7 +612,10 @@ class AuthState(rx.State):
                 self.nombre_acceso = nombre[:40]
             return
         cambios = {}
-        if not ficha.get("endpoint"):
+        # Safari y Chrome renuevan la dirección de push de vez en cuando: si solo
+        # se copiaba con la ficha vacía, la ficha se quedaba con la vieja y el
+        # panel decía «sin avisos» aunque la suscripción nueva funcionara.
+        if ficha.get("endpoint") != endpoint:
             cambios["endpoint"] = endpoint
         if nombre and not ficha.get("nombre"):
             cambios["nombre"] = nombre
