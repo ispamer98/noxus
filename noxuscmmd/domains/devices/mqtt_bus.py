@@ -41,6 +41,8 @@ class MQTTBus:
 
     def _on_connect(self, client, userdata, flags, rc):
         print(f"✅ Conectado MQTT (código {rc})")
+        # Observa estados, sensores y heartbeats sin guardar topics ni payloads.
+        client.subscribe("casa/+/#")
         for topic in self._topic_to_entity:
             client.subscribe(topic)
         for topic in self._dynamic_topic_to_entity:
@@ -48,6 +50,9 @@ class MQTTBus:
 
     def _on_message(self, client, userdata, msg):
         ahora = time.time()
+        partes = msg.topic.split("/")
+        if len(partes) >= 3 and partes[0] == "casa" and partes[1]:
+            _ULTIMO_CONTACTO_NODOS[partes[1]] = (time.monotonic(), ahora)
         payload = msg.payload.decode(errors="replace")
 
         # Primero el oyente del instalador: tiene que ver también los topics
@@ -145,6 +150,13 @@ class MQTTBus:
 
 
 _instance: MQTTBus | None = None
+
+# (reloj monotónico, epoch) por slug de nodo; solo vive durante este proceso.
+_ULTIMO_CONTACTO_NODOS: dict[str, tuple[float, float]] = {}
+
+
+def ultimo_contacto_nodos() -> dict[str, tuple[float, float]]:
+    return dict(_ULTIMO_CONTACTO_NODOS)
 
 
 def get_mqtt_bus(broker: str, port: int, on_binary_sensor: OnBinarySensor) -> MQTTBus:

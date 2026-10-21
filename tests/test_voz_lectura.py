@@ -231,6 +231,113 @@ def _inventario_publico() -> Caso:
     return c
 
 
+def _lecturas_nuevas() -> Caso:
+    c = Caso("API de voz: lecturas de casa y confirmación de alerta")
+    originales = {
+        "autorizar": voz._autorizar_lectura, "nodos": voz.nodes_store.read_all,
+        "quien": voz._quien, "puede": voz.permisos.puede,
+        "contactos": voz.mqtt_bus.ultimo_contacto_nodos,
+        "alertas": voz.alertas.leer, "confirmar": voz.alertas.confirmar,
+        "logs": voz.logs.registrar, "reglas": voz.automations_store.read_all,
+        "estado_reglas": voz.automations_store.read_state,
+        "config_presencia": voz.presencia_store.leer, "aprender": voz.presencia.aprender,
+        "plan": voz.presencia.plan_del_dia,
+    }
+    eventos = []
+    pendientes = {"alerta:zona_demo:sensor_demo": {"desde": 1234, "titulo": "texto privado"}}
+    try:
+        voz._autorizar_lectura = lambda _request, _ademas=None: ("asistente_prueba", None)
+        voz._quien = lambda _request, _cuerpo: ("asistente_prueba", "Asistente")
+        voz.permisos.puede = lambda _id, _capacidad: True
+        voz.nodes_store.read_all = lambda: {
+            "nodes": [{"id": "nodo_demo", "name": "Nodo demo", "ip": "192.0.2.4"}],
+            "host_online": {"nodo_demo": True},
+            "lights": [{"id": "persiana_demo", "name": "Persiana", "kind": "persiana_rele"}],
+            "persianas_estado": {"persiana_demo": "subiendo"},
+        }
+        voz.mqtt_bus.ultimo_contacto_nodos = lambda: {"nodo_demo": (100.0, 1234.0)}
+        resp = asyncio.run(voz.estado_casa(Peticion()))
+        c.revisar("persiana publica estado real", _cuerpo(resp)["persianas"][0]["estado"], "subiendo")
+        resp = asyncio.run(voz.nodos_casa(Peticion()))
+        nodo = _cuerpo(resp)["nodos"][0]
+        c.revisar("nodo solo con campos permitidos", set(nodo),
+                  {"id", "nombre", "host_online", "ultimo_contacto", "segundos_sin_contacto"})
+        c.revisar("online del host", nodo["host_online"], True)
+        c.cierto("no se devuelve IP", "192.0.2.4" not in resp.body.decode())
+
+        voz.alertas.leer = lambda: {"pendientes": pendientes}
+        resp = asyncio.run(voz.alertas_casa(Peticion()))
+        alerta = _cuerpo(resp)["alertas"][0]
+        c.revisar("alerta tiene campos de lista blanca", set(alerta),
+                  {"id", "tipo", "zona", "elemento", "hora", "visto"})
+        c.cierto("alerta no expone texto privado", "texto privado" not in resp.body.decode())
+
+        voz.automations_store.read_all = lambda: [{"id": "auto_demo", "name": "Automatización", "enabled": True,
+                                                   "actions": [{"params": {"token": "secreto"}}]}]
+        voz.automations_store.read_state = lambda: {"auto_demo": {"last_run": 1234}}
+        resp = asyncio.run(voz.automatizaciones_casa(Peticion()))
+        item = _cuerpo(resp)["automatizaciones"][0]
+        c.revisar("automatización campos de lista blanca", set(item), {"nombre", "activa", "ultima_ejecucion"})
+        c.cierto("automatización no expone acción", "secreto" not in resp.body.decode())
+
+        voz.presencia_store.leer = lambda: {"activada": True, "luces": ["luz_demo"]}
+        voz.presencia.aprender = lambda: {"patron": "privado"}
+        voz.presencia.plan_del_dia = lambda *_a, **_k: [{"minuto": 60, "luz": "luz_demo", "encender": True}]
+        resp = asyncio.run(voz.presencia_casa(Peticion()))
+        c.revisar("presencia activada y plan", (_cuerpo(resp)["activada"], _cuerpo(resp)["plan"][0]["accion"]),
+                  (True, "encender"))
+        c.cierto("presencia no expone patrón", "privado" not in resp.body.decode())
+
+        voz.alertas.confirmar = lambda ident, quien: pendientes.pop(ident, None)
+        voz.logs.registrar = lambda *args, **kwargs: eventos.append((args, kwargs))
+        resp = asyncio.run(voz.alerta_visto(Peticion(path={"id": "alerta:zona_demo:sensor_demo"})))
+        c.revisar("POST confirma id exacto y audita", (_cuerpo(resp)["visto"], len(eventos)), (True, 1))
+        c.revisar("auditoría identifica la alerta", eventos[0][1].get("entidad"),
+                  "alerta:zona_demo:sensor_demo")
+        resp = asyncio.run(voz.alerta_visto(Peticion(path={"id": "alerta:otra:otra"})))
+        c.revisar("id no pendiente se rechaza", resp.status_code, 404)
+    finally:
+        voz._autorizar_lectura = originales["autorizar"]
+        voz._quien, voz.permisos.puede = originales["quien"], originales["puede"]
+        voz.nodes_store.read_all = originales["nodos"]
+        voz.mqtt_bus.ultimo_contacto_nodos = originales["contactos"]
+        voz.alertas.leer, voz.alertas.confirmar = originales["alertas"], originales["confirmar"]
+        voz.logs.registrar = originales["logs"]
+        voz.automations_store.read_all = originales["reglas"]
+        voz.automations_store.read_state = originales["estado_reglas"]
+        voz.presencia_store.leer, voz.presencia.aprender = originales["config_presencia"], originales["aprender"]
+        voz.presencia.plan_del_dia = originales["plan"]
+    return c
+
+
+def _contacto_mqtt_en_memoria() -> Caso:
+    c = Caso("Contacto MQTT por nodo en memoria")
+    bus = object.__new__(voz.mqtt_bus.MQTTBus)
+    bus._oyente = None
+    bus._topic_to_entity = {}
+    bus._dynamic_topic_to_entity = {}
+    bus._on_binary_sensor = lambda *_args: None
+    bus._dynamic_callback = None
+    bus._ultimo_estado = {}
+    bus._ultimo_timestamp = 0.0
+    previos = voz.mqtt_bus._ULTIMO_CONTACTO_NODOS.copy()
+
+    class Mensaje:
+        topic = "casa/nodo_demo/heartbeat"
+        payload = b"estado privado"
+
+    try:
+        bus._on_message(None, None, Mensaje())
+        contacto = voz.mqtt_bus.ultimo_contacto_nodos()["nodo_demo"]
+        c.cierto("mensaje no mapeado registra contacto", contacto[0] > 0 and contacto[1] > 0)
+        c.cierto("solo se conserva el par de relojes", len(contacto) == 2)
+    finally:
+        voz.mqtt_bus._ULTIMO_CONTACTO_NODOS.clear()
+        voz.mqtt_bus._ULTIMO_CONTACTO_NODOS.update(previos)
+    return c
+
+
 def ejecutar() -> list[Caso]:
     return [_autenticacion_y_rol(), _limites_y_lectura_pura(), _camaras_paradas(),
-            _camaras_exigen_permiso(), _inventario_publico()]
+            _camaras_exigen_permiso(), _inventario_publico(), _lecturas_nuevas(),
+            _contacto_mqtt_en_memoria()]

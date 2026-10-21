@@ -39,10 +39,14 @@ from starlette.routing import Route
 
 from ..auth import permisos, sessions, store as auth_store
 from ..automations import actions
+from ..automations import store as automations_store
 from ..modes import state as modes_state
 from ..modes import store as modes_store
 from ..nodes import store as nodes_store
 from ..security import audit, groups_store, logs, logs_store, shared_state
+from ..notifications import alertas
+from ..security import presencia, presencia_store
+from ..devices import mqtt_bus
 from ..inventory import catalogo
 from . import comandos, overrides_store
 
@@ -458,8 +462,13 @@ async def estado_casa(request):
     estancias = {r.get("id"): r.get("name", "") for r in datos.get("rooms", [])}
     estados = datos.get("sensor_states", {})
     luces = []
+    persianas = []
     for luz in datos.get("lights", []):
         valor = estados.get(luz.get("id"))
+        tipo_luz = str(luz.get("kind", "")).lower()
+        if any(marca in tipo_luz for marca in ("persiana", "blind", "roller", "shutter")):
+            persianas.append({"id": luz.get("id", ""), "nombre": luz.get("name", ""),
+                              "estado": (datos.get("persianas_estado", {}) or {}).get(luz.get("id"))})
         luces.append({"nombre": luz.get("name", ""), "estancia": estancias.get(luz.get("room_id"), ""),
                       "estado": "encendida" if valor is True else "apagada" if valor is False else "desconocido",
                       "tipo": luz.get("kind", "")})
@@ -472,9 +481,97 @@ async def estado_casa(request):
         "modo_cambiado_por": modo.get("por", ""),
         "modo_cambiado_ts": modo.get("cambiado"),
         "luces": luces,
+        "persianas": persianas,
         "equipos_conectados": sorted(n for n, ok in hosts.items() if ok and not n.startswith(("host_", "node_"))),
         "equipos_sin_conexion": sorted(n for n, ok in hosts.items() if not ok and not n.startswith(("host_", "node_"))),
     })
+
+
+def _iso_epoch(epoch):
+    return datetime.fromtimestamp(epoch).astimezone().isoformat() if epoch else None
+
+
+async def nodos_casa(request):
+    """GET /api/voz/nodos: estado y contacto reciente sin datos de conexión."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    datos = nodes_store.read_all()
+    contactos = mqtt_bus.ultimo_contacto_nodos()
+    nodos = []
+    for nodo in datos.get("nodes", []):
+        slug = nodes_store.slugify(nodo.get("name", ""))
+        contacto = contactos.get(slug)
+        nodos.append({
+            "id": nodo.get("id", ""), "nombre": nodo.get("name", ""),
+            "host_online": (datos.get("host_online", {}) or {}).get(nodo.get("id")),
+            "ultimo_contacto": _iso_epoch(contacto[1]) if contacto else None,
+            "segundos_sin_contacto": max(0, int(time.monotonic() - contacto[0])) if contacto else None,
+        })
+    return JSONResponse({"ok": True, "nodos": nodos})
+
+
+async def alertas_casa(request):
+    """GET /api/voz/alertas: alertas pendientes en forma de lista blanca."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    pendientes = alertas.leer().get("pendientes", {})
+    salida = []
+    for ident, ficha in pendientes.items():
+        partes = ident.split(":")
+        if len(partes) != 3 or partes[0] != "alerta":
+            continue
+        salida.append({"id": ident, "tipo": "alarma", "zona": partes[1],
+                       "elemento": partes[2], "hora": _iso_epoch(ficha.get("desde")),
+                       "visto": False})
+    return JSONResponse({"ok": True, "alertas": salida})
+
+
+async def alerta_visto(request):
+    """POST /api/voz/alertas/{id}/visto: confirma solo el id exacto."""
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    ident = request.path_params.get("id", "")
+    pendientes = alertas.leer().get("pendientes", {})
+    if ident not in pendientes:
+        return JSONResponse({"ok": False, "mensaje": "La alerta no está pendiente."}, status_code=404)
+    alertas.confirmar(ident, "Noxus")
+    logs.registrar(logs.ALARMA, "ALERTA_CONFIRMADA", "Noxus",
+                   "Alerta confirmada desde la API de voz.", entidad=ident)
+    return JSONResponse({"ok": True, "id": ident, "visto": True})
+
+
+async def automatizaciones_casa(request):
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    estados = automations_store.read_state()
+    salida = []
+    for regla in automations_store.read_all():
+        ultima = (estados.get(regla.get("id"), {}) or {}).get("last_run")
+        salida.append({"nombre": regla.get("name", ""), "activa": bool(regla.get("enabled")),
+                       "ultima_ejecucion": _iso_epoch(ultima) if ultima else None})
+    return JSONResponse({"ok": True, "automatizaciones": salida})
+
+
+async def presencia_casa(request):
+    _, error = _autorizar_lectura(request)
+    if error:
+        return error
+    config = presencia_store.leer()
+    patron = presencia.aprender()
+    ahora = time.localtime()
+    fecha = time.strftime("%Y-%m-%d", ahora)
+    acciones = presencia.plan_del_dia(
+        patron, ahora.tm_wday, config["luces"] or None,
+        semilla=int(time.strftime("%Y%m%d", ahora)))
+    plan = [{"hora": f"{a['minuto'] // 60:02d}:{a['minuto'] % 60:02d}",
+             "elemento": a["luz"], "accion": "encender" if a["encender"] else "apagar"}
+            for a in acciones]
+    return JSONResponse({"ok": True, "activada": config["activada"], "fecha": fecha,
+                         "plan": plan})
 
 
 async def sensores_casa(request):
@@ -620,6 +717,11 @@ RUTAS = [
     Route("/api/voz", listar_comandos, methods=["GET"]),
     Route("/api/voz/inventario", inventario_casa, methods=["GET"]),
     Route("/api/voz/estado", estado_casa, methods=["GET"]),
+    Route("/api/voz/nodos", nodos_casa, methods=["GET"]),
+    Route("/api/voz/alertas", alertas_casa, methods=["GET"]),
+    Route("/api/voz/alertas/{id}/visto", alerta_visto, methods=["POST"]),
+    Route("/api/voz/automatizaciones", automatizaciones_casa, methods=["GET"]),
+    Route("/api/voz/presencia", presencia_casa, methods=["GET"]),
     Route("/api/voz/sensores", sensores_casa, methods=["GET"]),
     Route("/api/voz/alarma", estado_alarma, methods=["GET"]),
     Route("/api/voz/eventos", eventos_casa, methods=["GET"]),

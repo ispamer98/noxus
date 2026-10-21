@@ -62,3 +62,24 @@ curl -sS -H "X-Noxus-Clave: $CLAVE_VOZ" \
 no-store`, máximo 2 MiB y espera máxima de 2 segundos. Si la cámara está
 parada, no tiene fuente o no responde, devuelve JSON con un error claro; no
 expone la URL ni credenciales del stream.
+
+## Persianas, alertas, nodos y automatizaciones
+
+`GET /api/voz/estado` incluye `persianas`, con `id`, `nombre` y el estado real
+(`subiendo`, `bajando`, `subida`, `bajada` o `parada`) guardado por el panel.
+
+`GET /api/voz/alertas` lista solo las alertas pendientes con `id`, `tipo`,
+`zona`, `elemento`, `hora` y `visto`; no incluye fotos ni texto libre. Una
+alerta se puede confirmar con `POST /api/voz/alertas/{id}/visto`. El id debe
+coincidir exactamente con una alerta pendiente; la confirmación queda en el
+registro de auditoría.
+
+`GET /api/voz/nodos` devuelve `id`, `nombre`, `host_online`,
+`ultimo_contacto` y `segundos_sin_contacto`. El contacto se mide en memoria
+desde el último mensaje MQTT recibido desde el nodo y queda vacío hasta que
+llega el primero tras arrancar el panel. No se exponen direcciones, topics ni
+credenciales.
+
+`GET /api/voz/automatizaciones` devuelve `nombre`, `activa` y
+`ultima_ejecucion`. `GET /api/voz/presencia` devuelve si la simulación está
+activada y el plan del día (hora, elemento y acción), sin datos de personas.
