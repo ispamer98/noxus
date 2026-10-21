@@ -783,57 +783,16 @@ def _menus_edicion() -> rx.Component:
 
 
 def _plano_enmarcado() -> rx.Component:
+    editando = DashboardState.editing_floor_plan
+    guardar_y_cerrar = [
+        rx.call_script(
+            PLAN_COMMIT_SCRIPT,
+            callback=NodesState.save_floor_positions,
+        ),
+        DashboardState.toggle_editing_floor_plan,
+    ]
     return rx.el.div(
         rx.el.div(
-            rx.el.div(
-                rx.cond(
-                    DashboardState.editing_floor_plan,
-                    rx.hstack(
-                        rx.icon("move", size=15, color=theme.WARNING),
-                        rx.text(
-                            'Arrastra los iconos y pulsa "Listo" para guardar',
-                            size="2", color=theme.WARNING, weight="medium",
-                        ),
-                        spacing="2", align="center",
-                        class_name="nx-plano-instruccion",
-                    ),
-                    rx.fragment(),
-                ),
-                rx.cond(
-                    DashboardState.editing_floor_plan,
-                    rx.hstack(
-                        rx.cond(
-                            AuthState.puede_ajustes,
-                            rx.button(
-                                rx.icon("cpu", size=13), "Probar nodos",
-                                on_click=NodesState.probar_nodos_plano,
-                                size="1", variant="soft",
-                            ),
-                        ),
-                        rx.button(
-                            rx.icon("check", size=14), "Listo",
-                            on_click=[
-                                rx.call_script(
-                                    PLAN_COMMIT_SCRIPT,
-                                    callback=NodesState.save_floor_positions,
-                                ),
-                                DashboardState.toggle_editing_floor_plan,
-                            ],
-                            size="1", variant="solid", color_scheme="green",
-                        ),
-                        spacing="2", align="center",
-                    ),
-                    boton_ajustes(
-                        [
-                            rx.call_script(PLAN_RESET_SCRIPT),
-                            DashboardState.toggle_editing_floor_plan,
-                        ],
-                        titulo="Ajustes del plano",
-                    ),
-                ),
-                class_name="nx-plano-cabecera",
-                custom_attrs={"data-editando": DashboardState.editing_floor_plan},
-            ),
             rx.el.div(
                 rx.image(
                     src=NodesState.plano_imagen_url,
@@ -841,6 +800,36 @@ def _plano_enmarcado() -> rx.Component:
                     aria_hidden="true",
                     class_name="nx-plano-fondo",
                     draggable=False,
+                ),
+                rx.el.div(
+                    boton_ajustes(
+                        [
+                            rx.call_script(PLAN_RESET_SCRIPT),
+                            DashboardState.toggle_editing_floor_plan,
+                        ],
+                        titulo="Ajustes del plano",
+                        disabled=editando,
+                        custom_attrs={
+                            "aria-hidden": editando,
+                            "tabindex": rx.cond(editando, "-1", "0"),
+                        },
+                    ),
+                    rx.el.button(
+                        rx.icon("check", size=17),
+                        on_click=guardar_y_cerrar,
+                        title="Guardar y cerrar el editor del plano",
+                        aria_label="Guardar y cerrar el editor del plano",
+                        type="button",
+                        disabled=~editando,
+                        custom_attrs={
+                            "aria-hidden": rx.cond(editando, "false", "true"),
+                            "tabindex": rx.cond(editando, "0", "-1"),
+                        },
+                        class_name="nx-ajustes-btn nx-plano-ajustes-check",
+                    ),
+                    aspect_ratio=NodesState.plano_aspecto,
+                    class_name="nx-plano-ajustes-capa",
+                    custom_attrs={"data-activo": editando},
                 ),
                 floor_plan_content(),
                 class_name="nx-plano-lienzo",
