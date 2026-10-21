@@ -27,7 +27,7 @@ PATRON_FALSO = {
 
 def _aprendizaje() -> Caso:
     c = Caso("Patrón aprendido del histórico")
-    patron = p.aprender(dias=60)
+    patron = p.aprender(dias=60, ahora=time.mktime((2026, 8, 18, 12, 0, 0, 0, 0, -1)))  # instante fijo: el test no depende del reloj
     c.cierto("aprende de algún día", sum(patron["dias"].values()) > 0)
     c.cierto("encuentra señales de gente", patron["total_eventos"] > 0)
     # El 26/07/2026 son 25 armados seguidos de una migración: si se cuela,
