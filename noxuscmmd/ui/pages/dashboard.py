@@ -357,7 +357,7 @@ _DENSIDAD_CSS = """
 
 # JavaScript propio del panel (assets/nx.js): conserva la precarga de la
 # suscripción y recupera la red Obsidiana con límites específicos para móvil.
-_NX_JS = "/nx.js?v=20261002d"
+_NX_JS = "/nx.js?v=20261002e"
 
 
 def _sin_permiso() -> rx.Component:

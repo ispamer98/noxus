@@ -185,7 +185,14 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
   overflow: hidden;
 }
 .nx-sidebar[data-plegada="true"] { width: 72px; }
-.nx-brand { display: flex; align-items: center; gap: 11px; height: 68px; padding: 0 18px; flex: none; }
+.nx-brand { display: flex; align-items: center; gap: 11px; height: 68px; padding: 0 18px; flex: none;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: transform 0.12s var(--nx-ease); }
+.nx-brand:focus-visible, .nx-title-mark:focus-visible {
+  outline: 2px solid rgba(var(--nx-info-rgb), 0.8); outline-offset: 4px;
+  box-shadow: 0 0 0 4px rgba(var(--nx-info-rgb), 0.14);
+}
+.nx-brand:active, .nx-title-mark:active { transform: scale(0.96); }
 /* La marca va CENTRADA en su pastilla: es un SVG que ya trae su fondo, así que
    no depende de ningún display de Radix. */
 .nx-mark { display: block; width: 32px; height: 32px; flex: none; border-radius: 9px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06); }
@@ -210,7 +217,22 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 .nx-nav-item[data-activo="true"] svg { color: var(--nx-info); filter: drop-shadow(0 0 6px rgba(var(--nx-info-rgb), 0.8)); }
 .nx-sidebar[data-plegada="true"] .nx-nav-item { justify-content: center; padding: 0; }
 .nx-sidebar[data-plegada="true"] .nx-nav-item span { display: none; }
-.nx-sidebar-pie { margin-top: auto; padding: 12px; border-top: 1px solid var(--nx-line); }
+.nx-sidebar-pie { margin-top: auto; padding: 10px 12px; border-top: 1px solid var(--nx-line); display: flex; justify-content: flex-end; }
+.nx-sidebar[data-plegada="true"] .nx-sidebar-pie { justify-content: center; }
+/* Solo las flechas, sin texto: botón cuadrado discreto pegado al borde del menú.
+   Al pasar el ratón la flecha se desplaza hacia donde va a moverse el menú. */
+.nx-plegar {
+  display: grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0;
+  border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--nx-muted);
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.12s var(--nx-ease);
+}
+.nx-plegar svg { transition: transform 0.2s var(--nx-ease); }
+.nx-plegar:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--nx-line); color: var(--nx-text); }
+.nx-plegar:hover svg { transform: translateX(-2px); }
+.nx-sidebar[data-plegada="true"] .nx-plegar:hover svg { transform: translateX(2px); }
+.nx-plegar:active { transform: scale(0.94); }
+.nx-plegar:focus-visible { outline: 2px solid rgba(var(--nx-info-rgb), 0.8); outline-offset: 2px; }
 
 /* --- Barra superior -------------------------------------------------------- */
 .nx-topbar {
@@ -225,7 +247,8 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
   opacity: 0.35; animation: nx-respira-filo 5s ease-in-out infinite; }
 @keyframes nx-respira-filo { 50% { opacity: 1; } }
 .nx-title { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.025em; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nx-title-mark { display: none; }
+.nx-title-mark { display: none; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  transition: transform 0.12s var(--nx-ease); }
 .nx-icon-btn {
   display: inline-grid; place-items: center; width: 38px; height: 38px; flex: none;
   border: 0; border-radius: 10px; background: transparent; color: var(--nx-muted); cursor: pointer;
@@ -467,23 +490,46 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
      lienzo del plano del borde del marco (borde + relleno + cabecera). */
   --nx-side-min: 460px; --nx-col-min: 270px;
   --nx-lat-col: clamp(var(--nx-col-min), 30cqw, 392px); --nx-lat-gap: clamp(10px, 1cqw, 16px);
-  --nx-frame-pad: 8px; --nx-frame-border: 1px; --nx-plano-header-h: 48px;
+  --nx-frame-pad: 8px; --nx-frame-border: 1px; --nx-plano-header-h: 0px;
   --nx-plano-top: calc(var(--nx-plano-header-h) + var(--nx-frame-pad) + var(--nx-frame-border));
   --nx-plano-bot: calc(var(--nx-frame-pad) + var(--nx-frame-border));
   display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--nx-lat-gap);
   align-items: stretch; justify-content: center; width: 100%; min-width: 0; min-height: 0;
 }
 .nx-plano-centro { width: 100%; min-width: 0; margin-inline: auto; }
-.nx-plano-marco { position: relative; width: 100%; aspect-ratio: 1; isolation: isolate; display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.nx-plano-cabecera {
-  display: flex; align-items: center; justify-content: flex-end; gap: 12px;
-  min-height: 40px; padding: 0 2px 8px 6px;
-}
-.nx-plano-cabecera[data-editando="true"] { justify-content: space-between; }
-.nx-plano-instruccion { flex: 1 1 0; min-width: 0; line-height: 1.25; }
-.nx-plano-cabecera > :last-child { flex: none; }
+.nx-plano-marco { position: relative; width: 100%; aspect-ratio: 1; isolation: isolate; display: grid; grid-template-rows: minmax(0, 1fr); }
 .nx-plano-lienzo { position: relative; width: 100%; min-height: 0; isolation: isolate; display: grid; place-items: center; overflow: hidden; }
-.nx-plano-lienzo > .nx-plan-container { width: auto !important; height: 100% !important; max-width: 100%; max-height: 100%; justify-self: center; }
+.nx-plano-lienzo > .nx-plan-container { grid-area: 1 / 1; width: auto !important; height: 100% !important; max-width: 100%; max-height: 100%; justify-self: center; }
+.nx-plano-ajustes-capa {
+  grid-area: 1 / 1; width: auto; height: 100%; max-width: 100%; max-height: 100%; justify-self: center;
+  position: relative; z-index: 3; pointer-events: none;
+}
+.nx-plano-ajustes-capa .nx-ajustes-btn {
+  position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; padding: 0;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  background: rgba(7, 11, 19, 0.55); backdrop-filter: blur(6px);
+  border-color: var(--nx-line); transform: rotate(-90deg) scale(.6);
+  transition: opacity .22s ease, transform .22s var(--nx-ease), visibility 0s linear .22s;
+}
+.nx-plano-ajustes-capa[data-activo="false"] .nx-ajustes-btn:first-child {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: rotate(0) scale(1);
+  transition-delay: 0s;
+}
+.nx-plano-ajustes-capa[data-activo="true"] .nx-plano-ajustes-check {
+  opacity: 1; visibility: visible; pointer-events: auto; transform: rotate(0) scale(1);
+  transition-delay: 0s;
+}
+.nx-plano-ajustes-check {
+  color: var(--nx-safe); border-color: rgba(var(--nx-safe-rgb), .55) !important;
+  background: rgba(var(--nx-safe-rgb), .18) !important;
+  box-shadow: 0 0 22px -10px rgba(var(--nx-safe-rgb), .95);
+  transform: rotate(90deg) scale(.6);
+}
+.nx-plano-ajustes-check:hover {
+  color: var(--nx-safe); border-color: rgba(var(--nx-safe-rgb), .75) !important;
+  background: rgba(var(--nx-safe-rgb), .28) !important;
+  box-shadow: 0 0 28px -9px rgba(var(--nx-safe-rgb), 1);
+}
 .nx-plano-fondo { display: none; }
 /* Apilado (móvil, tablet, ventana estrecha): el andamiaje desaparece y los
    paneles caen debajo del plano, como siempre. */
@@ -534,7 +580,6 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 .nx-plano-vacio { margin: 0; color: var(--nx-muted); font-size: 12px; }
 
 @media (min-width: 1100px) {
-  .nx-plano-cabecera { box-sizing: border-box; height: var(--nx-plano-header-h); min-height: 0; }
   .nx-plano-resumen { grid-template-columns: minmax(0, 1fr); }
   .nx-plano-tiles { grid-template-columns: minmax(0, 1fr); }
   .nx-plano-marco {
@@ -747,6 +792,9 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
 .nx-ajustes-listo:hover { color: var(--nx-safe); background: rgba(var(--nx-safe-rgb), 0.18); border-color: rgba(var(--nx-safe-rgb), 0.6); }
 .nx-ajustes-listo:hover svg { transform: none; }
 @media (prefers-reduced-motion: reduce) {
+  .nx-plano-ajustes-capa .nx-ajustes-btn { transform: none !important; transition: opacity .06s linear, visibility 0s linear .06s; }
+  .nx-plano-ajustes-capa[data-activo="false"] .nx-ajustes-btn,
+  .nx-plano-ajustes-capa[data-activo="true"] .nx-plano-ajustes-check { transition-delay: 0s; }
   .nx-ajustes-btn, .nx-ajustes-btn svg { transition: none; }
   .nx-ajustes-btn:hover svg { transform: none; }
 }
@@ -887,6 +935,8 @@ code, kbd, .rt-Code, .nx-num { font-family: var(--nx-mono); font-variant-numeric
   .nx-glyph-matrix { opacity: 0.26; }
   .nx-404 .vuela, .nx-404 .gota { opacity: 1; }
   .nx-sidebar { transition: none; }
+  .nx-brand, .nx-title-mark { transition: none; }
+  .nx-brand:active, .nx-title-mark:active { transform: none; }
 }
 
 /* --- Logo: el escudo neón de siempre, centrado en su caja ------------------ */

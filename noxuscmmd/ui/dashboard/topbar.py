@@ -319,7 +319,9 @@ def topbar() -> rx.Component:
     return rx.el.header(
         # La marca solo sale en el móvil, donde no hay barra lateral (nx.css).
         rx.el.img(src="/noxus-marca.svg", alt="", class_name="nx-title-mark",
-                  width="26", height="26"),
+                  width="26", height="26",
+                  custom_attrs={"role": "button", "tabindex": "0"},
+                  aria_label="Volver arriba", title="Volver arriba"),
         _boton_atras_ajustes(),
         _view_title(),
         _arm_toggle_icon(),

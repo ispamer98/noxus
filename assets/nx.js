@@ -412,6 +412,36 @@
     arrancar();
   })();
 
+  // Logo: volver al principio aunque Reflex haya vuelto a montar la vista.
+  (function () {
+    if (window.__nxLogoArriba) return; window.__nxLogoArriba = true;
+    var SELECTOR = '.nx-brand, .nx-title-mark';
+    function subir() {
+      var scrollers = [];
+      var principal = document.querySelector('.nx-scroll');
+      if (principal) scrollers.push(principal);
+      document.querySelectorAll('.rt-PopoverContent').forEach(function (el) {
+        if (getComputedStyle(el).overflowY === 'auto' || getComputedStyle(el).overflowY === 'scroll') {
+          scrollers.push(el);
+        }
+      });
+      scrollers.forEach(function (el) {
+        if (el.scrollTop > 0) {
+          el.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      if (e.target && e.target.closest && e.target.closest(SELECTOR)) subir();
+    });
+    document.addEventListener('keydown', function (e) {
+      var logo = e.target && e.target.closest && e.target.closest(SELECTOR);
+      if (!logo || (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar')) return;
+      if (e.key === ' ' || e.key === 'Spacebar') e.preventDefault();
+      subir();
+    });
+  })();
+
   /* Háptico al pulsar, solo en las zonas elegidas (ZONAS y VISTAS, abajo).
      iPhone: no existe navigator.vibrate, pero desde iOS 18 Safari da un toque
      háptico cuando un toque de verdad activa un interruptor nativo

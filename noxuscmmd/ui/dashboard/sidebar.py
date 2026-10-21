@@ -95,6 +95,9 @@ def _marca() -> rx.Component:
         ),
         rx.el.span("noxus", class_name="nx-wordmark nx-grad", translate="no"),
         class_name="nx-brand",
+        custom_attrs={"role": "button", "tabindex": "0"},
+        aria_label="Volver arriba",
+        title="Volver arriba",
     )
 
 
@@ -115,10 +118,10 @@ def sidebar() -> rx.Component:
                     rx.cond(DashboardState.sidebar_collapsed, "chevrons-right", "chevrons-left"),
                     size=18,
                 ),
-                rx.el.span("Plegar menú"),
                 on_click=DashboardState.toggle_sidebar,
-                class_name="nx-nav-item",
+                class_name="nx-plegar",
                 title=rx.cond(DashboardState.sidebar_collapsed, "Desplegar menú", "Plegar menú"),
+                aria_label=rx.cond(DashboardState.sidebar_collapsed, "Desplegar menú", "Plegar menú"),
                 type="button",
             ),
             class_name="nx-sidebar-pie",
